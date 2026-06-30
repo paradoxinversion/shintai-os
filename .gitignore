@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Captured sensor data + generated analysis outputs (recreated at runtime)
+logs/
+analysis/
+
+# Editor / OS
+.vscode/
+.DS_Store
+
+# Claude Code local-only settings (keep shared skills/agents if you add any)
+.claude/settings.local.json
+
+# Android build artifacts are covered by android/.gitignore

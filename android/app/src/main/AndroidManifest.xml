@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- BLE is required; this app is useless without it. -->
+    <uses-feature
+        android:name="android.hardware.bluetooth_le"
+        android:required="true" />
+
+    <!--
+      We connect to a KNOWN device by MAC and never scan, so we only need
+      BLUETOOTH_CONNECT (API 31+). No BLUETOOTH_SCAN and no location permission —
+      that's deliberate: scanning gets starved by the glasses' own BLE stack.
+    -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <application
+        android:allowBackup="true"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.ShintaiGlass">
+
+        <!--
+          No orientation lock: phones rotate freely (portrait or landscape), and
+          the UI picks mono vs. side-by-side stereo from the surface aspect ratio.
+          The glasses' display is fixed-landscape hardware, so they stay landscape.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.ShintaiGlass">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
