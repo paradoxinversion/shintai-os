@@ -18,12 +18,18 @@ role:
   category — the discipline of augmenting the body, and the class any given
   capability belongs to. Uncountable: you *do* Zōkyō; you don't count "a Zōkyō."
 - **Tsukiwaza (付き技)** — *"attached technique."* A single, discrete augmentation
-  module that attaches to the body — countable and named. This sensor rig (the
-  QT Py ESP32-S3 + its sensor suite) is one Tsukiwaza; the HUD and the glasses
-  readout are how you interface with it.
+  module that attaches to the body — countable and named. The sensor rig, the HUD,
+  and the (planned) haptic alert are each their own Tsukiwaza — see the registry
+  below.
 
 In short: **Shintai-OS** runs on you, **Zōkyō** is the practice, and each
 **Tsukiwaza** is a module you attach.
+
+## Zōkyō & Tsukiwaza registry
+
+This build is the **Rokkan (六感)** Zōkyō — **Tanchi** senses, **Shikai** shows,
+**Kehai** warns (planned). The canonical registry — each Tsukiwaza, its direction,
+what it maps to, and its status — lives in [`REGISTRY.md`](REGISTRY.md).
 
 ## Components
 
@@ -203,6 +209,7 @@ firmware/shintai-os/   Shintai-OS firmware sketch (.ino)
 groundstation/         Python consumer — logger / pull / hud / analyze + launchers
 android/               BLE consumer — RayNeo X3 Pro / phone HUD app
 CONTRACT.md            the CSV + BLE GATT contract (single source of truth)
+REGISTRY.md            the Zōkyō & Tsukiwaza registry (what this build is, named)
 docs/                  notes on exploring the logged data
 ```
 

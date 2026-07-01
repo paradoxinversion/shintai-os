@@ -1,0 +1,95 @@
+# Zōkyō & Tsukiwaza registry
+
+The canonical list of what this platform *does*, in the project's vocabulary —
+**Shintai-OS** / **Zōkyō** / **Tsukiwaza**, defined in the
+[README](README.md#naming).
+
+Shintai-OS is the body OS; a **Zōkyō** is one augmentation built on it, composed of
+**Tsukiwaza** (the discrete modules it attaches). This registry indexes the Zōkyō —
+**Rokkan** is the first, not the last — over a [parts catalog](#parts-catalog) any
+Zōkyō can draw from.
+
+## Zōkyō
+
+| Zōkyō | Meaning | What it does | Status |
+|-------|---------|--------------|--------|
+| **[Rokkan (六感)](#rokkan-六感--sixth-sense)** | *"sixth sense"* | Wearable environmental-perception suite — extends the senses past the ordinary five and feeds them back to the wearer. | active |
+
+Rokkan is the only Zōkyō built so far. Others land here as their own sections below,
+each composed of Tsukiwaza over the same shared [parts catalog](#parts-catalog) and
+[data contract](CONTRACT.md).
+
+The Python **ground-station** (`groundstation/`) is base-side tooling you dock to
+for capture and analysis — shared across every Zōkyō, not a worn Tsukiwaza of any
+one of them.
+
+## Parts catalog
+
+The shared inventory every Zōkyō draws from — each part and what it does. Each
+sensor is a cheaper **baseline / starter** chosen to get the seam working — the
+**Alternatives / upgrades** column is the menu for building out a different (or
+beefier) Zōkyō against the same [contract](CONTRACT.md). All sensors sit on the
+STEMMA QT / Qwiic I²C chain, so most swaps are plug-compatible: change the part,
+change its driver in the firmware, done. Each Zōkyō's Tsukiwaza reference these
+parts rather than re-describing them — see [Rokkan](#rokkan-六感--sixth-sense) below.
+
+### Host & infrastructure
+
+| Part | What it does | Alternatives / upgrades |
+|------|--------------|-------------------------|
+| **Adafruit QT Py ESP32-S3** (no PSRAM, 8 MB flash) | The Shintai-OS host: reads every sensor over I²C, logs to onboard FFat flash, and serves the BLE GATT stream. | QT Py ESP32-S3 **N4R2** (2 MB PSRAM — headroom for full thermal frames); Adafruit **Feather ESP32-S3** (more GPIO + onboard LiPo charging); **ESP32-S3 Reverse TFT Feather** (debug screen); Seeed **XIAO ESP32-S3** (smaller footprint) |
+| **STEMMA QT / Qwiic chain** | Solderless I²C daisy-chain wiring every sensor to the host. | JST-SH breakouts; a custom carrier PCB once the sensor set is frozen |
+| **USB-C battery bank** | Untethered power — the board flash-logs whenever it's on non-computer power. | LiPo cell (the Feather has the charger built in); a **MAX17048** fuel-gauge for real state-of-charge |
+
+### Sensors
+
+| Part | What it does | Alternatives / upgrades |
+|------|--------------|-------------------------|
+| **VL53L4CX** — ToF distance (I²C 0x29) | Time-of-flight ranging, multi-target to ~6 m — the proximity sense behind `distance_mm` and the `alert`. | **VL53L1X** (cheaper, 4 m, single-target); **VL53L4CD** (short-range budget); **VL53L5CX** (8×8 multizone — a depth *field*, not a point); ultrasonic **HC-SR04** for long/cheap |
+| **LSM6DSOX** — 6-DoF IMU (0x6A) | Accelerometer + gyro: motion and tilt. | Combined **LSM6DSOX + LIS3MDL 9-DoF** board (one STEMMA part); **BNO085** (on-chip sensor fusion → *absolute* orientation, no manual heading math — the standout upgrade); **ICM-20948**; downgrade **MPU-6050 / LSM6DS3TR-C** |
+| **LIS3MDL** — magnetometer (0x1C) | 3-axis mag → compass heading. | **MMC5603** (higher-res mag); folded into **BNO085** if you take the fused-IMU route above |
+| **Adafruit PA1010D** — GPS (0x10) | Mini I²C GPS: fix, lat/lon, altitude, speed. | **Ultimate GPS breakout / PA1616S** (external antenna, better fix); u-blox **SAM-M8Q** / **NEO-M9N** (multi-constellation); **MAX-M10S** (low power) |
+| **MLX90640** — thermal camera (0x33) | 32×24 = 768-px IR camera, 55° FOV — the surface-temp scene. | **MLX90640 110°** (wide FOV); **MLX90641** (16×12, cheaper); **AMG8833 Grid-EYE** (8×8 starter); **FLIR Lepton 3.5** (160×120 — real thermal imaging, needs SPI + PSRAM) |
+| **SCD-40** — climate (0x62) | Photoacoustic CO₂ + air temp + humidity; updates ~every 5 s. | **SCD-41** (wider range, lower power — pin-compatible upgrade); **SCD-30** (NDIR); add **BME688** (VOC / gas) or **BME280 / BMP390** (pressure → altitude); note CO₂-less boards drop the `co2_ppm` field |
+
+### Output & feedback
+
+| Part | What it does | Alternatives / upgrades |
+|------|--------------|-------------------------|
+| **RayNeo X3 Pro** AR glasses | Binocular AR display running the `android/` BLE-central HUD app. | Any Android phone (the app's fallback target); **XREAL One / Air 2**, **Vuzix**, **Even Realities G1** — anything that can run a BLE-central Android build |
+| **DRV2605L + LRA/ERM motor** *(planned)* | Haptic driver + vibration motor for the Kehai proximity alert. | A bare vibration motor + transistor for the minimal path; Adafruit STEMMA haptic breakout |
+
+## Rokkan (六感) — sixth sense
+
+A wearable environmental-perception suite that extends the senses past the ordinary
+five and feeds them back to the wearer. It is three Tsukiwaza — two active, one
+planned — each drawing its parts from the [catalog](#parts-catalog) above.
+
+### Tanchi (探知) — *"detection"*
+
+Perception **in**: senses the environment. Runs on `firmware/shintai-os/` + the
+sensor rig. **Status: active.**
+
+Parts: [VL53L4CX](#sensors) (distance), [LSM6DSOX](#sensors) (motion) +
+[LIS3MDL](#sensors) (heading), [PA1010D](#sensors) (GPS), [MLX90640](#sensors)
+(thermal), [SCD-40](#sensors) (climate) — all wired to the
+[QT Py ESP32-S3 host](#host--infrastructure).
+
+### Shikai (視界) — *"field of view"*
+
+Perception **out** (sight): binocular HUD overlay, driven by `android/`.
+**Status: active.**
+
+Parts: [RayNeo X3 Pro](#output--feedback) (or a phone as fallback).
+
+### Kehai (気配) — *"sensed presence"*
+
+Perception **out** (touch): haptic proximity alert — the original "spidey-sense"
+reflex. Reacts to the `alert` characteristic (see [CONTRACT.md](CONTRACT.md)).
+**Status: planned — not yet built.**
+
+Parts: [DRV2605L haptic driver + motor](#output--feedback) *(planned)*.
+
+The output side splits by modality: **Shikai** you *see*, **Kehai** you *feel*.
+Kehai's slot already exists in the contract — `alert` is a distinct edge-triggered
+event, separate from `distance_mm` — so it's a reserved seam, not a retrofit.
