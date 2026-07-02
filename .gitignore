@@ -6,6 +6,10 @@ __pycache__/
 logs/
 analysis/
 
+# Local copies of copyrighted component datasheets (not redistributable);
+# docs/DATASHEETS.md is the committed link index instead
+docs/datasheets/
+
 # Editor / OS
 .vscode/
 .DS_Store
