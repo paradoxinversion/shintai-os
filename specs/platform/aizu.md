@@ -2,7 +2,7 @@
 
 *The cue. One shared on-body output bus: sources post, the arbiter renders.*
 
-**Status:** spec (unbuilt) · **Kind:** shared host capability (not a Zōkyō) · **Seam:** [CONTRACT.md](../../CONTRACT.md) (no change) · **Used by:** [Kehai-Hikari](../zokyo/kehai-hikari.md), [Kanki](../zokyo/kanki.md), future remixes
+**Status:** spec (unbuilt) · **Kind:** shared host capability (not a Zōkyō) · **Seam:** [CONTRACT.md](../../CONTRACT.md) (no change) · **Used by:** [Kehai-Hikari](../zokyo/kehai-hikari.md), [Kanki](../zokyo/kanki.md), future remixes · **Date:** 2026-07-01
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 

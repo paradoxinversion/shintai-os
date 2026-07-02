@@ -2,7 +2,7 @@
 
 *A wearable ventilation sense: the air you're rebreathing, told as light.*
 
-**Status:** spec (unbuilt) · **Zōkyō:** Kanki (candidate — sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) · **Shares:** the feedback layer from [Kehai-Hikari](./kehai-hikari.md)
+**Status:** spec (unbuilt) · **Zōkyō:** Kanki (candidate — sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) · **Shares:** the feedback layer from [Kehai-Hikari](./kehai-hikari.md) · **Date:** 2026-07-01
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 

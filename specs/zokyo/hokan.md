@@ -2,7 +2,7 @@
 
 *Step-reckoning: count steps, catch falls, and reconstruct where you walked — even with no GPS fix.*
 
-**Status:** spec (unbuilt) · **Zōkyō:** Hokan (candidate — sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) — **changes it** (CSV half)
+**Status:** spec (unbuilt) · **Zōkyō:** Hokan (candidate — sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) — **changes it** (CSV half) · **Date:** 2026-07-02
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 

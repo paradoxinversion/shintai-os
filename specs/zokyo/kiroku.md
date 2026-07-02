@@ -2,7 +2,7 @@
 
 *The record: turn every untethered session into a reviewable black box — where you braked, cornered, and crashed, pinned on the map.*
 
-**Status:** spec (unbuilt) · **Zōkyō:** Kiroku (candidate — realized through the [ground-station](../../REGISTRY.md#parts-catalog), base-side) · **Seam:** [CONTRACT.md](../../CONTRACT.md) (no change, v1)
+**Status:** spec (unbuilt) · **Zōkyō:** Kiroku (candidate — realized through the [ground-station](../../REGISTRY.md#parts-catalog), base-side) · **Seam:** [CONTRACT.md](../../CONTRACT.md) (no change, v1) · **Date:** 2026-07-02
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 

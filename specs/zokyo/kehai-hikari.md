@@ -2,7 +2,7 @@
 
 *The proximity reflex, delivered as light.*
 
-**Status:** spec (unbuilt) · **Zōkyō:** [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense) · **Tsukiwaza:** [Kehai](../../REGISTRY.md#kehai-気配--sensed-presence) · **Seam:** [CONTRACT.md](../../CONTRACT.md)
+**Status:** spec (unbuilt) · **Zōkyō:** [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense) · **Tsukiwaza:** [Kehai](../../REGISTRY.md#kehai-気配--sensed-presence) · **Seam:** [CONTRACT.md](../../CONTRACT.md) · **Date:** 2026-07-01
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 
