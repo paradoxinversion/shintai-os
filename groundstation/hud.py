@@ -73,6 +73,8 @@ df = pd.read_csv(logpath)
 df["timestamp_s"] = (df["timestamp_ms"] - df["timestamp_ms"].iloc[0]) / 1000.0
 df["t_min"] = df["timestamp_s"] / 60.0
 df["accel_mag"] = (df.accel_x**2 + df.accel_y**2 + df.accel_z**2) ** 0.5
+if "gas_ohms" in df.columns:
+    df["gas_kohm"] = df["gas_ohms"] / 1000.0   # ohms → kΩ for a readable trace
 gps = df.dropna(subset=["lat", "lon"])
 
 # --- palette --------------------------------------------------------------
@@ -82,7 +84,9 @@ NEON_RGB = [(0, 240, 255), (255, 43, 214), (177, 75, 255), (57, 255, 20), (255, 
 NEON_SCALE = [[0, "#0d1b4c"], [0.4, "#b14bff"], [0.7, "#ff2bd6"], [1, "#00f0ff"]]
 SENSORS = [("co2_ppm", "CO₂ ppm"), ("accel_mag", "ACCEL |g|"),
            ("hotspot_delta", "THERMAL Δ"), ("humidity_pct", "HUMID %"),
-           ("air_temp_c", "TEMP °C")]
+           ("air_temp_c", "TEMP °C"), ("pressure_hpa", "PRESS hPa"),
+           ("gas_kohm", "GAS kΩ")]
+SENSORS = [s for s in SENSORS if s[0] in df.columns]   # drop fields a log lacks (e.g. pre-BME688)
 
 # --- try to bake a DarkMatter basemap; fall back to tileless if offline ----
 R = 6378137.0

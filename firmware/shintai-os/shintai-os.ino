@@ -5,6 +5,7 @@
 #include <Adafruit_GPS.h>
 #include <Adafruit_MLX90640.h>
 #include <SensirionI2cScd4x.h>
+#include <Adafruit_BME680.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -22,6 +23,7 @@
 #define GPS_UUID            "abcd3456-ab12-ab12-ab12-abcdef123456"
 #define THERMAL_UUID        "abcd6789-ab12-ab12-ab12-abcdef123456"
 #define CLIMATE_UUID        "abcdba98-ab12-ab12-ab12-abcdef123456"
+#define ENVIRONMENT_UUID    "abcdc0de-ab12-ab12-ab12-abcdef123456"
 
 const int NEAR_MM  = 200;
 const int FAR_MM   = 2000;   // reserved: graded-proximity HUD threshold, not yet
@@ -34,6 +36,7 @@ Adafruit_LIS3MDL  mag;
 Adafruit_GPS GPS(&Wire);
 Adafruit_MLX90640 mlx;
 SensirionI2cScd4x scd4x;   // SCD-40: CO2 + ambient air temp + humidity (I2C 0x62)
+Adafruit_BME680 bme;       // BME688: gas + pressure, plus authoritative air temp/RH (I2C 0x77)
 
 float thermalFrame[32 * 24];
 
@@ -44,6 +47,7 @@ BLECharacteristic *accelChar;
 BLECharacteristic *gpsChar;
 BLECharacteristic *thermalChar;
 BLECharacteristic *climateChar;
+BLECharacteristic *environmentChar;
 
 bool deviceConnected = false;
 bool alertSent = false;
@@ -65,6 +69,16 @@ uint16_t scdCo2     = 0;
 float    scdTemp    = 0;   // °C
 float    scdHum     = 0;   // %RH
 
+// BME688 state. Present set at boot; performReading() fires the gas heater and
+// blocks ~150 ms, so we read once per loop and cache. Owns air temp/humidity
+// (precedence over SCD-40) plus the BME-only pressure + gas fields.
+bool  bmePresent  = false;
+bool  bmeHasData  = false;
+float bmeTemp     = 0;   // °C
+float bmeHum      = 0;   // %RH
+float bmePressure = 0;   // hPa
+float bmeGas      = 0;   // ohms
+
 static inline float cToF(float c) { return c * 9.0 / 5.0 + 32.0; }
 
 // Output mode — toggle live over Serial: send 'h' (human), 'c' (CSV only), 'b' (both).
@@ -78,7 +92,7 @@ const char* CSV_HEADER =
   "timestamp_ms,distance_mm,alert,heading_deg,cardinal,"
   "accel_x,accel_y,accel_z,gps_fix,lat,lon,alt_m,speed_kmh,"
   "sats,thermal_min,thermal_ctr,thermal_max,thermal_mean,"
-  "hotspot_delta,co2_ppm,air_temp_c,humidity_pct";
+  "hotspot_delta,co2_ppm,air_temp_c,humidity_pct,pressure_hpa,gas_ohms";
 
 // Onboard flash logging (FFat) — autonomous field capture, pulled over USB.
 // Each power-up writes a new sequential file (/shtNNNN.csv). Rows are logged
@@ -243,6 +257,20 @@ void setup() {
     Serial.println("[WARN] SCD-40 not found — climate readings disabled");
   }
 
+  // BME688 (env: gas + pressure, and the authoritative air temp/RH) — non-fatal.
+  // SparkFun SEN-19096 answers at 0x77 (the Adafruit_BME680 default is 0x76).
+  bmePresent = bme.begin(0x77);
+  if (bmePresent) {
+    bme.setTemperatureOversampling(BME680_OS_8X);
+    bme.setHumidityOversampling(BME680_OS_2X);
+    bme.setPressureOversampling(BME680_OS_4X);
+    bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
+    bme.setGasHeater(320, 150);   // 320°C for 150 ms
+    Serial.println("[OK] BME688 Env (gas/pressure + air T/RH)");
+  } else {
+    Serial.println("[WARN] BME688 not found — pressure/gas disabled, air T/RH falls back to SCD-40");
+  }
+
   // BLE
   BLEDevice::init("ShintaiOS");
   BLEServer *server = BLEDevice::createServer();
@@ -266,6 +294,7 @@ void setup() {
   gpsChar      = makeChar(GPS_UUID,      "GPS");
   thermalChar  = makeChar(THERMAL_UUID,  "Thermal (C)");
   climateChar  = makeChar(CLIMATE_UUID,  "Climate (CO2/Temp/RH)");
+  environmentChar = makeChar(ENVIRONMENT_UUID, "Environment (P/gas/T/RH)");
 
   service->start();
   server->getAdvertising()->start();
@@ -378,9 +407,25 @@ void loop() {
     }
   }
 
+  // ── BME688 (env): pressure + gas resistance, plus the authoritative air T/RH.
+  // performReading() fires the gas heater and blocks ~150 ms — fine at UPDATE_MS.
+  if (bmePresent && bme.performReading()) {
+    bmeTemp     = bme.temperature;
+    bmeHum      = bme.humidity;
+    bmePressure = bme.pressure / 100.0;   // Pa → hPa
+    bmeGas      = bme.gas_resistance;      // ohms
+    bmeHasData  = true;
+  }
+
+  // Air temp / humidity are shared semantic slots: BME688 when present (faster,
+  // no photoacoustic self-heat offset), else SCD-40, else blank. See CONTRACT.md.
+  bool  airHasData = bmeHasData || scdHasData;
+  float airTemp    = bmeHasData ? bmeTemp : scdTemp;
+  float airHum     = bmeHasData ? bmeHum  : scdHum;
+
   // Hot-spot: how much hotter the warmest point is than the ambient air.
-  // Baseline is the SCD-40 air temp when available, else the coldest scene pixel.
-  float hotspotBase  = scdHasData ? scdTemp : thermalMin;
+  // Baseline is the resolved air temp when available, else the coldest scene pixel.
+  float hotspotBase  = airHasData ? airTemp : thermalMin;
   float hotspotDelta = thermalOk ? (thermalMax - hotspotBase) : 0;
   bool  hotspot      = thermalOk && hotspotDelta >= 5.0;
 
@@ -417,13 +462,18 @@ void loop() {
     } else if (scdPresent) {
       Serial.println("CLIMATE  : warming up…");
     }
+    if (bmeHasData) {
+      Serial.println("ENV      : " + String(bmePressure, 1) + " hPa, "
+                   + String(bmeGas / 1000.0, 1) + " kΩ gas, "
+                   + String(bmeTemp, 1) + "°C air, " + String(bmeHum, 0) + "%RH");
+    }
     Serial.println();
   }
 
   // ── CSV row: built once, persisted to flash (untethered) and/or streamed ──
   {
     String row;
-    row.reserve(220);            // one alloc up front (rows run ~130–150 chars);
+    row.reserve(240);            // one alloc up front (rows run ~150–175 chars);
                                  // avoids ~40 incremental reallocs/row of heap churn
     row += lastUpdate;
     row += ',';  row += (mm > 0 ? String(mm) : String(""));
@@ -445,8 +495,10 @@ void loop() {
     row += ',';  row += (thermalOk ? String(thermalMean, 1) : String(""));
     row += ',';  row += (thermalOk ? String(hotspotDelta, 1): String(""));
     row += ',';  row += (scdHasData ? String(scdCo2)        : String(""));
-    row += ',';  row += (scdHasData ? String(scdTemp, 1)    : String(""));
-    row += ',';  row += (scdHasData ? String(scdHum, 1)     : String(""));
+    row += ',';  row += (airHasData ? String(airTemp, 1)    : String(""));
+    row += ',';  row += (airHasData ? String(airHum, 1)     : String(""));
+    row += ',';  row += (bmeHasData ? String(bmePressure, 1): String(""));
+    row += ',';  row += (bmeHasData ? String(bmeGas, 0)     : String(""));
 
     // Persist to onboard flash only while untethered (no USB host). close() on a
     // row cadence (and on host-connect, below) commits the directory entry so a
@@ -528,6 +580,14 @@ void loop() {
                         + String(scdCo2) + "ppm";
       climateChar->setValue(climateStr.c_str());
       climateChar->notify();
+    }
+    if (bmeHasData) {
+      String envStr = String(bmePressure, 1) + "hPa "
+                    + String(bmeGas, 0) + "ohm "
+                    + String(bmeTemp, 1) + "C "
+                    + String(bmeHum, 0) + "%RH";
+      environmentChar->setValue(envStr.c_str());
+      environmentChar->notify();
     }
   }
 }
