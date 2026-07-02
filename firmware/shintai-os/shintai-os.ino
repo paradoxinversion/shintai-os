@@ -24,7 +24,8 @@
 #define CLIMATE_UUID        "abcdba98-ab12-ab12-ab12-abcdef123456"
 
 const int NEAR_MM  = 200;
-const int FAR_MM   = 2000;
+const int FAR_MM   = 2000;   // reserved: graded-proximity HUD threshold, not yet
+                             // wired in-loop — see specs/zokyo/kehai-hikari.md
 const int UPDATE_MS = 1500;  // update interval
 
 VL53L4CX sensor(&Wire, -1);
@@ -51,6 +52,7 @@ unsigned long lastUpdate = 0;
 // Per-module presence — set at boot. Any sensor may be physically absent for a
 // config test; we warn and continue rather than hang, then gate its reads and
 // output below. (SCD-40 has its own scdPresent flag further down.)
+bool tofPresent     = false;
 bool imuPresent     = false;
 bool magPresent     = false;
 bool thermalPresent = false;
@@ -190,12 +192,18 @@ void setup() {
   Wire.begin(41, 40);
   delay(100);
 
-  // ToF
+  // ToF — non-fatal: warn and continue if absent (mirrors the other sensors).
+  // InitSensor() boots the device + DataInit over I2C, so its status is a
+  // reliable presence probe; gate reads on it so an absent ToF can't spin.
   sensor.begin();
   sensor.VL53L4CX_Off();
-  sensor.InitSensor(0x29);
-  sensor.VL53L4CX_StartMeasurement();
-  Serial.println("[OK] VL53L4CX ToF");
+  tofPresent = (sensor.InitSensor(0x29) == VL53L4CX_ERROR_NONE);
+  if (tofPresent) {
+    sensor.VL53L4CX_StartMeasurement();
+    Serial.println("[OK] VL53L4CX ToF");
+  } else {
+    Serial.println("[WARN] VL53L4CX not found — distance disabled");
+  }
 
   // IMU — non-fatal: warn and continue if absent
   imuPresent = imu.begin_I2C();
@@ -288,20 +296,22 @@ void loop() {
   bool human = (outputMode == HUMAN || outputMode == BOTH);
   bool csv   = (outputMode == CSV   || outputMode == BOTH);
 
-  // ── ToF ──
-  uint8_t dataReady = 0;
-  sensor.VL53L4CX_GetMeasurementDataReady(&dataReady);
+  // ── ToF ── (optional; gated so an absent sensor doesn't poll I2C every loop)
   int16_t mm = -1;
-  if (dataReady) {
-    VL53L4CX_MultiRangingData_t data;
-    sensor.VL53L4CX_GetMultiRangingData(&data);
-    for (int i = 0; i < data.NumberOfObjectsFound; i++) {
-      if (data.RangeData[i].RangeStatus == 0) {
-        mm = data.RangeData[i].RangeMilliMeter;
-        break;
+  if (tofPresent) {
+    uint8_t dataReady = 0;
+    sensor.VL53L4CX_GetMeasurementDataReady(&dataReady);
+    if (dataReady) {
+      VL53L4CX_MultiRangingData_t data;
+      sensor.VL53L4CX_GetMultiRangingData(&data);
+      for (int i = 0; i < data.NumberOfObjectsFound; i++) {
+        if (data.RangeData[i].RangeStatus == 0) {
+          mm = data.RangeData[i].RangeMilliMeter;
+          break;
+        }
       }
+      sensor.VL53L4CX_ClearInterruptAndStartMeasurement();
     }
-    sensor.VL53L4CX_ClearInterruptAndStartMeasurement();
   }
   bool alertNow = (mm > 0 && mm <= NEAR_MM);
 
@@ -412,7 +422,10 @@ void loop() {
 
   // ── CSV row: built once, persisted to flash (untethered) and/or streamed ──
   {
-    String row = String(lastUpdate);
+    String row;
+    row.reserve(220);            // one alloc up front (rows run ~130–150 chars);
+                                 // avoids ~40 incremental reallocs/row of heap churn
+    row += lastUpdate;
     row += ',';  row += (mm > 0 ? String(mm) : String(""));
     row += ',';  row += (alertNow ? '1' : '0');
     row += ',';  row += (magPresent ? String(heading, 1) : String(""));
@@ -477,7 +490,10 @@ void loop() {
       alertChar->notify();
       alertSent = true;
     }
-    if (mm > NEAR_MM) alertSent = false;
+    // Re-arm whenever we're not currently too-close — including a no-reading
+    // (mm == -1), so a fresh incursion after a dropout always re-alerts. (A
+    // strict > FAR_MM release would latch-stick the alert in open space.)
+    if (!alertNow) alertSent = false;
 
     if (magPresent) {
       String headingStr = String(heading, 1) + "° " + cardinal;
