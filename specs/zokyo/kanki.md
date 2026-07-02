@@ -2,23 +2,23 @@
 
 *A wearable ventilation sense: the air you're rebreathing, told as light.*
 
-**Status:** spec (unbuilt) · **Zōkyō:** Kanki (candidate — sibling to [Rokkan](../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../CONTRACT.md) · **Shares:** the feedback layer from [Kehai-Hikari](./kehai-hikari.md)
+**Status:** spec (unbuilt) · **Zōkyō:** Kanki (candidate — sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) · **Shares:** the feedback layer from [Kehai-Hikari](./kehai-hikari.md) · **Date:** 2026-07-01
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 
 ## What this is
 
 Kanki — "ventilation" — is a **standalone air-quality guardian** you wear all day. It reads the
-[SCD-40](../REGISTRY.md#sensors) CO₂ level already published as `co2_ppm` and expresses it on the
+[SCD-40](../../REGISTRY.md#sensors) CO₂ level already published as `co2_ppm` and expresses it on the
 **onboard NeoPixel**: calm green when the air is fresh, escalating to red as CO₂ climbs and the
 room goes stale, drowsy, and dumb. No screen, no phone — a glanceable "open a window" cue on your
 body.
 
-Unlike [Rokkan](../REGISTRY.md#rokkan-六感--sixth-sense) (the full environmental-perception suite),
-Kanki is **one sense, one cue**. It runs on the minimal rig — just the [QT Py host](../REGISTRY.md#host--infrastructure)
+Unlike [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense) (the full environmental-perception suite),
+Kanki is **one sense, one cue**. It runs on the minimal rig — just the [QT Py host](../../REGISTRY.md#host--infrastructure)
 + SCD-40 — because the firmware already presence-gates every other sensor and warms-and-continues
 when they're absent. That makes Kanki a candidate **new Zōkyō**, a small sibling to Rokkan drawn
-from the same [parts catalog](../REGISTRY.md#parts-catalog).
+from the same [parts catalog](../../REGISTRY.md#parts-catalog).
 
 **Why write it second (the real reason):** Kanki is the first module to *reuse* the NeoPixel
 feedback layer [Kehai-Hikari](./kehai-hikari.md) introduces. Two Zōkyō now want the **one** onboard
@@ -58,8 +58,8 @@ right. It isn't, quite: see [The shared feedback layer](#the-shared-feedback-lay
 
 | Part | Role | Source |
 |------|------|--------|
-| [SCD-40](../REGISTRY.md#sensors) | CO₂ input (`co2_ppm`; updates ~every 5 s) | already read in `loop()` |
-| **Onboard NeoPixel** | the shared feedback surface | on the [host board](../REGISTRY.md#host--infrastructure) |
+| [SCD-40](../../REGISTRY.md#sensors) | CO₂ input (`co2_ppm`; updates ~every 5 s) | already read in `loop()` |
+| **Onboard NeoPixel** | the shared feedback surface | on the [host board](../../REGISTRY.md#host--infrastructure) |
 | **Shared feedback arbiter** | renders the winning cue on the one LED | [established by Kehai-Hikari](./kehai-hikari.md), generalized here |
 
 No new libraries beyond what Kehai-Hikari already pulls in (`Adafruit_NeoPixel`).
@@ -142,7 +142,7 @@ Target: `firmware/shintai-os/shintai-os.ino`. Builds on Kehai-Hikari's integrati
 ## Contract impact
 
 **None.** `co2_ppm` is already published in both the CSV schema and the Climate GATT characteristic
-([CONTRACT.md](../CONTRACT.md)). Kanki is output-only and adds no field. Same posture as Kehai-Hikari.
+([CONTRACT.md](../../CONTRACT.md)). Kanki is output-only and adds no field. Same posture as Kehai-Hikari.
 
 ## Acceptance criteria
 
@@ -180,7 +180,7 @@ All four opening questions are resolved; recorded here as the build contract.
 - **Kehai-Hikari (applied)** — its seam (goal 5, firmware note 3, AC-8, D-1) now posts an Alert cue
   to the shared arbiter (Aizu) instead of owning the NeoPixel; pixel-power/idle/brightness/animation
   responsibilities move to the arbiter. Sensing logic unchanged.
-- **Registry** — on build, Kanki earns its own row in the [Zōkyō table](../REGISTRY.md#zōkyō)
+- **Registry** — on build, Kanki earns its own row in the [Zōkyō table](../../REGISTRY.md#zōkyō)
   beside Rokkan, and the shared feedback arbiter (Aizu) wants a registry entry as a **shared host
   capability** — like the ground-station, shared across Zōkyō rather than owned by one.
 
