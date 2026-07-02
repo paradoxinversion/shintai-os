@@ -86,6 +86,13 @@ File logFile;
 bool fsReady = false;
 char logPath[24];
 
+// Durability: close() commits the FAT directory entry to flash; per-row flush()
+// alone does not survive a field power cut (leaves orphaned clusters — allocated
+// but with no directory entry, so unlistable/unpullable). Close on a row cadence
+// so at most this many rows are at risk of a power cut, then reopen in APPEND.
+const uint32_t FLASH_COMMIT_ROWS = 16;
+uint32_t rowsSinceCommit = 0;
+
 // Open a fresh session file named by a persistent (NVS) boot counter.
 void openNewLog() {
   uint32_t seq = prefs.getUInt("seq", 0) + 1;
@@ -95,47 +102,59 @@ void openNewLog() {
   if (logFile) { logFile.println(CSV_HEADER); logFile.flush(); }
 }
 
+// Enumerate flash logs by their deterministic /shtNNNN.csv names, iterating the
+// NVS boot counter 1..seq. The ESP32 core's FFat root openNextFile() enumerates
+// NOTHING on this board even for well-formed closed files (confirmed: exists()
+// and open-by-name work, but directory iteration returns 0) — so listing/dumping
+// via openNextFile silently found no files. We only ever create /shtNNNN.csv, so
+// name-based iteration is complete and sidesteps the broken enumeration.
 void listLogs() {
   if (!fsReady) { Serial.println("<<<NOFS>>>"); return; }
-  File root = FFat.open("/");
-  size_t total = 0; int count = 0;
-  for (File f = root.openNextFile(); f; f = root.openNextFile()) {
-    if (f.isDirectory()) continue;
-    Serial.printf("  %s\t%u bytes\n", f.name(), (unsigned)f.size());
-    total += f.size(); count++;
+  uint32_t seq = prefs.getUInt("seq", 0);
+  int count = 0;
+  for (uint32_t i = 1; i <= seq; i++) {
+    char p[24]; snprintf(p, sizeof(p), "/sht%04u.csv", (unsigned)i);
+    if (!FFat.exists(p)) continue;
+    File f = FFat.open(p);
+    if (!f) continue;
+    Serial.printf("  %s\t%u bytes\n", p, (unsigned)f.size());
+    count++;
+    f.close();
   }
   Serial.printf("  %d file(s), %u bytes used / %u total\n",
                 count, (unsigned)FFat.usedBytes(), (unsigned)FFat.totalBytes());
 }
 
 // Dump every flash file over Serial, wrapped in markers the host parser keys on.
+// Enumerated by seq-name (see listLogs) since openNextFile() is broken here.
 void dumpAllLogs() {
   if (!fsReady) { Serial.println("<<<NOFS>>>"); return; }
-  if (logFile) logFile.flush();
-  File root = FFat.open("/");
-  for (File f = root.openNextFile(); f; f = root.openNextFile()) {
-    if (f.isDirectory()) continue;
-    Serial.printf("<<<BEGIN %s %u>>>\n", f.name(), (unsigned)f.size());
+  if (logFile) { logFile.close(); rowsSinceCommit = 0; }  // commit current session before dumping
+  uint32_t seq = prefs.getUInt("seq", 0);
+  for (uint32_t i = 1; i <= seq; i++) {
+    char p[24]; snprintf(p, sizeof(p), "/sht%04u.csv", (unsigned)i);
+    if (!FFat.exists(p)) continue;
+    File f = FFat.open(p);
+    if (!f) continue;
+    Serial.printf("<<<BEGIN %s %u>>>\n", p, (unsigned)f.size());
     uint8_t buf[256]; int n;
     while ((n = f.read(buf, sizeof(buf))) > 0) Serial.write(buf, n);
-    Serial.printf("\n<<<END %s>>>\n", f.name());
+    Serial.printf("\n<<<END %s>>>\n", p);
+    f.close();
   }
   Serial.println("<<<DONE>>>");
 }
 
+// Erase by seq-name (see listLogs) since openNextFile() is broken here.
 void eraseLogs() {
   if (!fsReady) { Serial.println("<<<NOFS>>>"); return; }
-  if (logFile) logFile.close();
-  File root = FFat.open("/");
-  String victims[64]; int vn = 0;
-  for (File f = root.openNextFile(); f && vn < 64; f = root.openNextFile()) {
-    if (f.isDirectory()) continue;
-    String p = f.name();
-    if (!p.startsWith("/")) p = "/" + p;
-    victims[vn++] = p;
-  }
+  if (logFile) { logFile.close(); rowsSinceCommit = 0; }
+  uint32_t seq = prefs.getUInt("seq", 0);
   int erased = 0;
-  for (int i = 0; i < vn; i++) if (FFat.remove(victims[i])) erased++;
+  for (uint32_t i = 1; i <= seq; i++) {
+    char p[24]; snprintf(p, sizeof(p), "/sht%04u.csv", (unsigned)i);
+    if (FFat.exists(p) && FFat.remove(p)) erased++;
+  }
   openNewLog();                       // resume logging into a fresh file
   fsReady = (bool)logFile;
   Serial.printf("<<<ERASED %d>>>\n", erased);
@@ -416,11 +435,25 @@ void loop() {
     row += ',';  row += (scdHasData ? String(scdTemp, 1)    : String(""));
     row += ',';  row += (scdHasData ? String(scdHum, 1)     : String(""));
 
-    // Persist to onboard flash only while untethered (no USB host); flush each
-    // row so a sudden power loss in the field keeps everything up to the last.
-    if (fsReady && logFile && !Serial) {
-      logFile.println(row);
-      logFile.flush();
+    // Persist to onboard flash only while untethered (no USB host). close() on a
+    // row cadence (and on host-connect, below) commits the directory entry so a
+    // field power cut can't orphan the file; reopen in APPEND so we never
+    // truncate. Loss on a cut is bounded to the last FLASH_COMMIT_ROWS rows.
+    bool untethered = !Serial;
+    if (fsReady && untethered) {
+      if (!logFile) logFile = FFat.open(logPath, FILE_APPEND);   // (re)open at end — NOT FILE_WRITE
+      if (logFile) {
+        logFile.println(row);
+        if (++rowsSinceCommit >= FLASH_COMMIT_ROWS) {
+          logFile.close();          // f_close → directory entry + FAT flushed; reopened lazily
+          rowsSinceCommit = 0;
+        } else {
+          logFile.flush();          // push data sectors out between commits
+        }
+      }
+    } else if (fsReady && !untethered && logFile) {
+      logFile.close();              // host just connected: commit + release so it's pullable now
+      rowsSinceCommit = 0;
     }
 
     // Stream over Serial when a host asked for CSV (header first).
