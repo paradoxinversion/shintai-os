@@ -2,13 +2,13 @@
 
 *Heat-sight: point, hold, and read a surface's temperature as light — "is it safe to touch?"*
 
-**Status:** spec (unbuilt) · **Zōkyō:** Nesshi (candidate — sibling to [Rokkan](../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../CONTRACT.md) (no change) · **Shares:** [Aizu](./aizu.md) (output *and* input)
+**Status:** spec (unbuilt) · **Zōkyō:** Nesshi (candidate — sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) (no change) · **Shares:** [Aizu](../platform/aizu.md) (output *and* input)
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 
 ## What this is
 
-Nesshi — "heat-sight" — turns the [MLX90640](../REGISTRY.md#sensors) thermal camera into an
+Nesshi — "heat-sight" — turns the [MLX90640](../../REGISTRY.md#sensors) thermal camera into an
 **on-demand point-and-read thermometer**. Aim the rig at a surface, **hold the BOOT button**, and
 the temperature of whatever's at the centre of the frame is read out as a colour on the onboard
 NeoPixel (and, if present, the number in the glasses): green when it's safe, escalating to red when
@@ -23,7 +23,7 @@ body. Nesshi is the first module to make the 768-px thermal camera **do somethin
 on demand, with no screen required.
 
 Like [Kanki](./kanki.md), Nesshi is **one interaction, one cue** — a candidate **new Zōkyō** beside
-Rokkan, drawn from the shared [parts catalog](../REGISTRY.md#parts-catalog). And like Kanki, its
+Rokkan, drawn from the shared [parts catalog](../../REGISTRY.md#parts-catalog). And like Kanki, its
 real value in the spec series is what it *stresses*: **Kanki proved Aizu's output must be shared;
 Nesshi proves Aizu's input must be too.** See [The shared button](#the-shared-button--the-pressure-test).
 
@@ -62,10 +62,10 @@ Nesshi proves Aizu's input must be too.** See [The shared button](#the-shared-bu
 
 | Part | Role | Source |
 |------|------|--------|
-| [MLX90640](../REGISTRY.md#sensors) | thermal input (`thermal_ctr` spot; `thermal_max`/`hotspot_delta` scene) | already read in `loop()` |
-| **BOOT button (GPIO0)** | hold-to-measure trigger | via [Aizu's input layer](./aizu.md#input--the-boot-button) |
-| **Onboard NeoPixel** | the hot/cold cue | via [Aizu](./aizu.md) |
-| [RayNeo / phone](../REGISTRY.md#output--feedback) *(optional)* | numeric readout | [Shikai](../REGISTRY.md#shikai-視界--field-of-view) |
+| [MLX90640](../../REGISTRY.md#sensors) | thermal input (`thermal_ctr` spot; `thermal_max`/`hotspot_delta` scene) | already read in `loop()` |
+| **BOOT button (GPIO0)** | hold-to-measure trigger | via [Aizu's input layer](../platform/aizu.md#input--the-boot-button) |
+| **Onboard NeoPixel** | the hot/cold cue | via [Aizu](../platform/aizu.md) |
+| [RayNeo / phone](../../REGISTRY.md#output--feedback) *(optional)* | numeric readout | [Shikai](../../REGISTRY.md#shikai-視界--field-of-view) |
 
 ## Behaviour — the read and the cue
 
@@ -100,7 +100,7 @@ alarmed) — closer to Kanki's calm voice than Kehai's frantic one.
 
 ## The shared button — the pressure-test
 
-[Aizu](./aizu.md#input--the-boot-button) owns GPIO0 and, per **AZ-3**, treats a **single press as a
+[Aizu](../platform/aizu.md#input--the-boot-button) owns GPIO0 and, per **AZ-3**, treats a **single press as a
 mute toggle**. Nesshi needs the *same button* as a **hold-to-measure** trigger. That's the input-side
 analogue of the collision Kanki found on the output side: **one physical button, two claimants.**
 
@@ -121,7 +121,7 @@ elsewhere is untouched. Flagged in [Cross-spec impact](#cross-spec-impact).
 
 Nesshi posts an **interactive, high-priority** cue while the button is held: the user is *actively
 asking* for this reading, so it should dominate the LED — but a safety reflex still outranks it.
-Recommended rung in Aizu's [priority ladder](./aizu.md#arbitration):
+Recommended rung in Aizu's [priority ladder](../platform/aizu.md#arbitration):
 
 ```
 Kehai Reflex  >  Nesshi (while held)  >  Kanki Bad  >  Kehai Approach  >  Kanki Poor/Stuffy  >  idle
@@ -150,7 +150,7 @@ Target: `firmware/shintai-os/shintai-os.ino`. Builds on Aizu + the existing ther
 ## Contract impact
 
 **None.** `thermal_ctr` / `thermal_max` / `hotspot_delta` are already in the CSV schema and the
-Thermal GATT characteristic ([CONTRACT.md](../CONTRACT.md)). Nesshi is output-only and adds no
+Thermal GATT characteristic ([CONTRACT.md](../../CONTRACT.md)). Nesshi is output-only and adds no
 field. Same posture as Kehai-Hikari and Kanki.
 
 ## Acceptance criteria
@@ -188,10 +188,10 @@ All five opening questions are resolved; recorded here as the build contract.
 
 - **Aizu — input (amendment):** its BOOT-button handling grows from "single press = mute" (AZ-3)
   into a small **gesture layer** emitting `CLICK` / `HOLD` events to subscribers; `CLICK` routes to
-  mute, `HOLD` to Nesshi. Sensing logic unchanged. (Committed [ND-1](#decisions); applied to [aizu.md](./aizu.md#input--the-boot-button) as AZ-9.)
+  mute, `HOLD` to Nesshi. Sensing logic unchanged. (Committed [ND-1](#decisions); applied to [aizu.md](../platform/aizu.md#input--the-boot-button) as AZ-9.)
 - **Aizu — output (amendment):** add a **Nesshi (while held)** rung to the priority ladder, just
-  below Kehai Reflex and above Kanki Bad. (Committed [ND-1](#decisions); applied to [aizu.md](./aizu.md#arbitration) as AZ-10.)
-- **Registry (build-time):** Nesshi earns its own row in the [Zōkyō table](../REGISTRY.md#zōkyō)
+  below Kehai Reflex and above Kanki Bad. (Committed [ND-1](#decisions); applied to [aizu.md](../platform/aizu.md#arbitration) as AZ-10.)
+- **Registry (build-time):** Nesshi earns its own row in the [Zōkyō table](../../REGISTRY.md#zōkyō)
   beside Rokkan and Kanki.
 
 ## Forward path

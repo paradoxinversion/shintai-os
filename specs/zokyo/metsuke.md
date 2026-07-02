@@ -2,28 +2,28 @@
 
 *The gaze: a live low-res thermal overlay in the glasses — heat-vision on the no-PSRAM board.*
 
-**Status:** spec (unbuilt) · **Zōkyō:** Metsuke (candidate — thermal sight, realized through [Shikai](../REGISTRY.md#shikai-視界--field-of-view)) · **Seam:** [CONTRACT.md](../CONTRACT.md) — **changes it** (first spec to)
+**Status:** spec (unbuilt) · **Zōkyō:** Metsuke (candidate — thermal sight, realized through [Shikai](../../REGISTRY.md#shikai-視界--field-of-view)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) — **changes it** (first spec to)
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 
 ## What this is
 
 Metsuke — "the gaze / watchfulness" — puts a **live thermal image in the HUD**. The
-[MLX90640](../REGISTRY.md#sensors) already captures a 32×24 (768-px) frame every loop; today only
+[MLX90640](../../REGISTRY.md#sensors) already captures a 32×24 (768-px) frame every loop; today only
 four summary numbers (`thermal_min/ctr/max/mean`) ever leave the board. Metsuke **downsamples the
 frame on-device to a coarse grid, streams it over BLE, and the glasses render it as a false-colour
 heat panel** — a "predator vision" view of warm bodies, hot machinery, and heat leaks, at the
 thermal camera's native ~2 Hz.
 
-It is the first module that is genuinely **sight-out rich**: where [Shikai](../REGISTRY.md#shikai-視界--field-of-view)
+It is the first module that is genuinely **sight-out rich**: where [Shikai](../../REGISTRY.md#shikai-視界--field-of-view)
 today shows sensor *readouts*, Metsuke shows an *image*. It's a candidate **new Zōkyō** (a new sense
 — thermal vision) but, unlike its siblings, it is **not standalone**: it rides the glasses HUD
 (Shikai) and it is the **first module to add to the data contract**.
 
 Two structural firsts, called out because they break the series' pattern:
-- **It changes [CONTRACT.md](../CONTRACT.md)** — Kehai-Hikari, Kanki, and Nesshi were all output-only
+- **It changes [CONTRACT.md](../../CONTRACT.md)** — Kehai-Hikari, Kanki, and Nesshi were all output-only
   from existing signals; Metsuke needs a **new BLE characteristic** to carry the grid.
-- **It uses Shikai, not [Aizu](./aizu.md)** — the output surface is the glasses, not the NeoPixel.
+- **It uses Shikai, not [Aizu](../platform/aizu.md)** — the output surface is the glasses, not the NeoPixel.
   Metsuke posts no cue and touches no button.
 
 ## Why (the thrifty case)
@@ -61,8 +61,8 @@ Two structural firsts, called out because they break the series' pattern:
 
 | Part | Role | Source |
 |------|------|--------|
-| [MLX90640](../REGISTRY.md#sensors) | 768-px thermal frame → downsampled grid | already read in `loop()` |
-| [RayNeo X3 Pro / phone](../REGISTRY.md#output--feedback) | renders the heat panel | via [Shikai](../REGISTRY.md#shikai-視界--field-of-view) / `android/` |
+| [MLX90640](../../REGISTRY.md#sensors) | 768-px thermal frame → downsampled grid | already read in `loop()` |
+| [RayNeo X3 Pro / phone](../../REGISTRY.md#output--feedback) | renders the heat panel | via [Shikai](../../REGISTRY.md#shikai-視界--field-of-view) / `android/` |
 | **BLE (new characteristic)** | carries the grid | firmware ↔ `android/` |
 
 ## Behaviour — frame → grid → heat panel
@@ -82,7 +82,7 @@ Motion is not "video" — at 2 Hz it's a pulsing heat map; that's expected and f
 
 ## Contract change
 
-**This is the notable part — Metsuke is the first module to edit [CONTRACT.md](../CONTRACT.md).**
+**This is the notable part — Metsuke is the first module to edit [CONTRACT.md](../../CONTRACT.md).**
 Per the project invariant, change the contract **first**, then its three mirrors: firmware
 characteristic + UUID, the Kotlin UUID in `android/.../ShintaiGatt.kt`, and this table.
 
@@ -99,7 +99,7 @@ A new **Thermal Grid** characteristic (`READ | NOTIFY`), proposed UUID
   characteristics never needed this; Metsuke does.
 - **CCCD gotcha still applies.** The notify-enable descriptor is the Bluetooth base UUID
   `00002902-0000-1000-8000-00805f9b34fb` — the `8000` (not `0000`) matters, or notifications
-  silently die (see [CONTRACT.md](../CONTRACT.md)).
+  silently die (see [CONTRACT.md](../../CONTRACT.md)).
 
 The CSV schema is **unchanged** — the grid is BLE-live-only.
 

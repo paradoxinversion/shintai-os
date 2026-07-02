@@ -2,18 +2,18 @@
 
 *Step-reckoning: count steps, catch falls, and reconstruct where you walked — even with no GPS fix.*
 
-**Status:** spec (unbuilt) · **Zōkyō:** Hokan (candidate — sibling to [Rokkan](../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../CONTRACT.md) — **changes it** (CSV half)
+**Status:** spec (unbuilt) · **Zōkyō:** Hokan (candidate — sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) — **changes it** (CSV half)
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 
 ## What this is
 
-Hokan — "step-reckoning" — turns the [IMU](../REGISTRY.md#sensors) into a **pedometer, fall detector,
+Hokan — "step-reckoning" — turns the [IMU](../../REGISTRY.md#sensors) into a **pedometer, fall detector,
 and pedestrian dead-reckoner**. Its headline is the one capability nothing else in the series has:
 **positioning without GPS.** Count steps from the accelerometer, take heading from the magnetometer,
 and integrate `step_length × heading` step by step — and you get a **reconstructed walked path in a
 GPS-denied space** (indoors, in a canyon, underground), where `lat`/`lon` are blank. Falls fire a
-live SOS through [Aizu](./aizu.md); the path is drawn base-side by the [ground-station](../REGISTRY.md#parts-catalog).
+live SOS through [Aizu](../platform/aizu.md); the path is drawn base-side by the [ground-station](../../REGISTRY.md#parts-catalog).
 
 It's the odd one out on three axes, each a genuine first for the series — see
 [Three firsts](#three-firsts):
@@ -30,7 +30,7 @@ It's the odd one out on three axes, each a genuine first for the series — see
 - **GPS-denied nav from a sensor you own.** The LSM6DSOX + LIS3MDL already on the rig give a walked
   track where GPS goes blind — no new BOM. This is the one *new capability* left in the parts bin.
 - **Falls for free.** Once the IMU is sampled fast, the freefall→impact→stillness signature is cheap
-  to detect — a real safety feature riding [Aizu](./aizu.md)'s existing SOS path.
+  to detect — a real safety feature riding [Aizu](../platform/aizu.md)'s existing SOS path.
 - **The ground-station already draws tracks.** `analyze.py` maps GPS routes; Hokan feeds it a
   *dead-reckoned* track to draw the same way when there's no fix.
 
@@ -58,9 +58,9 @@ It's the odd one out on three axes, each a genuine first for the series — see
 
 | Part | Role | Source |
 |------|------|--------|
-| [LSM6DSOX](../REGISTRY.md#sensors) | fast accel → step + fall detection | sampled live in `loop()` |
-| [LIS3MDL](../REGISTRY.md#sensors) | heading for each step segment | `heading_deg` |
-| **Onboard NeoPixel** | fall SOS cue | via [Aizu](./aizu.md) |
+| [LSM6DSOX](../../REGISTRY.md#sensors) | fast accel → step + fall detection | sampled live in `loop()` |
+| [LIS3MDL](../../REGISTRY.md#sensors) | heading for each step segment | `heading_deg` |
+| **Onboard NeoPixel** | fall SOS cue | via [Aizu](../platform/aizu.md) |
 | **Ground-station** (`analyze.py`) | dead-reckon + draw the path | base-side |
 
 ## Behaviour — steps, falls, the path
@@ -113,9 +113,9 @@ Target: `firmware/shintai-os/shintai-os.ino`.
 3. **Log `steps`.** Add cumulative `steps` to the CSV row (and the flash log) — one new column at the
    end of `CSV_HEADER` (append-only, so existing parsers that key on column *names* stay safe).
 4. **Fall → Aizu.** Post an ALERT SOS cue via Aizu on a detected fall; clear on stillness-resolved or
-   a mute [gesture](./aizu.md#input--the-boot-button).
+   a mute [gesture](../platform/aizu.md#input--the-boot-button).
 5. **Untethered-safe.** Steps log to flash on battery like every other field value — riding
-   [the durability fix](./fix-flash-log-durability.md). No change to the telemetry cadence.
+   [the durability fix](../fixes/fix-flash-log-durability.md). No change to the telemetry cadence.
 
 ## Ground-station integration
 
@@ -130,7 +130,7 @@ Target: `groundstation/` (`analyze.py` + a small `hokan.py`, mirroring [Kiroku](
 ## Contract impact
 
 **Changes the CSV half.** Adds one column, `steps` (cumulative count, integer), appended to the CSV
-schema. Update the three mirror sites: [CONTRACT.md](../CONTRACT.md) CSV table, firmware `CSV_HEADER`,
+schema. Update the three mirror sites: [CONTRACT.md](../../CONTRACT.md) CSV table, firmware `CSV_HEADER`,
 and any hardcoded ground-station column handling. **Append at the end** so consumers that key on
 column *names* (and the `line[0].isdigit()` framing) are unaffected. The BLE GATT and flash framing
 are untouched. (A `cadence` column is optional — [HkD-5](#decisions).)
@@ -166,7 +166,7 @@ All five opening questions are resolved; recorded here as the build contract.
 - **CONTRACT.md** — the first **CSV-half** change (`steps`); pairs with Metsuke's BLE-half change so
   the series now exercises both halves of the contract with real modules.
 - **Aizu** — adds a **Hokan fall SOS** ALERT cue source, committed as the top-tier rung
-  [AZ-11](./aizu.md#decisions) (rank 2, co-critical with Kehai Reflex; latches until resolved).
+  [AZ-11](../platform/aizu.md#decisions) (rank 2, co-critical with Kehai Reflex; latches until resolved).
 - **Kiroku** — shares the IMU/GPS sensing and the base-side-analysis surface; Kiroku detects *events*
   post-hoc, Hokan detects *steps* live and logs them. Complementary, not overlapping.
 - **Registry (build-time)** — Hokan earns a Zōkyō row; note it's the first contract-touching *and*
@@ -177,7 +177,7 @@ All five opening questions are resolved; recorded here as the build contract.
 - **PDR ⇄ GPS fusion:** snap/anchor the dead-reckoned track to GPS whenever a fix returns, bounding
   drift — a true indoor/outdoor continuous track.
 - **Adaptive step length** (Weinberg/Kim) for better distance accuracy on varied gait.
-- **Live HUD mini-map:** a step/heading BLE characteristic feeding a [Shikai](../REGISTRY.md#shikai-視界--field-of-view)
+- **Live HUD mini-map:** a step/heading BLE characteristic feeding a [Shikai](../../REGISTRY.md#shikai-視界--field-of-view)
   breadcrumb — Hokan's path shown live in the glasses (the BLE-half change it avoided in v1).
 - **Better heading:** a fused IMU (BNO085) for tilt-compensated heading, cutting PDR drift at the
   source.

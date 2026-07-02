@@ -2,7 +2,7 @@
 
 *The record: turn every untethered session into a reviewable black box — where you braked, cornered, and crashed, pinned on the map.*
 
-**Status:** spec (unbuilt) · **Zōkyō:** Kiroku (candidate — realized through the [ground-station](../REGISTRY.md#parts-catalog), base-side) · **Seam:** [CONTRACT.md](../CONTRACT.md) (no change, v1)
+**Status:** spec (unbuilt) · **Zōkyō:** Kiroku (candidate — realized through the [ground-station](../../REGISTRY.md#parts-catalog), base-side) · **Seam:** [CONTRACT.md](../../CONTRACT.md) (no change, v1)
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 
@@ -16,15 +16,15 @@ After a ride, hike, or drive you get a map of *where the interesting moments wer
 breadcrumb trail.
 
 It is the **payoff of untethered logging**: the rig already writes GPS + speed + accel + climate +
-thermal to flash while on battery, and — thanks to [the durability fix](./fix-flash-log-durability.md)
+thermal to flash while on battery, and — thanks to [the durability fix](../fixes/fix-flash-log-durability.md)
 — those logs now survive a power cut and pull cleanly. Kiroku is what you *do* with them.
 
 Two things make it the odd one out in the series, deliberately:
-- **Its surface is the [ground-station](../REGISTRY.md#parts-catalog), not the body.** Where Metsuke
+- **Its surface is the [ground-station](../../REGISTRY.md#parts-catalog), not the body.** Where Metsuke
   outputs to the glasses (Shikai) and Kehai/Kanki/Nesshi to the NeoPixel (Aizu), Kiroku outputs to
   **`analyze.py` / the route map** — base-side. It completes the output taxonomy: NeoPixel · glasses
   · **base-side analysis**.
-- **First real use of the [IMU](../REGISTRY.md#sensors) as more than raw accel.** Kehai used ToF,
+- **First real use of the [IMU](../../REGISTRY.md#sensors) as more than raw accel.** Kehai used ToF,
   Kanki the SCD-40, Nesshi/Metsuke the thermal cam — the LSM6DSOX has only ever been logged. Kiroku
   interprets it: acceleration magnitude → events.
 
@@ -65,10 +65,10 @@ Two things make it the odd one out in the series, deliberately:
 
 | Part | Role | Source |
 |------|------|--------|
-| [LSM6DSOX](../REGISTRY.md#sensors) | acceleration magnitude → jolt/impact events | `accel_*` columns |
-| [PA1010D GPS](../REGISTRY.md#sensors) | speed & heading → brake / accel / turn events; position for pins | `gps_*`, `speed_kmh` |
-| [SCD-40](../REGISTRY.md#sensors) / [MLX90640](../REGISTRY.md#sensors) | per-event context annotation | `air_temp_c` / `co2_ppm` / `hotspot_delta` … |
-| **Ground-station** (`analyze.py`) | detects, pins, reports | base-side, [shared](../REGISTRY.md#parts-catalog) |
+| [LSM6DSOX](../../REGISTRY.md#sensors) | acceleration magnitude → jolt/impact events | `accel_*` columns |
+| [PA1010D GPS](../../REGISTRY.md#sensors) | speed & heading → brake / accel / turn events; position for pins | `gps_*`, `speed_kmh` |
+| [SCD-40](../../REGISTRY.md#sensors) / [MLX90640](../../REGISTRY.md#sensors) | per-event context annotation | `air_temp_c` / `co2_ppm` / `hotspot_delta` … |
+| **Ground-station** (`analyze.py`) | detects, pins, reports | base-side, [shared](../../REGISTRY.md#parts-catalog) |
 
 No worn feedback Tsukiwaza — the host produces the log; the base-side tooling makes the record.
 

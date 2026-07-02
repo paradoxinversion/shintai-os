@@ -2,14 +2,14 @@
 
 *The cue. One shared on-body output bus: sources post, the arbiter renders.*
 
-**Status:** spec (unbuilt) · **Kind:** shared host capability (not a Zōkyō) · **Seam:** [CONTRACT.md](../CONTRACT.md) (no change) · **Used by:** [Kehai-Hikari](./kehai-hikari.md), [Kanki](./kanki.md), future remixes
+**Status:** spec (unbuilt) · **Kind:** shared host capability (not a Zōkyō) · **Seam:** [CONTRACT.md](../../CONTRACT.md) (no change) · **Used by:** [Kehai-Hikari](../zokyo/kehai-hikari.md), [Kanki](../zokyo/kanki.md), future remixes
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 
 ## What this is
 
-Aizu — "signal / cue" — is the **shared feedback layer** the [Kehai-Hikari](./kehai-hikari.md) and
-[Kanki](./kanki.md) specs both delegate to. The QT Py has exactly **one** onboard RGB NeoPixel, and
+Aizu — "signal / cue" — is the **shared feedback layer** the [Kehai-Hikari](../zokyo/kehai-hikari.md) and
+[Kanki](../zokyo/kanki.md) specs both delegate to. The QT Py has exactly **one** onboard RGB NeoPixel, and
 more than one module wants to speak on it. Aizu is the small arbiter that makes that safe: modules
 **post cues**; Aizu decides which cue wins and **renders** it on the pixel (and later fans the same
 cue out to a DRV2605 haptic). No module touches the pixel directly.
@@ -19,7 +19,7 @@ is shared base-side tooling docked to by every Zōkyō, Aizu is shared **on-body
 infrastructure** every Zōkyō with local feedback draws on. It has no sense of its own — it only
 expresses what sources hand it.
 
-**Why it exists:** writing [Kanki](./kanki.md) second put two claimants on one LED and proved the
+**Why it exists:** writing [Kanki](../zokyo/kanki.md) second put two claimants on one LED and proved the
 Kehai `driveReflex()`-owns-the-pixel framing wrong. KD-1 committed this arbiter and its name; this
 spec is its home — the interface, the arbitration, the rendering, idle, input, and the haptic
 fan-out that were previously smeared across the two feature specs.
@@ -159,12 +159,12 @@ quiescent source states need post nothing.
 Aizu owns GPIO0 (the QT Py BOOT button) at runtime and exposes it as a small **gesture layer** — the
 input twin of the cue bus — emitting debounced events that modules subscribe to ([AZ-9](#decisions)).
 This is where the deferred Kehai-Hikari **D-2** mute lands, now sharing the button with
-[Nesshi](./nesshi.md):
+[Nesshi](../zokyo/nesshi.md):
 
 - **`CLICK`** (short press-release) → **toggle mute** (Aizu's own function). Muted = pixel fully dark
   regardless of cues (stealth / dark room); click again restores.
 - **`HOLD`** (press-and-hold ≥ ~400 ms; `HOLD_START` / `HOLD_END`) → routed to a subscriber. First
-  subscriber is [Nesshi](./nesshi.md) (hold-to-measure). Click and hold are separable by duration,
+  subscriber is [Nesshi](../zokyo/nesshi.md) (hold-to-measure). Click and hold are separable by duration,
   so mute and measure share the one button with no mode switch.
 - **Debounced;** GPIO0 doubles as the bootloader strap, so it's only read as input after boot.
 - **Mute is absolute** in v1 — an explicit, deliberate gesture wins over everything, including a
@@ -240,14 +240,14 @@ would be a contract change and is out of scope — [Forward path](#forward-path)
   as a mobility aid, where a safety cue piercing mute would be warranted.
 - **AZ-9 — Input is a gesture layer.** GPIO0 is exposed as debounced `CLICK` / `HOLD` events routed
   to subscribers (the input twin of the cue bus): `CLICK` → mute, `HOLD` → a subscriber (first is
-  [Nesshi](./nesshi.md)). Generalises AZ-3's single-press mute so mute and hold-to-measure share the
-  one button. (Introduced by [Nesshi](./nesshi.md).)
+  [Nesshi](../zokyo/nesshi.md)). Generalises AZ-3's single-press mute so mute and hold-to-measure share the
+  one button. (Introduced by [Nesshi](../zokyo/nesshi.md).)
 - **AZ-10 — Nesshi rung.** A **Nesshi (while held)** INTERACTIVE cue sits just below Kehai Reflex and
   above Kanki Bad — a deliberate read dominates the ambient wallpaper but yields to a collision.
-  (Introduced by [Nesshi](./nesshi.md).)
+  (Introduced by [Nesshi](../zokyo/nesshi.md).)
 - **AZ-11 — Hokan fall SOS rung.** A **Hokan Fall SOS** ALERT cue joins Kehai Reflex at the top as a
   co-critical safety alert (rank 2, above the interactive/ambient cues); it **latches** until resolved
-  or muted. The two safety alerts don't meaningfully co-occur. (Introduced by [Hokan](./hokan.md).)
+  or muted. The two safety alerts don't meaningfully co-occur. (Introduced by [Hokan](../zokyo/hokan.md).)
 
 ## Cross-spec impact
 
@@ -259,7 +259,7 @@ would be a contract change and is out of scope — [Forward path](#forward-path)
   cue source whose *other* output is base-side (the dead-reckoned path).
 - **Registry (build-time)** — Aizu wants an entry as a **shared host capability** (beside the
   ground-station's shared-tooling note, not in any one Zōkyō). Also: the **onboard NeoPixel is not
-  yet in the [parts catalog](../REGISTRY.md#parts-catalog)** — it should be added under
+  yet in the [parts catalog](../../REGISTRY.md#parts-catalog)** — it should be added under
   *Output & feedback* as Aizu's primary output surface, with the DRV2605 as its second sink.
 
 ## Forward path
@@ -268,7 +268,7 @@ would be a contract change and is out of scope — [Forward path](#forward-path)
   vibration together — Kehai's original "sensed presence" reflex, now truly felt.
 - **Profiles / brightness:** BOOT long-press to cycle brightness or a "proximity-priority" vs
   "air-priority" profile (re-weighting the ladder without a rebuild).
-- **Cue mirroring:** an optional BLE "current cue" characteristic so the [Shikai](../REGISTRY.md#shikai-視界--field-of-view)
+- **Cue mirroring:** an optional BLE "current cue" characteristic so the [Shikai](../../REGISTRY.md#shikai-視界--field-of-view)
   HUD can echo the on-body cue in the glasses — a deliberate contract addition, specced separately.
 - **More sources:** Nesshi (hot/cold), a NeoPixel compass, a gait alert — each is a table row + a
   `postCue` call, nothing more.

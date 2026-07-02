@@ -2,7 +2,7 @@
 
 *Make field (untethered) flash logs actually listable, pullable, and power-cut-safe.*
 
-**Status:** built + hardware-validated on `fix/flash-log-durability` · **Target:** `firmware/shintai-os/shintai-os.ino` · **Seam:** [CONTRACT.md](../CONTRACT.md) (no change)
+**Status:** built + hardware-validated on `fix/flash-log-durability` · **Target:** `firmware/shintai-os/shintai-os.ino` · **Seam:** [CONTRACT.md](../../CONTRACT.md) (no change)
 
 > Spec authored on `research-development-ichi`; implemented + tested on `fix/flash-log-durability`.
 

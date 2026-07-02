@@ -2,13 +2,13 @@
 
 *The proximity reflex, delivered as light.*
 
-**Status:** spec (unbuilt) · **Zōkyō:** [Rokkan](../REGISTRY.md#rokkan-六感--sixth-sense) · **Tsukiwaza:** [Kehai](../REGISTRY.md#kehai-気配--sensed-presence) · **Seam:** [CONTRACT.md](../CONTRACT.md)
+**Status:** spec (unbuilt) · **Zōkyō:** [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense) · **Tsukiwaza:** [Kehai](../../REGISTRY.md#kehai-気配--sensed-presence) · **Seam:** [CONTRACT.md](../../CONTRACT.md)
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 
 ## What this is
 
-[Kehai](../REGISTRY.md#kehai-気配--sensed-presence) — "sensed presence," the perception-**out**
+[Kehai](../../REGISTRY.md#kehai-気配--sensed-presence) — "sensed presence," the perception-**out**
 touch channel of the Rokkan Zōkyō — is listed *planned*, blocked on a **DRV2605 haptic driver
 + motor we do not own**. Kehai-Hikari unblocks it with a part already soldered to the host:
 the **QT Py ESP32-S3's onboard NeoPixel**. It turns `distance_mm` / `alert` into a coloured,
@@ -17,7 +17,7 @@ instead of *vibration*.
 
 This is **not a new Zōkyō and not a new sense.** It is the first *buildable* implementation of
 the existing Kehai Tsukiwaza. The seam does not move: Kehai reacts to `distance_mm` and the
-edge-triggered `alert` (already in [CONTRACT.md](../CONTRACT.md)), and Kehai-Hikari reads exactly
+edge-triggered `alert` (already in [CONTRACT.md](../../CONTRACT.md)), and Kehai-Hikari reads exactly
 those. When the DRV2605 arrives, the haptic path drops in **behind the same feedback call** —
 light-first, haptic-later, or both at once. See [Forward path](#forward-path).
 
@@ -38,7 +38,7 @@ light-first, haptic-later, or both at once. See [Forward path](#forward-path).
    cadence.
 3. Run entirely on-host, independent of BLE connection and of the `h`/`c`/`b` serial output mode.
 4. Behave on battery: bounded idle current, capped brightness.
-5. Route all feedback through the **shared feedback arbiter** ([Aizu](./aizu.md)):
+5. Route all feedback through the **shared feedback arbiter** ([Aizu](../platform/aizu.md)):
    Kehai *posts* an Alert-class cue, it does not own the pixel — so it coexists with other sources
    (e.g. Kanki) and a DRV2605 haptic drops in behind the same bus without touching sensing logic.
 
@@ -55,8 +55,8 @@ light-first, haptic-later, or both at once. See [Forward path](#forward-path).
 
 | Part | Role | Source |
 |------|------|--------|
-| [VL53L4CX](../REGISTRY.md#sensors) ToF | proximity input (`distance_mm`, `alert`) | already read in `loop()` |
-| **QT Py ESP32-S3 onboard NeoPixel** | the feedback sink (this spec) | on the [host board](../REGISTRY.md#host--infrastructure) |
+| [VL53L4CX](../../REGISTRY.md#sensors) ToF | proximity input (`distance_mm`, `alert`) | already read in `loop()` |
+| **QT Py ESP32-S3 onboard NeoPixel** | the feedback sink (this spec) | on the [host board](../../REGISTRY.md#host--infrastructure) |
 | BOOT button (GPIO0) | *optional* mute/toggle | on the host board |
 
 New firmware dependency: **`Adafruit_NeoPixel`** (single pixel). Use the board's `PIN_NEOPIXEL`
@@ -103,7 +103,7 @@ Target: `firmware/shintai-os/shintai-os.ino`. Constraints below are load-bearing
    between fresh samples.
 3. **The seam — post to Aizu, don't own the pixel.** Kehai computes its band + requested motion
    and **posts an Alert-class cue** to the shared feedback arbiter — `postCue(KEHAI, ALERT, colour, motion)`
-   — defined in [Aizu § the cue](./aizu.md#the-cue). The arbiter
+   — defined in [Aizu § the cue](../platform/aizu.md#the-cue). The arbiter
    is the sole writer of the NeoPixel; Kehai never names the pixel directly, and the future DRV2605 is
    another sink *behind* the arbiter, not a change to Kehai. *(Supersedes the earlier
    `driveReflex()`-owns-the-LED framing — see [Kanki, cross-spec impact](./kanki.md#cross-spec-impact).)*
@@ -128,7 +128,7 @@ Target: `firmware/shintai-os/shintai-os.ino`. Constraints below are load-bearing
 ## Contract impact
 
 **None.** No new CSV column, no new GATT characteristic, no cadence change to the 1500 ms
-telemetry row. [CONTRACT.md](../CONTRACT.md) is untouched. Kehai-Hikari derives entirely from the
+telemetry row. [CONTRACT.md](../../CONTRACT.md) is untouched. Kehai-Hikari derives entirely from the
 already-published `distance_mm` and `alert`. (A future "reflex state" field is conceivable but is
 explicitly *not* part of this spec.)
 
@@ -159,7 +159,7 @@ All four opening questions are resolved; recorded here as the build contract.
   Battery vs tethered is read from `!Serial` (the same untethered proxy the flash-logger uses —
   a USB power bank presents no CDC host, so it counts as field). Hold `NEOPIXEL_POWER` when
   breathing; write colour 0 when off (cutting the power pin is optional, only if idle draw warrants).
-  *Now an arbiter/[Aizu](./aizu.md#idle)-level idle policy shared by all cue
+  *Now an arbiter/[Aizu](../platform/aizu.md#idle)-level idle policy shared by all cue
   sources, not Kehai-private.*
 - **D-2 — BOOT mute:** **deferred** — not in v1. Folds into the shared feedback/input layer with
   the other remixes (see [Forward path](#forward-path)).
@@ -180,5 +180,5 @@ All four opening questions are resolved; recorded here as the build contract.
   committed (via [Kanki](./kanki.md)) — the arbiter that other remixes (Nesshi's hot/cold cue, a
   NeoPixel compass) and the DRV2605 haptic all post to. Wants its own spec and a registry entry as a
   shared host capability. The BOOT-button mute (D-2) folds in here.
-- **Registry:** on build, update the [Kehai row](../REGISTRY.md#kehai-気配--sensed-presence) from
+- **Registry:** on build, update the [Kehai row](../../REGISTRY.md#kehai-気配--sensed-presence) from
   *planned* to reflect the light-first path, linking this spec.
