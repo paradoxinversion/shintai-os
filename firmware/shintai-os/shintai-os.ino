@@ -86,6 +86,13 @@ File logFile;
 bool fsReady = false;
 char logPath[24];
 
+// Durability: close() commits the FAT directory entry to flash; per-row flush()
+// alone does not survive a field power cut (leaves orphaned clusters — allocated
+// but with no directory entry, so unlistable/unpullable). Close on a row cadence
+// so at most this many rows are at risk of a power cut, then reopen in APPEND.
+const uint32_t FLASH_COMMIT_ROWS = 16;
+uint32_t rowsSinceCommit = 0;
+
 // Open a fresh session file named by a persistent (NVS) boot counter.
 void openNewLog() {
   uint32_t seq = prefs.getUInt("seq", 0) + 1;
@@ -416,11 +423,25 @@ void loop() {
     row += ',';  row += (scdHasData ? String(scdTemp, 1)    : String(""));
     row += ',';  row += (scdHasData ? String(scdHum, 1)     : String(""));
 
-    // Persist to onboard flash only while untethered (no USB host); flush each
-    // row so a sudden power loss in the field keeps everything up to the last.
-    if (fsReady && logFile && !Serial) {
-      logFile.println(row);
-      logFile.flush();
+    // Persist to onboard flash only while untethered (no USB host). close() on a
+    // row cadence (and on host-connect, below) commits the directory entry so a
+    // field power cut can't orphan the file; reopen in APPEND so we never
+    // truncate. Loss on a cut is bounded to the last FLASH_COMMIT_ROWS rows.
+    bool untethered = !Serial;
+    if (fsReady && untethered) {
+      if (!logFile) logFile = FFat.open(logPath, FILE_APPEND);   // (re)open at end — NOT FILE_WRITE
+      if (logFile) {
+        logFile.println(row);
+        if (++rowsSinceCommit >= FLASH_COMMIT_ROWS) {
+          logFile.close();          // f_close → directory entry + FAT flushed; reopened lazily
+          rowsSinceCommit = 0;
+        } else {
+          logFile.flush();          // push data sectors out between commits
+        }
+      }
+    } else if (fsReady && !untethered && logFile) {
+      logFile.close();              // host just connected: commit + release so it's pullable now
+      rowsSinceCommit = 0;
     }
 
     // Stream over Serial when a host asked for CSV (header first).
