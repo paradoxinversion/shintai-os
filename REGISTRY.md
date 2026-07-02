@@ -50,7 +50,8 @@ parts rather than re-describing them — see [Rokkan](#rokkan-六感--sixth-sens
 | **LIS3MDL** — magnetometer (0x1C) | 3-axis mag → compass heading. | **MMC5603** (higher-res mag); folded into **BNO085** if you take the fused-IMU route above |
 | **Adafruit PA1010D** — GPS (0x10) | Mini I²C GPS: fix, lat/lon, altitude, speed. | **Ultimate GPS breakout / PA1616S** (external antenna, better fix); u-blox **SAM-M8Q** / **NEO-M9N** (multi-constellation); **MAX-M10S** (low power) |
 | **MLX90640** — thermal camera (0x33) | 32×24 = 768-px IR camera, 55° FOV — the surface-temp scene. | **MLX90640 110°** (wide FOV); **MLX90641** (16×12, cheaper); **AMG8833 Grid-EYE** (8×8 starter); **FLIR Lepton 3.5** (160×120 — real thermal imaging, needs SPI + PSRAM) |
-| **SCD-40** — climate (0x62) | Photoacoustic CO₂ + air temp + humidity; updates ~every 5 s. | **SCD-41** (wider range, lower power — pin-compatible upgrade); **SCD-30** (NDIR); add **BME688** (VOC / gas) or **BME280 / BMP390** (pressure → altitude); note CO₂-less boards drop the `co2_ppm` field |
+| **SCD-40** — climate (0x62) | Photoacoustic CO₂ + air temp + humidity; updates ~every 5 s. Owns `co2_ppm`; cedes air temp / humidity to the BME688 when both are present (see [contract](CONTRACT.md)). | **SCD-41** (wider range, lower power — pin-compatible upgrade); **SCD-30** (NDIR); note CO₂-less boards drop the `co2_ppm` field |
+| **BME688** — environment (0x77) | Gas-sensor resistance (VOC proxy) + barometric pressure; also the authoritative air temp / humidity (precedence over SCD-40 — faster, no self-heat offset). Fills `air_temp_c` / `humidity_pct` / `pressure_hpa` / `gas_ohms`. | **BME680** (identical driver, no AI gas model); **BMP390** (pressure / altitude only); **ENS160 + AHT21** (dedicated air-quality + T/RH); Bosch **BSEC** library for on-chip IAQ classification |
 
 ### Output & feedback
 
@@ -72,8 +73,8 @@ sensor rig. **Status: active.**
 
 Parts: [VL53L4CX](#sensors) (distance), [LSM6DSOX](#sensors) (motion) +
 [LIS3MDL](#sensors) (heading), [PA1010D](#sensors) (GPS), [MLX90640](#sensors)
-(thermal), [SCD-40](#sensors) (climate) — all wired to the
-[QT Py ESP32-S3 host](#host--infrastructure).
+(thermal), [SCD-40](#sensors) (climate), [BME688](#sensors) (env: gas/pressure) —
+all wired to the [QT Py ESP32-S3 host](#host--infrastructure).
 
 ### Shikai (視界) — *"field of view"*
 

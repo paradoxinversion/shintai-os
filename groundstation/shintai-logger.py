@@ -63,6 +63,10 @@ def dashboard(vals, samples, csv_name):
     else:
         out.append("CLIMATE    warming up…")
 
+    press, gas = _num(g("pressure_hpa")), _num(g("gas_ohms"), 0)
+    if press or gas:
+        out.append(f"ENV        {press or '—'} hPa  {f'{float(gas)/1000:.1f} kΩ' if gas else '—'} gas")
+
     if g("gps_fix") == "1":
         out.append(f"GPS        {_num(g('lat'), 5)},{_num(g('lon'), 5)}  "
                    f"{_num(g('speed_kmh'))}km/h  {g('sats')} sats")

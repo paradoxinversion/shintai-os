@@ -27,12 +27,20 @@ Consumers key off `line.startswith("timestamp_ms")` (header) and `line[0].isdigi
 | `sats` | count | Satellites used (blank until fix) |
 | `thermal_min` / `thermal_ctr` / `thermal_max` / `thermal_mean` | °C | MLX90640 surface temps (coldest / center / hottest / mean of 768 px) |
 | `hotspot_delta` | °C | `thermal_max` − ambient air temp |
-| `co2_ppm` | ppm (blank = none) | SCD-40 CO₂ |
-| `air_temp_c` | °C | SCD-40 ambient **air** temperature |
-| `humidity_pct` | %RH | SCD-40 relative humidity |
+| `co2_ppm` | ppm (blank = none) | SCD-40 CO₂ (SCD-40-only; blank when absent) |
+| `air_temp_c` | °C | Ambient **air** temperature — BME688 when present, else SCD-40, else blank |
+| `humidity_pct` | %RH | Relative humidity — BME688 when present, else SCD-40, else blank |
+| `pressure_hpa` | hPa (blank = none) | BME688 barometric pressure |
+| `gas_ohms` | Ω (blank = none) | BME688 gas-sensor resistance (VOC proxy; lower = more VOC) |
 
 `thermal_*` are *surface* temps (the IR camera); `air_temp_c`/`humidity_pct`/`co2_ppm`
-are *air* (the SCD-40, updates ~every 5 s, blank for the first few seconds after boot).
+are *air*. `air_temp_c` and `humidity_pct` are **shared semantic slots**: whichever
+climate sensor is present fills them, the **BME688 taking precedence over the SCD-40**
+(it responds faster and lacks the SCD-40's photoacoustic self-heating offset).
+`pressure_hpa`/`gas_ohms` are BME688-only; `co2_ppm` is SCD-40-only. A field is blank
+when no present sensor supplies it — consumers key on the *column*, never on which chip
+produced it, so a SCD-40 ↔ BME688 swap never moves a field. (SCD-40 warms up ~5 s and
+updates ~every 5 s, blank until then.)
 
 Serial output modes (toggle live by sending a byte): `h` human · `c` CSV · `b` both
 (default; the logger requests `b`). Onboard-flash control bytes: `L` list · `P` dump · `E` erase.
@@ -51,6 +59,7 @@ characteristic is `READ | NOTIFY` and carries a **UTF-8 string** (no binary pack
 | GPS | `abcd3456-ab12-ab12-ab12-abcdef123456` | `37.12345,-122.12345 12m 3.4km/h` |
 | Thermal | `abcd6789-ab12-ab12-ab12-abcdef123456` | `Ctr:23.1 Min:22.6 Max:31.4C` |
 | Climate | `abcdba98-ab12-ab12-ab12-abcdef123456` | `23.0C 41%RH 750ppm` |
+| Environment | `abcdc0de-ab12-ab12-ab12-abcdef123456` | `1007.2hPa 84200ohm 22.8C 39%RH` |
 
 To receive notifications a central must write `ENABLE_NOTIFICATION` to each
 characteristic's CCCD. **The CCCD UUID is the Bluetooth Base UUID
