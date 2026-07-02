@@ -94,16 +94,19 @@ numbers and filling the gap KD-1's ladder left — **where Kehai's *Approach* si
 | Rank | Cue | Class | Colour / motion | Rationale |
 |------|-----|-------|-----------------|-----------|
 | 1 (highest) | **Kehai Reflex** | ALERT | red, fast pulse / solid | imminent collision — milliseconds matter |
-| 2 | **Kanki Bad** (≥2000 ppm) | ALERT | red, slow strong pulse | dangerous air — act now, but not collision-urgent |
-| 3 | **Kehai Approach** | AMBIENT⁺ | amber, ramping pulse | something physically approaching — more *immediate* than slow air |
-| 4 | **Kanki Poor** (1200–2000) | AMBIENT | orange, slow breathe | open a window |
-| 5 | **Kanki Stuffy** (800–1200) | AMBIENT | amber, slow breathe | ventilation slipping |
+| 2 | **Nesshi** (while held) | INTERACTIVE | temp-band colour, steady | user is actively requesting a read — dominates, but yields to a collision ([AZ-10](#decisions)) |
+| 3 | **Kanki Bad** (≥2000 ppm) | ALERT | red, slow strong pulse | dangerous air — act now, but not collision-urgent |
+| 4 | **Kehai Approach** | AMBIENT⁺ | amber, ramping pulse | something physically approaching — more *immediate* than slow air |
+| 5 | **Kanki Poor** (1200–2000) | AMBIENT | orange, slow breathe | open a window |
+| 6 | **Kanki Stuffy** (800–1200) | AMBIENT | amber, slow breathe | ventilation slipping |
 | — | Kehai *Clear* / Kanki *Fresh* | quiescent | *(no cue)* | falls through to Idle |
 | bottom | **Idle** | system | green dim / dark+heartbeat | nothing to report ([Idle](#idle)) |
 
-So on a full rig: the two reds top the ladder (collision over dangerous air); a physical *approach*
-outranks *degrading* air; all-clear on both collapses to the green/dark idle. A Reflex always
-preempts, then **releases back** to whatever was underneath (a Kanki colour, or idle).
+So on a full rig: a collision Reflex tops everything; a **deliberate Nesshi read** (button held)
+dominates the ambient wallpaper while active but still yields to a collision; the two reds sit above
+the graduated warnings; a physical *approach* outranks *degrading* air; all-clear collapses to the
+green/dark idle. A Reflex always preempts, then **releases back** to whatever was underneath (a
+Nesshi read, a Kanki colour, or idle).
 
 **Anti-flicker.**
 - **Upward preempt is instant** for ALERT-class cues — you never debounce a collision warning.
@@ -151,15 +154,20 @@ quiescent source states need post nothing.
 
 ## Input — the BOOT button
 
-Aizu owns GPIO0 (the QT Py BOOT button) at runtime — the deferred Kehai-Hikari **D-2** mute lands
-here ([AZ-3](#decisions)):
+Aizu owns GPIO0 (the QT Py BOOT button) at runtime and exposes it as a small **gesture layer** — the
+input twin of the cue bus — emitting debounced events that modules subscribe to ([AZ-9](#decisions)).
+This is where the deferred Kehai-Hikari **D-2** mute lands, now sharing the button with
+[Nesshi](./nesshi.md):
 
-- **Single press → toggle mute.** Muted = pixel fully dark regardless of cues (stealth / dark room).
-  Press again restores.
+- **`CLICK`** (short press-release) → **toggle mute** (Aizu's own function). Muted = pixel fully dark
+  regardless of cues (stealth / dark room); click again restores.
+- **`HOLD`** (press-and-hold ≥ ~400 ms; `HOLD_START` / `HOLD_END`) → routed to a subscriber. First
+  subscriber is [Nesshi](./nesshi.md) (hold-to-measure). Click and hold are separable by duration,
+  so mute and measure share the one button with no mode switch.
 - **Debounced;** GPIO0 doubles as the bootloader strap, so it's only read as input after boot.
 - **Mute is absolute** in v1 — an explicit, deliberate gesture wins over everything, including a
   Reflex ([AZ-8](#decisions)); a "mute-except-critical" mode is a future mobility-aid option.
-  Long-press (brightness cycle / profiles) is [Forward path](#forward-path).
+  Gestures beyond CLICK/HOLD (double-click, long-hold → brightness/profiles) are [Forward path](#forward-path).
 
 ## Firmware integration
 
@@ -222,17 +230,26 @@ would be a contract change and is out of scope — [Forward path](#forward-path)
 - **AZ-6 — Render tick ~20 ms (~50 fps), tunable.** Smooth breathe without meaningful battery cost;
   posting is decoupled and cheaper still.
 - **AZ-7 — Approach rung committed.** Kehai *Approach* ranks above Kanki *Poor/Stuffy* and below
-  Kanki *Bad*: `Reflex > Kanki-Bad > Kehai-Approach > Kanki-Poor > Kanki-Stuffy`. A physical approach
-  outranks *degrading* air but not *dangerous* air. (Alternative — suppressing Approach whenever Kanki
-  is present — rejected: it guts Kehai's designed approach ramp.)
+  Kanki *Bad*. Full v1 ladder: `Reflex > Nesshi(held) > Kanki-Bad > Kehai-Approach > Kanki-Poor >
+  Kanki-Stuffy`. A physical approach outranks *degrading* air but not *dangerous* air. (Alternative —
+  suppressing Approach whenever Kanki is present — rejected: it guts Kehai's designed approach ramp.)
 - **AZ-8 — Mute does not pierce for a Reflex (v1).** Mute stays absolute; a collision Reflex does
   *not* override it, because muting is a deliberate stealth act. Revisit only if Aizu is ever fielded
   as a mobility aid, where a safety cue piercing mute would be warranted.
+- **AZ-9 — Input is a gesture layer.** GPIO0 is exposed as debounced `CLICK` / `HOLD` events routed
+  to subscribers (the input twin of the cue bus): `CLICK` → mute, `HOLD` → a subscriber (first is
+  [Nesshi](./nesshi.md)). Generalises AZ-3's single-press mute so mute and hold-to-measure share the
+  one button. (Introduced by [Nesshi](./nesshi.md).)
+- **AZ-10 — Nesshi rung.** A **Nesshi (while held)** INTERACTIVE cue sits just below Kehai Reflex and
+  above Kanki Bad — a deliberate read dominates the ambient wallpaper but yields to a collision.
+  (Introduced by [Nesshi](./nesshi.md).)
 
 ## Cross-spec impact
 
 - **Kehai-Hikari & Kanki** — both already amended to post cues rather than own the pixel; this spec
   is where those cues are defined. No further edits needed; the Approach rung is committed ([AZ-7](#decisions)).
+- **Nesshi** — introduced the input **gesture layer** (AZ-9) and the interactive **Nesshi rung**
+  (AZ-10). Aizu now shares *both* seams: the cue bus (output) and the CLICK/HOLD bus (input).
 - **Registry (build-time)** — Aizu wants an entry as a **shared host capability** (beside the
   ground-station's shared-tooling note, not in any one Zōkyō). Also: the **onboard NeoPixel is not
   yet in the [parts catalog](../REGISTRY.md#parts-catalog)** — it should be added under
