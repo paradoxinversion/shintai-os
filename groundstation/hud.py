@@ -11,8 +11,10 @@ Out:  analysis/hud.html   (self-contained, offline once built)  -> opened
 """
 import os
 import io
+import sys
 import glob
 import base64
+import datetime
 import subprocess
 
 import numpy as np
@@ -25,16 +27,49 @@ LOG_DIR = os.path.join(HERE, "logs")
 OUT = os.path.join(HERE, "analysis", "hud.html")
 MIN_ROWS = 50
 
-# --- pick the newest log with real data -----------------------------------
-logs = sorted(glob.glob(os.path.join(LOG_DIR, "shintai_log_*.csv")) +
-              glob.glob(os.path.join(LOG_DIR, "spidey_log_*.csv")),  # back-compat: pre-rename logs
-              key=os.path.getmtime, reverse=True)
-newest = next((p for p in logs if sum(1 for _ in open(p)) - 1 >= MIN_ROWS), None)
-if newest is None:
-    raise SystemExit("No log with >= %d rows found in %s" % (MIN_ROWS, LOG_DIR))
-print("newest log:", os.path.basename(newest))
+# --- choose which log to build (default: newest with real data) -----------
+# Usage:  python hud.py            -> newest selectable log (default)
+#         python hud.py -l         -> list selectable logs and exit
+#         python hud.py <index>    -> pick by the index shown by -l
+#         python hud.py <substring>-> newest log whose filename contains <substring>
+def _rows(path):
+    with open(path) as fh:
+        return sum(1 for _ in fh) - 1
 
-df = pd.read_csv(newest)
+def candidate_logs():
+    """Selectable logs (>= MIN_ROWS data rows), newest first."""
+    paths = glob.glob(os.path.join(LOG_DIR, "shintai_log_*.csv")) + \
+            glob.glob(os.path.join(LOG_DIR, "spidey_log_*.csv"))   # back-compat: pre-rename
+    paths = [p for p in paths if _rows(p) >= MIN_ROWS]
+    return sorted(paths, key=os.path.getmtime, reverse=True)
+
+def print_log_list(paths):
+    print("Selectable logs (newest first) — pick with:  shintailog <index|substring>\n")
+    for i, p in enumerate(paths):
+        when = datetime.datetime.fromtimestamp(os.path.getmtime(p)).strftime("%Y-%m-%d %H:%M")
+        print("  [%2d] %-48s %6d rows  %s" % (i, os.path.basename(p), _rows(p), when))
+
+def choose_log(arg, paths):
+    if arg is None:
+        return paths[0]                                  # default: newest
+    if arg.isdigit() and int(arg) < len(paths):          # a small number -> list index
+        return paths[int(arg)]
+    matches = [p for p in paths if arg.lower() in os.path.basename(p).lower()]
+    if not matches:
+        raise SystemExit("No log matches '%s'. Run with -l to list." % arg)
+    return matches[0]                                    # newest filename match
+
+arg = sys.argv[1] if len(sys.argv) > 1 else None
+logs = candidate_logs()
+if not logs:
+    raise SystemExit("No log with >= %d rows found in %s" % (MIN_ROWS, LOG_DIR))
+if arg in ("-l", "--list", "ls"):
+    print_log_list(logs)
+    sys.exit(0)
+logpath = choose_log(arg, logs)
+print("log:", os.path.basename(logpath))
+
+df = pd.read_csv(logpath)
 df["timestamp_s"] = (df["timestamp_ms"] - df["timestamp_ms"].iloc[0]) / 1000.0
 df["t_min"] = df["timestamp_s"] / 60.0
 df["accel_mag"] = (df.accel_x**2 + df.accel_y**2 + df.accel_z**2) ** 0.5
@@ -116,7 +151,7 @@ fig.update_xaxes(title_text="MINUTES SINCE BOOT", row=rows, col=1)
 fig.update_layout(
     template="plotly_dark", height=1240, paper_bgcolor=BG, plot_bgcolor=PANEL,
     font=dict(family="SFMono-Regular, Menlo, monospace", color="#9fefff", size=11),
-    title=dict(text="▸ SHINTAI-OS // " + os.path.basename(newest),
+    title=dict(text="▸ SHINTAI-OS // " + os.path.basename(logpath),
                font=dict(size=18, color="#00f0ff")),
     margin=dict(l=60, r=30, t=70, b=40), showlegend=False, hovermode="x unified")
 fig.update_xaxes(gridcolor=GRID, zeroline=False, linecolor=GRID)
