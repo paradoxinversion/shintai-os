@@ -165,8 +165,8 @@ All five opening questions are resolved; recorded here as the build contract.
 
 - **CONTRACT.md** — the first **CSV-half** change (`steps`); pairs with Metsuke's BLE-half change so
   the series now exercises both halves of the contract with real modules.
-- **Aizu** — adds a **Hokan fall SOS** as an ALERT-class cue source; it slots into the existing ladder
-  near a Kehai Reflex (both are urgent safety alerts — exact rung is a build detail).
+- **Aizu** — adds a **Hokan fall SOS** ALERT cue source, committed as the top-tier rung
+  [AZ-11](./aizu.md#decisions) (rank 2, co-critical with Kehai Reflex; latches until resolved).
 - **Kiroku** — shares the IMU/GPS sensing and the base-side-analysis surface; Kiroku detects *events*
   post-hoc, Hokan detects *steps* live and logs them. Complementary, not overlapping.
 - **Registry (build-time)** — Hokan earns a Zōkyō row; note it's the first contract-touching *and*

@@ -38,7 +38,7 @@ light-first, haptic-later, or both at once. See [Forward path](#forward-path).
    cadence.
 3. Run entirely on-host, independent of BLE connection and of the `h`/`c`/`b` serial output mode.
 4. Behave on battery: bounded idle current, capped brightness.
-5. Route all feedback through the **shared feedback arbiter** ([Aizu](./kanki.md#the-shared-feedback-layer)):
+5. Route all feedback through the **shared feedback arbiter** ([Aizu](./aizu.md)):
    Kehai *posts* an Alert-class cue, it does not own the pixel — so it coexists with other sources
    (e.g. Kanki) and a DRV2605 haptic drops in behind the same bus without touching sensing logic.
 
@@ -103,7 +103,7 @@ Target: `firmware/shintai-os/shintai-os.ino`. Constraints below are load-bearing
    between fresh samples.
 3. **The seam — post to Aizu, don't own the pixel.** Kehai computes its band + requested motion
    and **posts an Alert-class cue** to the shared feedback arbiter — `postCue(KEHAI, ALERT, colour, motion)`
-   — defined in [Kanki § the shared feedback layer](./kanki.md#the-shared-feedback-layer). The arbiter
+   — defined in [Aizu § the cue](./aizu.md#the-cue). The arbiter
    is the sole writer of the NeoPixel; Kehai never names the pixel directly, and the future DRV2605 is
    another sink *behind* the arbiter, not a change to Kehai. *(Supersedes the earlier
    `driveReflex()`-owns-the-LED framing — see [Kanki, cross-spec impact](./kanki.md#cross-spec-impact).)*
@@ -159,7 +159,7 @@ All four opening questions are resolved; recorded here as the build contract.
   Battery vs tethered is read from `!Serial` (the same untethered proxy the flash-logger uses —
   a USB power bank presents no CDC host, so it counts as field). Hold `NEOPIXEL_POWER` when
   breathing; write colour 0 when off (cutting the power pin is optional, only if idle draw warrants).
-  *Now an arbiter/[Aizu](./kanki.md#the-shared-feedback-layer)-level idle policy shared by all cue
+  *Now an arbiter/[Aizu](./aizu.md#idle)-level idle policy shared by all cue
   sources, not Kehai-private.*
 - **D-2 — BOOT mute:** **deferred** — not in v1. Folds into the shared feedback/input layer with
   the other remixes (see [Forward path](#forward-path)).

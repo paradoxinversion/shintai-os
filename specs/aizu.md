@@ -94,17 +94,19 @@ numbers and filling the gap KD-1's ladder left — **where Kehai's *Approach* si
 | Rank | Cue | Class | Colour / motion | Rationale |
 |------|-----|-------|-----------------|-----------|
 | 1 (highest) | **Kehai Reflex** | ALERT | red, fast pulse / solid | imminent collision — milliseconds matter |
-| 2 | **Nesshi** (while held) | INTERACTIVE | temp-band colour, steady | user is actively requesting a read — dominates, but yields to a collision ([AZ-10](#decisions)) |
-| 3 | **Kanki Bad** (≥2000 ppm) | ALERT | red, slow strong pulse | dangerous air — act now, but not collision-urgent |
-| 4 | **Kehai Approach** | AMBIENT⁺ | amber, ramping pulse | something physically approaching — more *immediate* than slow air |
-| 5 | **Kanki Poor** (1200–2000) | AMBIENT | orange, slow breathe | open a window |
-| 6 | **Kanki Stuffy** (800–1200) | AMBIENT | amber, slow breathe | ventilation slipping |
+| 2 | **Hokan Fall SOS** | ALERT | red, urgent pulse (latched) | a fall just happened — safety emergency ([AZ-11](#decisions)) |
+| 3 | **Nesshi** (while held) | INTERACTIVE | temp-band colour, steady | user is actively requesting a read — dominates ambient, yields to a safety alert ([AZ-10](#decisions)) |
+| 4 | **Kanki Bad** (≥2000 ppm) | ALERT | red, slow strong pulse | dangerous air — act now, but not collision-urgent |
+| 5 | **Kehai Approach** | AMBIENT⁺ | amber, ramping pulse | something physically approaching — more *immediate* than slow air |
+| 6 | **Kanki Poor** (1200–2000) | AMBIENT | orange, slow breathe | open a window |
+| 7 | **Kanki Stuffy** (800–1200) | AMBIENT | amber, slow breathe | ventilation slipping |
 | — | Kehai *Clear* / Kanki *Fresh* | quiescent | *(no cue)* | falls through to Idle |
 | bottom | **Idle** | system | green dim / dark+heartbeat | nothing to report ([Idle](#idle)) |
 
-So on a full rig: a collision Reflex tops everything; a **deliberate Nesshi read** (button held)
-dominates the ambient wallpaper while active but still yields to a collision; the two reds sit above
-the graduated warnings; a physical *approach* outranks *degrading* air; all-clear collapses to the
+So on a full rig: the two safety alerts (a collision Reflex and a Hokan fall SOS) top everything; a
+**deliberate Nesshi read** (button held) dominates the ambient wallpaper while active but still yields
+to a safety alert; the reds sit above the graduated warnings; a physical *approach* outranks
+*degrading* air; all-clear collapses to the
 green/dark idle. A Reflex always preempts, then **releases back** to whatever was underneath (a
 Nesshi read, a Kanki colour, or idle).
 
@@ -243,6 +245,9 @@ would be a contract change and is out of scope — [Forward path](#forward-path)
 - **AZ-10 — Nesshi rung.** A **Nesshi (while held)** INTERACTIVE cue sits just below Kehai Reflex and
   above Kanki Bad — a deliberate read dominates the ambient wallpaper but yields to a collision.
   (Introduced by [Nesshi](./nesshi.md).)
+- **AZ-11 — Hokan fall SOS rung.** A **Hokan Fall SOS** ALERT cue joins Kehai Reflex at the top as a
+  co-critical safety alert (rank 2, above the interactive/ambient cues); it **latches** until resolved
+  or muted. The two safety alerts don't meaningfully co-occur. (Introduced by [Hokan](./hokan.md).)
 
 ## Cross-spec impact
 
@@ -250,6 +255,8 @@ would be a contract change and is out of scope — [Forward path](#forward-path)
   is where those cues are defined. No further edits needed; the Approach rung is committed ([AZ-7](#decisions)).
 - **Nesshi** — introduced the input **gesture layer** (AZ-9) and the interactive **Nesshi rung**
   (AZ-10). Aizu now shares *both* seams: the cue bus (output) and the CLICK/HOLD bus (input).
+- **Hokan** — adds a top-tier **Fall SOS** ALERT rung (AZ-11), latching until resolved; the first
+  cue source whose *other* output is base-side (the dead-reckoned path).
 - **Registry (build-time)** — Aizu wants an entry as a **shared host capability** (beside the
   ground-station's shared-tooling note, not in any one Zōkyō). Also: the **onboard NeoPixel is not
   yet in the [parts catalog](../REGISTRY.md#parts-catalog)** — it should be added under

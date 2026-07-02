@@ -1,40 +1,54 @@
-# Fix — durable untethered flash logging
+# Fix — reliable untethered flash logs
 
-*Make field (untethered) flash logs survive a power cut, so they're always listable and pullable.*
+*Make field (untethered) flash logs actually listable, pullable, and power-cut-safe.*
 
-**Status:** fix spec (unbuilt) · **Target:** `firmware/shintai-os/shintai-os.ino` · **Seam:** [CONTRACT.md](../CONTRACT.md) (no change)
+**Status:** built + hardware-validated on `fix/flash-log-durability` · **Target:** `firmware/shintai-os/shintai-os.ino` · **Seam:** [CONTRACT.md](../CONTRACT.md) (no change)
 
-> Specs live on `research-development-ichi`. Build from this file on a later branch.
+> Spec authored on `research-development-ichi`; implemented + tested on `fix/flash-log-durability`.
 
 ## What broke
 
 A real field session — the rig on phone power, watched live over BLE on the glasses — produced
-**no pullable log**. Diagnosis over serial: the FFat flash reported **`0 file(s), 2912256 bytes
-used / 3796992 total`** — ~2.9 MB of data allocated, but **zero listable files**. `listLogs()` /
-`dumpAllLogs()` / `shintaipull` all saw nothing to pull.
+**no pullable log**. Over serial the FFat flash reported **`0 file(s), ~2.9 MB used / 3.8 MB
+total`**: data allocated, **zero listable files**; `listLogs()` / `dumpAllLogs()` / `shintaipull`
+all saw nothing. Investigation on the board revealed **two independent bugs** — one primary, one
+secondary.
 
-The data wasn't gone — it was **orphaned**: allocated clusters with no directory entry pointing at
-them. It was recovered by dumping the raw FFat partition (`esptool read-flash 0x450000 0x3B0000`)
-and carving the plaintext CSV back out — **27,989 rows across 29 sessions** (an entire road-trip's
-worth of untethered runs, all orphaned the same way). This fix stops the orphaning at the source.
+## Bug 1 (primary) — broken directory enumeration
 
-## Root cause
+`listLogs()`, `dumpAllLogs()`, and `eraseLogs()` enumerated the flash via `FFat.open("/")` +
+`openNextFile()`. On this ESP32 core (3.3.10), **that root enumeration returns zero entries even for
+well-formed, closed files.** Confirmed by an on-board diagnostic:
 
-Untethered logging opens the session file **once** at boot and appends to it, flushing per row, but
-**never `close()`s** it — the session just ends when field power is cut.
+```
+DIAG cur=/sht0026.csv exists=1      # file exists
+DIAG openByName ok=1 size=4190      # opens by name, real data
+0 file(s), ... bytes used           # yet openNextFile() enumerates nothing
+```
 
-- `openNewLog()` (`shintai-os.ino:90`) does `FFat.open(logPath, FILE_WRITE)` once.
-- The `loop()` append (`shintai-os.ino:421`) does `logFile.println(row); logFile.flush();` while
-  `!Serial`.
+So every flash file was invisible to the tooling whether or not it was cleanly written. **This is
+why flash logs could never be pulled** — the data was fine; the listing was blind.
 
-On the ESP32 Arduino FAT layer, **`close()` (→ FatFs `f_close`) is what writes the directory entry**
-(the file's existence, start cluster, and size) and syncs the FAT to flash. Per-row `flush()` moves
-data *clusters* out to flash as the file grows (which is why 2.9 MB was used), but it does **not**
-reliably commit the *directory entry* before power loss. Never closing + a hard power cut = data
-clusters on the chip, no directory entry → **lost chain, 0 files listed**. The incident is the proof:
-2.9 MB used, every directory entry absent.
+## Bug 2 (secondary) — durability on power cut
 
-## The fix
+Independently, untethered logging opened the session file **once** at boot and only `flush()`ed per
+row, **never `close()`ing** it (`openNewLog()` ~`:90`; the `loop()` append ~`:421`). On the ESP32
+FAT layer, **`close()` (→ `f_close`) is what commits the directory entry** (existence, start
+cluster, size); per-row `flush()` pushes data clusters out but does not reliably persist the
+directory entry before a hard power cut. Older sessions that lost power mid-write therefore left
+**orphaned clusters** (allocated, no directory entry) — ~2.6 MB of the chip. That orphaned data was
+recovered by dumping the raw partition (`esptool read-flash 0x450000 0x3B0000`) and carving the
+plaintext CSV — **27,989 rows** — into `logs/recovered/`.
+
+## Fix 1 — enumerate by seq-name (the primary fix)
+
+Since `exists()` / open-by-name work perfectly but `openNextFile()` is blind, **enumerate by the
+deterministic filenames.** The firmware only ever creates `/shtNNNN.csv` named by the NVS boot
+counter, so `listLogs`/`dumpAllLogs`/`eraseLogs` iterate `1..seq`, `FFat.exists()`-check each, and
+operate on it — sidestepping the broken core enumeration entirely. Complete for this app (it creates
+no other files) and immune to the core bug.
+
+## Fix 2 — close on a cadence (durability hardening)
 
 **Close the log file on a cadence** (and on host-connect), reopening in **append** mode. `close()`
 forces the directory entry + FAT to flash, so at any moment the file on disk is complete and
@@ -134,6 +148,19 @@ it is destructive. (Recovery is already complete: see `logs/recovered/`.)
 
 **None.** This is an internal durability fix to how rows are persisted. CSV schema, BLE GATT, serial
 control bytes, and the pull framing are all unchanged.
+
+## Validated on hardware (fix/flash-log-durability)
+
+Flashed to the QT Py ESP32-S3 and confirmed over serial:
+
+- **Enumeration:** `L` now lists **8 files** (`/sht0020…0027`) where it previously showed `0 file(s)`.
+- **Durability:** files written by the fixed firmware (`/sht0026`, `/sht0027`) carry valid directory
+  entries with real sizes; the host-connect close commits the active session on plug-in.
+- **End-to-end pull:** `shintaipull` recovered all 8 sessions cleanly into `logs/` (66–1453 rows
+  each) — no raw-partition carving needed. The field session watched on the glasses (782 rows) came
+  back as `…_flash0023.csv`.
+- **Still pending — the hard power-cut test:** a genuine mid-session power yank (below) can only be
+  done by hand. The commit mechanism is validated; the field power-loss case isn't yet reproduced.
 
 ## Acceptance criteria
 
