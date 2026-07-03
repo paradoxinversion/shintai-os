@@ -81,8 +81,8 @@ fun OperatorScreen(vm: OperatorViewModel, onRequestPermissions: () -> Unit) {
 private fun TopBar(r: ShintaiReadings, rec: RecordingUi) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(
-            "SHINTAI-OS", color = T.Bone, fontFamily = T.Mono,
-            fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = 3.sp,
+            "SHINTAI-OS", color = T.Bone, fontFamily = T.Title,
+            fontSize = 14.sp, letterSpacing = 2.sp,
         )
         Text("  ▸ OPERATOR", color = T.PhosphorDim, fontFamily = T.Mono, fontSize = 13.sp, letterSpacing = 2.sp)
         Spacer(Modifier.weight(1f))
@@ -120,10 +120,15 @@ private fun Console(
             Spacer(Modifier.width(12.dp))
             Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(120.dp)) {
                 val (v, u) = distanceParts(r.distanceMm, r.distanceText, units)
+                val numeric = r.distanceMm != null
                 Text("RANGE", color = T.Bone, fontFamily = T.Mono, fontSize = 11.sp, letterSpacing = 2.sp)
                 Text(
-                    v, color = distColor(r.distanceMm), fontFamily = T.Mono,
-                    fontWeight = FontWeight.Bold, fontSize = 52.sp,
+                    v, color = distColor(r.distanceMm),
+                    // The ONE glanceable value in 7-segment DSEG; the "—" placeholder
+                    // falls back to Plex (DSEG has no em dash).
+                    fontFamily = if (numeric) T.Numeral else T.Mono,
+                    fontWeight = if (numeric) FontWeight.Normal else FontWeight.Bold,
+                    fontSize = if (numeric) 56.sp else 44.sp,
                 )
                 Text(u.uppercase(), color = T.BoneDim, fontFamily = T.Mono, fontSize = 14.sp)
             }

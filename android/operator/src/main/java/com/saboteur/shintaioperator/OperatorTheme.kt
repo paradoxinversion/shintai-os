@@ -5,7 +5,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
@@ -16,9 +18,14 @@ import androidx.compose.ui.unit.dp
  * Emissive tokens on a near-black void; color is meaning, never decoration
  * (green = nominal, amber = caution, red = alarm, bone = printed chrome).
  *
- * Typography: style.md names Michroma / IBM Plex Mono / DSEG / VT323 as the ideal
- * faces. Those are a bundled-font follow-up; until then everything uses the
- * platform monospace — legible, on-brand enough, and priority #1 (functional).
+ * Typography (style.md §3), four roles / four bundled OFL faces — all SIL Open
+ * Font License 1.1, license texts shipped in assets/licenses/:
+ *   Title   = Michroma        — wordmark, panel titles (wide, uppercase, tracked)
+ *   Mono    = IBM Plex Mono   — the workhorse: labels, data rows, buttons
+ *   Numeral = DSEG7 Classic   — the ONE big glanceable value (the range hero)
+ *   Crt     = VT323           — CRT/boot flavor: the console log only
+ * (Eurostile Bold Extended, style.md's paid ideal for titles, is intentionally
+ * NOT bundled — it's proprietary.)
  */
 object T {
     val Void = Color(0xFF05080A)
@@ -33,7 +40,13 @@ object T {
     val Bone = Color(0xFFC9CDBC)
     val BoneDim = Color(0xFF6B6F62)
 
-    val Mono = FontFamily.Monospace
+    val Mono = FontFamily(
+        Font(R.font.ibm_plex_mono_regular, FontWeight.Normal),
+        Font(R.font.ibm_plex_mono_bold, FontWeight.Bold),
+    )
+    val Title = FontFamily(Font(R.font.michroma_regular))
+    val Numeral = FontFamily(Font(R.font.dseg7_classic_bold))
+    val Crt = FontFamily(Font(R.font.vt323_regular))
     val Chamfer = 4.dp
 }
 

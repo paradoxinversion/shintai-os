@@ -91,8 +91,8 @@ fun Panel(
             StatusLed(ledColor)
             Spacer(Modifier.width(8.dp))
             Text(
-                title.uppercase(), color = T.Bone, fontFamily = T.Mono,
-                fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp,
+                title.uppercase(), color = T.Bone, fontFamily = T.Title,
+                fontSize = 11.sp, letterSpacing = 1.sp,
             )
         }
         Spacer(Modifier.height(10.dp))
@@ -259,7 +259,7 @@ fun AlertBanner(text: String, alarm: Boolean, modifier: Modifier = Modifier) {
 fun LogTerminal(lines: List<String>, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth()) {
         lines.forEach { line ->
-            Text("> $line", color = T.PhosphorDim, fontFamily = T.Mono, fontSize = 11.sp)
+            Text("> $line", color = T.PhosphorDim, fontFamily = T.Crt, fontSize = 15.sp)
         }
     }
 }

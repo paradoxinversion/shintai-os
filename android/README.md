@@ -50,6 +50,18 @@ payload), *not* the firmware CSV schema in `CONTRACT.md` — BLE is a lossy per-
 summary, so a column-exact firmware CSV can't be reconstructed from it. The header
 is honest about that: `wall_ms,distance,alert,heading,accel,gps,climate,thermal,environment`.
 
+### Operator — fonts
+
+The Operator bundles the four SIL Open Font License (OFL 1.1) faces that
+`docs/style.md §3` calls for, mapped to their roles in `OperatorTheme.kt`:
+**Michroma** (titles/wordmark), **IBM Plex Mono** (the workhorse), **DSEG7
+Classic** (the one big 7-segment range value), **VT323** (the console log). All
+are bundled unmodified in `operator/src/main/res/font/`; the license texts and an
+attribution `NOTICE.txt` ship in the APK under
+`operator/src/main/assets/licenses/`. Eurostile Bold Extended — style.md's *paid*
+ideal title face — is deliberately **not** bundled (proprietary); Michroma fills
+that role. Glass still uses the platform monospace.
+
 ## Why no scanning on the glasses
 
 The X3 Pro's own BLE stack keeps the radio busy enough to starve a normal
