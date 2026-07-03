@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
@@ -37,6 +38,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
+import com.saboteur.shintai.core.ThermalGrid
+import com.saboteur.shintai.core.ironbow
 import com.saboteur.shintaioperator.ChamferShape
 import com.saboteur.shintaioperator.T
 
@@ -176,6 +179,28 @@ fun SegmentBar(
                     .fillMaxHeight()
                     .background(if (i < on) lit else dim.copy(alpha = 0.35f)),
             )
+        }
+    }
+}
+
+/** Metsuke's 8×8 thermal grid as a false-colour heat panel (ironbow, shared with
+ *  Glass via `:core`). Unlike the waveguide, a phone screen can carry a full fill,
+ *  so this is a proper little heat image — hot cells bright, cool cells dark. */
+@Composable
+fun HeatGrid(grid: ThermalGrid, modifier: Modifier = Modifier) {
+    Canvas(modifier.fillMaxWidth().height(168.dp).border(1.dp, T.Grid)) {
+        val cw = size.width / ThermalGrid.W
+        val ch = size.height / ThermalGrid.H
+        for (row in 0 until ThermalGrid.H) {
+            for (col in 0 until ThermalGrid.W) {
+                val (r, g, b) = ironbow(grid.cells[row * ThermalGrid.W + col])
+                drawRect(
+                    color = Color(r, g, b),
+                    topLeft = Offset(col * cw, row * ch),
+                    // Slightly overdraw so anti-aliasing leaves no black seams.
+                    size = Size(cw + 0.75f, ch + 0.75f),
+                )
+            }
         }
     }
 }

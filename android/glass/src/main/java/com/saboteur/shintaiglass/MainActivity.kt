@@ -267,6 +267,14 @@ private fun EyePane(
                 ReadoutRow("GPS", formatGps(r.gps, units))
                 ReadoutRow("CLIMATE", formatClimate(r.climate, units))
                 ReadoutRow("THERMAL", formatThermal(r.thermal, units))
+
+                // Metsuke: the live 8×8 heat panel — Shikai's one *image* surface.
+                // Only present once the first grid frame arrives (MLX90640 attached
+                // + subscribed); absent otherwise, so it never shows an empty box.
+                r.thermalGrid?.let { grid ->
+                    Spacer(Modifier.height(14.dp))
+                    ThermalPanel(grid, units)
+                }
             }
         }
     }

@@ -31,9 +31,11 @@ import com.saboteur.shintai.core.distanceParts
 import com.saboteur.shintai.core.formatClimate
 import com.saboteur.shintai.core.formatEnvironment
 import com.saboteur.shintai.core.formatGps
+import com.saboteur.shintai.core.formatTemp
 import com.saboteur.shintai.core.formatThermal
 import com.saboteur.shintaioperator.ui.AlertBanner
 import com.saboteur.shintaioperator.ui.ConsoleButton
+import com.saboteur.shintaioperator.ui.HeatGrid
 import com.saboteur.shintaioperator.ui.LogTerminal
 import com.saboteur.shintaioperator.ui.Panel
 import com.saboteur.shintaioperator.ui.ReadoutRow
@@ -145,6 +147,16 @@ private fun Console(
         ReadoutRow("Accel", r.accel)
         ReadoutRow("GPS", formatGps(r.gps, units))
         ReadoutRow("Thermal", formatThermal(r.thermal, units))
+    }
+
+    // THERMAL GRID — Metsuke's live heat image (the one binary channel). Present
+    // once the MLX90640 is attached + streaming; absent otherwise, so no empty box.
+    r.thermalGrid?.let { grid ->
+        Panel("Thermal Grid", ledColor = T.Amber) {
+            ReadoutRow("Range", "${formatTemp(grid.minC, units)} – ${formatTemp(grid.maxC, units)}")
+            Spacer(Modifier.height(8.dp))
+            HeatGrid(grid)
+        }
     }
 
     // AIR — the climate + environment cluster. ENVIRONMENT is the channel the

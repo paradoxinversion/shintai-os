@@ -41,8 +41,12 @@ class ShintaiBleClient(
 ) {
     interface Listener {
         fun onState(state: ConnectionState)
-        /** A characteristic fired; [uuid] identifies it, [value] is the UTF-8 payload. */
+        /** A string characteristic fired; [uuid] identifies it, [value] is the UTF-8 payload. */
         fun onValue(uuid: UUID, value: String)
+        /** A binary characteristic (in [ShintaiGatt.BINARY], e.g. the thermal grid)
+         *  fired; [value] is the raw notification bytes, undecoded. Default no-op so
+         *  a string-only consumer (the Operator) need not implement it. */
+        fun onBinary(uuid: UUID, value: ByteArray) {}
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -211,7 +215,13 @@ class ShintaiBleClient(
     }
 
     private fun deliver(uuid: UUID, bytes: ByteArray) {
-        listener.onValue(uuid, bytes.decodeToString())
+        // Binary characteristics (the thermal grid) go out as raw bytes; everything
+        // else is a UTF-8 string. Decoding the packed grid as text would corrupt it.
+        if (uuid in ShintaiGatt.BINARY) {
+            listener.onBinary(uuid, bytes)
+        } else {
+            listener.onValue(uuid, bytes.decodeToString())
+        }
     }
 
     /** Pop the next characteristic and enable its notifications, or go Live when drained. */

@@ -42,3 +42,24 @@ on or enables.
 - **Branch convention.** Built on the working tree; the spec notes features build
   on a later `research-development-*` branch. Move/commit there if following that
   flow.
+
+## 2026-07-02 — Metsuke (thermal grid) coexistence
+
+Metsuke ([`../zokyo/metsuke.md`](../zokyo/metsuke.md)) is built. It doesn't post to
+Aizu (its surface is the glasses, not the pixel), but its firmware integration has
+one thing to validate on hardware *because* of the Kehai reflex:
+
+- **2 Hz `getFrame()` vs the reflex tick.** Metsuke moved the MLX90640 read into a
+  `serviceThermal()` tick at `THERMAL_MS` (500 ms, ~2 Hz), the sole thermal read
+  site (telemetry now consumes the cached frame). `mlx.getFrame()` **blocks** while
+  it reads; at 2 Hz that stall now recurs ~3× more often than the old 1500 ms
+  telemetry read. Kehai's reflex (`serviceReflex`, 120 ms) holds its last range
+  across the stall, so correctness is fine, but **verify on-wrist that the red
+  reflex still feels ≤150 ms** (Kehai AC-3) with the grid streaming. If it hitches,
+  bump `THERMAL_MS` (fewer, or gate thermal reads on a non-blocking data-ready poll).
+
+- **Runtime ACs need the glasses + MLX90640.** AC-1–4 (2 Hz stream, auto-range,
+  whole 68-byte frames over a negotiated MTU, gated on subscription) are met *by
+  construction* here — host-tested pack (`tools/thermal-grid-test.cpp`), compiled
+  firmware + Android. Re-run them live: subscribe from Glass, wave a warm hand, and
+  confirm the hot cells track and the panel auto-ranges.

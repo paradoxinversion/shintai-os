@@ -13,6 +13,7 @@ import com.saboteur.shintai.core.ShintaiGatt
 import com.saboteur.shintai.core.ShintaiReadings
 import com.saboteur.shintai.core.Units
 import com.saboteur.shintai.core.fold
+import com.saboteur.shintai.core.foldBinary
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,8 +60,9 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
     /** Called once the BLUETOOTH_CONNECT permission is in hand. Idempotent. */
     fun connect() {
         if (client != null) return
-        // The HUD deliberately skips ENVIRONMENT (pressure/gas) — the seven
-        // channels below are all it renders. See CONTRACT.md "Consumer coverage".
+        // The HUD renders seven string channels plus Metsuke's binary thermal
+        // grid, and deliberately skips ENVIRONMENT (pressure/gas). See CONTRACT.md
+        // "Consumer coverage".
         client = ShintaiBleClient(getApplication(), DEVICE_ADDRESS, GLASS_SUBSCRIPTIONS, listener)
             .also { it.connect() }
     }
@@ -79,6 +81,11 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
         override fun onValue(uuid: UUID, value: String) {
             _readings.update { it.fold(uuid, value) }
         }
+
+        override fun onBinary(uuid: UUID, value: ByteArray) {
+            // Metsuke's thermal grid — the one binary channel. Parsed in :core.
+            _readings.update { it.foldBinary(uuid, value) }
+        }
     }
 
     override fun onCleared() {
@@ -96,11 +103,12 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
          */
         const val DEVICE_ADDRESS = "68:EE:8F:6E:77:BD"
 
-        /** The seven channels the HUD renders — every characteristic except
-         *  ENVIRONMENT (BME688 pressure + gas), which only the Operator shows. */
+        /** The channels the HUD renders: seven string readouts plus Metsuke's
+         *  binary THERMAL_GRID (the heat panel). Skips only ENVIRONMENT (BME688
+         *  pressure + gas), which only the Operator shows. */
         private val GLASS_SUBSCRIPTIONS = listOf(
             ShintaiGatt.DISTANCE, ShintaiGatt.ALERT, ShintaiGatt.HEADING, ShintaiGatt.ACCEL,
-            ShintaiGatt.GPS, ShintaiGatt.CLIMATE, ShintaiGatt.THERMAL,
+            ShintaiGatt.GPS, ShintaiGatt.CLIMATE, ShintaiGatt.THERMAL, ShintaiGatt.THERMAL_GRID,
         )
 
         private const val KEY_IPD = "ipd_nudge"

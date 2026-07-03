@@ -5,9 +5,11 @@ import java.util.UUID
 /**
  * The GATT contract exposed by the Shintai-OS firmware (`shintai-os.ino`).
  *
- * Every characteristic is READ | NOTIFY and carries a plain UTF-8 string — the
- * sketch builds each value with Arduino `String(...)` and calls `setValue` +
- * `notify`. There is no binary packing, so parsing here is just string work.
+ * Every characteristic is READ | NOTIFY. All but one carry a plain UTF-8 string —
+ * the sketch builds each value with Arduino `String(...)` and calls `setValue` +
+ * `notify`, so parsing is just string work. The exception is [THERMAL_GRID]
+ * (Metsuke): a packed 68-byte BINARY heat grid, listed in [BINARY] and delivered
+ * as raw bytes rather than decoded text.
  *
  * The standard 0x2902 Client Characteristic Configuration Descriptor (CCCD)
  * sits on each characteristic; writing ENABLE_NOTIFICATION to it is what turns
@@ -30,12 +32,22 @@ object ShintaiGatt {
     val THERMAL: UUID = UUID.fromString("abcd6789-ab12-ab12-ab12-abcdef123456")
     val ENVIRONMENT: UUID = UUID.fromString("abcdc0de-ab12-ab12-ab12-abcdef123456")
 
+    /** Metsuke's binary heat grid (68 packed bytes, not a string). See [BINARY]. */
+    val THERMAL_GRID: UUID = UUID.fromString("abcd7890-ab12-ab12-ab12-abcdef123456")
+
     /** Standard CCCD UUID (Bluetooth Base UUID: note the `8000`, not `0000`). */
     val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
-    /** Every characteristic the board exposes, in a sensible subscribe order.
-     *  Apps pass the subset they render to [ShintaiBleClient]; nothing forces an
-     *  app to take them all (the Glass HUD deliberately skips [ENVIRONMENT]). */
+    /** Characteristics whose payload is raw binary, not UTF-8. [ShintaiBleClient]
+     *  routes these to `onBinary` instead of decoding them to a string. */
+    val BINARY: Set<UUID> = setOf(THERMAL_GRID)
+
+    /** Every STRING characteristic the board exposes, in a sensible subscribe
+     *  order — the complete numeric readout the Operator takes. It does NOT include
+     *  the binary [THERMAL_GRID]: both apps that render the heat panel append it to
+     *  their own subscription list explicitly (the grid is an image channel, kept
+     *  out of the string set). Apps pass the subset they render to [ShintaiBleClient];
+     *  nothing forces an app to take them all (the Glass HUD skips [ENVIRONMENT]). */
     val ALL: List<UUID> =
         listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT)
 }

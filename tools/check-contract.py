@@ -40,6 +40,7 @@ CHAR_TO_KOTLIN = {
     "Thermal": "THERMAL",
     "Climate": "CLIMATE",
     "Environment": "ENVIRONMENT",
+    "Thermal Grid": "THERMAL_GRID",
 }
 # Characteristics the Android app is documented NOT to expose (CONTRACT.md "Consumer
 # coverage"). Absent from Kotlin => acknowledged gap, not an error.
