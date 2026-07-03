@@ -16,6 +16,7 @@ Zōkyō can draw from.
 | **[Rokkan (六感)](#rokkan-六感--sixth-sense)** | *"sixth sense"* | Wearable environmental-perception suite — extends the senses past the ordinary five and feeds them back to the wearer. | active |
 | **[Kanki (換気)](specs/zokyo/kanki.md)** | *"ventilation"* | Standalone air-quality guardian — maps SCD-40 `co2_ppm` to a calm→alarm colour on the onboard NeoPixel (via [Aizu](specs/platform/aizu.md)). One sense, one cue; runs on host + SCD-40 alone. | active |
 | **[Metsuke (目付)](specs/zokyo/metsuke.md)** | *"the gaze"* | Thermal sight — downsamples the MLX90640 frame to an 8×8 grid, streams it over a **new binary BLE characteristic**, and renders a false-colour heat panel in the glasses (via [Shikai](#shikai-視界--field-of-view)). First module to change the contract. | active |
+| **[Nesshi (熱視)](specs/zokyo/nesshi.md)** | *"heat-sight"* | Point-and-read thermometer — hold the BOOT button and the MLX90640 surface temp reads out as a calm→alarm colour on the NeoPixel (via [Aizu](specs/platform/aizu.md)); a double-hold finds the scene's hottest point. "Is it safe to touch?" No contract change; shares Aizu's input (HOLD) and output. | active |
 
 Rokkan is the first Zōkyō built; Kanki is its small sibling — one sense, one cue,
 drawn from the same parts catalog. Metsuke rides the glasses (Shikai) and is the

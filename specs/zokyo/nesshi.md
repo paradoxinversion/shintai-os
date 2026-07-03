@@ -2,7 +2,7 @@
 
 *Heat-sight: point, hold, and read a surface's temperature as light — "is it safe to touch?"*
 
-**Status:** spec (unbuilt) · **Zōkyō:** Nesshi (candidate — sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) (no change) · **Shares:** [Aizu](../platform/aizu.md) (output *and* input) · **Date:** 2026-07-02
+**Status:** built (2026-07-03) · **Zōkyō:** Nesshi (sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) (no change) · **Shares:** [Aizu](../platform/aizu.md) (output *and* input) · **Date:** 2026-07-02
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 
