@@ -24,7 +24,7 @@ GATT table is mirrored and checked by `tools/check-contract.py`.
 | Find the board     | **Hardcoded MAC** (the glasses' radio starves a scan) | **Scans & pairs** (the phone's radio is dependable) |
 | Channels           | Seven (skips **Environment** to stay lean)    | **All eight**, Environment included — the complete readout |
 | Extras             | Stereo/mono split, volume-key IPD tuning      | CSV recording, rolling-history sparklines, motion-tracker gauge |
-| Look               | Current cyan/magenta HUD palette              | Phosphor-on-void per [`docs/style.md`](../docs/style.md) |
+| Look               | Phosphor on **pure black** (waveguide) — strokes only, no fills | Phosphor on **VOID** — panels/charts/log per [`docs/style.md`](../docs/style.md) |
 | Permissions        | `BLUETOOTH_CONNECT`                           | `BLUETOOTH_CONNECT` + `BLUETOOTH_SCAN` (`neverForLocation`) |
 
 They are **complementary**: run both and the glasses give you the heads-up
@@ -50,17 +50,22 @@ payload), *not* the firmware CSV schema in `CONTRACT.md` — BLE is a lossy per-
 summary, so a column-exact firmware CSV can't be reconstructed from it. The header
 is honest about that: `wall_ms,distance,alert,heading,accel,gps,climate,thermal,environment`.
 
-### Operator — fonts
+### Fonts (shared from :core)
 
-The Operator bundles the four SIL Open Font License (OFL 1.1) faces that
-`docs/style.md §3` calls for, mapped to their roles in `OperatorTheme.kt`:
-**Michroma** (titles/wordmark), **IBM Plex Mono** (the workhorse), **DSEG7
-Classic** (the one big 7-segment range value), **VT323** (the console log). All
-are bundled unmodified in `operator/src/main/res/font/`; the license texts and an
-attribution `NOTICE.txt` ship in the APK under
-`operator/src/main/assets/licenses/`. Eurostile Bold Extended — style.md's *paid*
-ideal title face — is deliberately **not** bundled (proprietary); Michroma fills
-that role. Glass still uses the platform monospace.
+The four SIL Open Font License (OFL 1.1) faces `docs/style.md §3` calls for are
+bundled **once, in `:core`** (`core/src/main/res/font/`) and referenced by both
+apps via `com.saboteur.shintai.core.R.font.*`, so there's no duplication or
+license drift. The license texts + an attribution `NOTICE.txt` ship in the APK
+under `core/src/main/assets/licenses/`. All are bundled unmodified with their
+Reserved Font Names intact.
+
+- **Operator** uses all four: Michroma (titles), IBM Plex Mono (workhorse), DSEG7
+  Classic (the 7-seg range hero), VT323 (console log).
+- **Glass** uses only Michroma + IBM Plex Mono + DSEG — the waveguide caveat
+  (§3) bars pixel fonts (VT323 turns to mush on the optics).
+
+Eurostile Bold Extended — style.md's *paid* ideal title face — is deliberately
+**not** bundled (proprietary); Michroma fills that role.
 
 ## Why no scanning on the glasses
 
@@ -98,8 +103,10 @@ run configuration, and Run.
 - **`:core`** — `ShintaiGatt.kt` (UUIDs + `ALL` characteristic list),
   `ShintaiBleClient.kt` (connect-by-MAC, MTU 247, serialized CCCD subscribes,
   cache refresh), `Readings.kt` (`ShintaiReadings` + the shared `fold` parser +
-  `NEAR_MM`), `Units.kt` (metric→imperial at display time).
-- **`:glass`** — `MainActivity.kt` (aspect-ratio stereo/mono split, volume-key IPD),
+  `NEAR_MM`), `Units.kt` (metric→imperial at display time), plus the shared
+  brand fonts + licenses (`res/font/`, `assets/licenses/`).
+- **`:glass`** — `MainActivity.kt` (aspect-ratio stereo/mono split, volume-key IPD,
+  the waveguide HUD), `GlassTheme.kt` (pure-black phosphor tokens + fonts),
   `ShintaiViewModel.kt` (**edit the MAC here**; subscribes to seven channels).
 - **`:operator`** — `MainActivity.kt` (scan+connect permissions),
   `OperatorViewModel.kt` (scan, all-eight subscribe, recording, history),

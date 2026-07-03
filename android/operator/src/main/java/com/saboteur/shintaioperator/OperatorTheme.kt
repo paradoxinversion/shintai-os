@@ -12,6 +12,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.saboteur.shintai.core.R as CoreR
 
 /**
  * The SHINTAI-OS instrument language for the Operator, per docs/style.md §2/§10.
@@ -41,12 +42,12 @@ object T {
     val BoneDim = Color(0xFF6B6F62)
 
     val Mono = FontFamily(
-        Font(R.font.ibm_plex_mono_regular, FontWeight.Normal),
-        Font(R.font.ibm_plex_mono_bold, FontWeight.Bold),
+        Font(CoreR.font.ibm_plex_mono_regular, FontWeight.Normal),
+        Font(CoreR.font.ibm_plex_mono_bold, FontWeight.Bold),
     )
-    val Title = FontFamily(Font(R.font.michroma_regular))
-    val Numeral = FontFamily(Font(R.font.dseg7_classic_bold))
-    val Crt = FontFamily(Font(R.font.vt323_regular))
+    val Title = FontFamily(Font(CoreR.font.michroma_regular))
+    val Numeral = FontFamily(Font(CoreR.font.dseg7_classic_bold))
+    val Crt = FontFamily(Font(CoreR.font.vt323_regular))
     val Chamfer = 4.dp
 }
 

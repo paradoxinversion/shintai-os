@@ -4,19 +4,14 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.KeyEvent
-import com.saboteur.shintai.core.ConnectionState
-import com.saboteur.shintai.core.ShintaiReadings
-import com.saboteur.shintai.core.Units
-import com.saboteur.shintai.core.distanceParts
-import com.saboteur.shintai.core.formatClimate
-import com.saboteur.shintai.core.formatGps
-import com.saboteur.shintai.core.formatThermal
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,9 +26,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -43,22 +39,20 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
-/** Cyberpunk-ish palette, matching the HUD in hud.py. */
-private val BG = Color(0xFF05060A)
-private val PANEL = Color(0xFF0B0E1A)
-private val NEON = Color(0xFF00F0FF)
-private val MAGENTA = Color(0xFFFF2BD6)
-private val DIM = Color(0xFF5A6B82)
-private val ALERT = Color(0xFFFF3B3B)
-private val CHIP = Color(0xFF1B2440)
-private val mono = FontFamily.Monospace
+import com.saboteur.shintai.core.ConnectionState
+import com.saboteur.shintai.core.ShintaiReadings
+import com.saboteur.shintai.core.Units
+import com.saboteur.shintai.core.distanceParts
+import com.saboteur.shintai.core.formatClimate
+import com.saboteur.shintai.core.formatGps
+import com.saboteur.shintai.core.formatThermal
 
 /** Width:height above which we treat the surface as a side-by-side stereo display.
  *  X3 Pro = 2.67; Pixel-class phones in landscape ≈ 2.16, portrait < 1. */
@@ -143,11 +137,10 @@ private fun ShintaiHud(
     onToggleUnits: () -> Unit,
     onRequestPermission: () -> Unit = {},
 ) {
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(if (r.alertActive) Color(0xFF1A0608) else BG)
-    ) {
+    // Pure black ground: on the waveguide black emits no light and reads as
+    // see-through over the world. Even an alarm never washes the background —
+    // the alert speaks through red strokes/blink, not a fill (style.md §8).
+    BoxWithConstraints(Modifier.fillMaxSize().background(G.Black)) {
         // Branch on the real render surface, not the device model: a side-by-side
         // stereo framebuffer (the X3 Pro is 1280x480 = 2.67:1) is far wider than any
         // phone — even a Pixel 7 Pro locked to landscape is ~2.16:1. Above the
@@ -200,109 +193,99 @@ private fun EyePane(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
         ) {
-            // Header: title + status, and a gear that opens settings. The gear lives
-            // in the header (not a floating align box) because align'd overlays on
-            // this device report zero hit-bounds — the header has solid bounds.
+            // Header: wordmark (Michroma) + a tappable status group that opens
+            // settings. The group lives in the header (not a floating align box)
+            // because align'd overlays on this device report zero hit-bounds.
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "▸ SHINTAI-OS",
-                    color = NEON, fontFamily = mono, fontWeight = FontWeight.Bold, fontSize = 22.sp,
+                    "SHINTAI-OS",
+                    color = G.Bone, fontFamily = G.Title, fontSize = 18.sp,
+                    letterSpacing = 2.sp,
                 )
-                // The whole status+gear group is one tappable target (data flowing =
-                // the rx counter climbs).
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clickable { onToggleSettings() }
-                        .padding(8.dp),
+                    modifier = Modifier.clickable { onToggleSettings() }.padding(8.dp),
                 ) {
+                    StatusLed(ledColor(r.connection))
                     Text(
-                        if (r.packets > 0) "${stateLabel(r.connection)}  ·  rx ${r.packets}"
+                        "  " + if (r.packets > 0) "${stateLabel(r.connection)}  rx ${r.packets}"
                         else stateLabel(r.connection),
-                        color = if (r.connection == ConnectionState.Live) NEON else DIM,
-                        fontFamily = mono, fontSize = 16.sp,
+                        color = if (r.connection == ConnectionState.Live) G.Phosphor else G.BoneDim,
+                        fontFamily = G.Mono, fontSize = 14.sp,
                     )
-                    Text("  ${if (settingsOpen) "✕" else "⚙"}", color = NEON,
-                        fontFamily = mono, fontSize = 20.sp)
+                    Text("  ${if (settingsOpen) "×" else "SET"}", color = G.Phosphor,
+                        fontFamily = G.Mono, fontSize = 15.sp)
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(18.dp))
 
             if (settingsOpen) {
-                // Inline at the top (real bounds, never below the fold) instead of a
-                // floating overlay.
                 SettingsPanel(units, stereo, ipdNudge, onAdjustIpd, onToggleUnits, onToggleSettings)
             } else if (r.connection == ConnectionState.PermissionNeeded) {
-                // Denied BLUETOOTH_CONNECT: explain and offer a retry rather than
-                // leaving a blank "—" readout that never fills in.
                 PermissionPrompt(onRequestPermission)
             } else {
-                // The headline: distance, big (converted to the chosen unit).
+                // The one hero value: distance as big DSEG numerals. Amber/red are
+                // reserved for the real proximity alarm (style.md avoids alarm
+                // fatigue on the waveguide), so the value is phosphor until it fires.
                 val (distVal, distUnit) = distanceParts(r.distanceMm, r.distanceText, units)
-                Text("DISTANCE", color = MAGENTA, fontFamily = mono, fontSize = 14.sp)
+                val numeric = r.distanceMm != null
+                val blink = if (r.alertActive) alertBlink() else 1f
+                val heroColor = if (r.alertActive) G.Alert.copy(alpha = blink) else G.Phosphor
+
+                Text("RANGE", color = G.Bone, fontFamily = G.Mono, fontSize = 13.sp, letterSpacing = 2.sp)
                 Text(
                     text = distVal,
-                    color = if (r.alertActive) ALERT else NEON,
-                    fontFamily = mono, fontWeight = FontWeight.Bold, fontSize = 72.sp,
+                    color = heroColor,
+                    // DSEG has no em dash, so the "—" no-reading placeholder falls back to Plex.
+                    fontFamily = if (numeric) G.Numeral else G.Mono,
+                    fontWeight = if (numeric) FontWeight.Normal else FontWeight.Bold,
+                    fontSize = if (numeric) 60.sp else 44.sp,
                 )
-                Text(distUnit, color = DIM, fontFamily = mono, fontSize = 20.sp)
+                Text(distUnit.uppercase(), color = G.BoneDim, fontFamily = G.Mono, fontSize = 18.sp)
                 if (r.alertActive) {
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(6.dp))
                     Text(
-                        "⚠ TOO CLOSE",
-                        color = ALERT, fontFamily = mono, fontWeight = FontWeight.Bold, fontSize = 28.sp,
+                        "OBJECT INSIDE 0.2 M — HOLD",
+                        color = G.Alert.copy(alpha = blink),
+                        fontFamily = G.Mono, fontWeight = FontWeight.Bold, fontSize = 20.sp,
+                        letterSpacing = 1.sp,
                     )
                 }
 
-                Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(22.dp))
+                HairRule()
+                Spacer(Modifier.height(12.dp))
 
-                // Mini readout — the rest of the subscribed channels.
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(PANEL, RoundedCornerShape(10.dp))
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    ReadoutRow("HEADING", r.heading)
-                    ReadoutRow("ACCEL", r.accel)
-                    ReadoutRow("GPS", formatGps(r.gps, units))
-                    ReadoutRow("CLIMATE", formatClimate(r.climate, units))
-                    ReadoutRow("THERMAL", formatThermal(r.thermal, units))
-                }
+                // Supporting channels — dotted-leader rows on black, strokes only.
+                ReadoutRow("HEADING", r.heading)
+                ReadoutRow("ACCEL", r.accel)
+                ReadoutRow("GPS", formatGps(r.gps, units))
+                ReadoutRow("CLIMATE", formatClimate(r.climate, units))
+                ReadoutRow("THERMAL", formatThermal(r.thermal, units))
             }
         }
     }
 }
 
-/** Shown when BLUETOOTH_CONNECT was denied: a clear reason plus a retry with a
- *  hit target the glasses pointer can land on. Tapping re-fires the request; if
- *  the system no longer shows the dialog (permanently denied), the user is
- *  pointed at app settings. */
+/** Shown when BLUETOOTH_CONNECT was denied: a clear reason (amber = caution) plus
+ *  a retry with a hit target the glasses pointer can land on. */
 @Composable
 private fun PermissionPrompt(onRequestPermission: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(PANEL, RoundedCornerShape(10.dp))
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Text("BLUETOOTH NEEDED", color = MAGENTA, fontFamily = mono,
-            fontWeight = FontWeight.Bold, fontSize = 20.sp)
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("BLUETOOTH NEEDED", color = G.Amber, fontFamily = G.Title, fontSize = 18.sp)
         Text(
             "Shintai Glass reads the board over Bluetooth. Grant the permission to start streaming.",
-            color = DIM, fontFamily = mono, fontSize = 14.sp,
+            color = G.BoneDim, fontFamily = G.Mono, fontSize = 14.sp,
         )
         TapChip("GRANT BLUETOOTH", onRequestPermission)
         Text(
             "If no dialog appears, enable it in system settings → apps → Shintai Glass → permissions.",
-            color = DIM, fontFamily = mono, fontSize = 11.sp,
+            color = G.BoneDim, fontFamily = G.Mono, fontSize = 11.sp,
         )
     }
 }
@@ -317,18 +300,11 @@ private fun SettingsPanel(
     onToggleUnits: () -> Unit,
     onClose: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(PANEL, RoundedCornerShape(10.dp))
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("SETTINGS", color = NEON, fontFamily = mono, fontWeight = FontWeight.Bold,
-            fontSize = 16.sp)
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("SETTINGS", color = G.Bone, fontFamily = G.Title, fontSize = 15.sp)
 
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("UNITS", color = MAGENTA, fontFamily = mono, fontSize = 15.sp,
+            Text("UNITS", color = G.Bone, fontFamily = G.Mono, fontSize = 14.sp,
                 modifier = Modifier.padding(end = 14.dp))
             TapChip(if (units == Units.IMPERIAL) "IMPERIAL" else "METRIC", onToggleUnits)
         }
@@ -336,11 +312,11 @@ private fun SettingsPanel(
         if (stereo) {
             // True side-by-side AR mode: the app draws each eye, so IPD nudging works.
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("IPD", color = MAGENTA, fontFamily = mono, fontSize = 15.sp,
+                Text("IPD", color = G.Bone, fontFamily = G.Mono, fontSize = 14.sp,
                     modifier = Modifier.padding(end = 14.dp))
                 TapChip("−") { onAdjustIpd(-IPD_STEP_MENU) }
                 Text("  ${if (ipdNudge >= 0) "+" else ""}$ipdNudge dp  ",
-                    color = Color(0xFF9FEFFF), fontFamily = mono, fontSize = 18.sp)
+                    color = G.Phosphor, fontFamily = G.Mono, fontSize = 18.sp)
                 TapChip("+") { onAdjustIpd(IPD_STEP_MENU) }
             }
         } else {
@@ -348,7 +324,7 @@ private fun SettingsPanel(
             // focus/convergence is a system setting the app can't touch.
             Text(
                 "FOCUS / IPD — set in glasses system (2D mode)",
-                color = DIM, fontFamily = mono, fontSize = 12.sp,
+                color = G.BoneDim, fontFamily = G.Mono, fontSize = 12.sp,
             )
         }
 
@@ -356,35 +332,65 @@ private fun SettingsPanel(
     }
 }
 
-/** A tappable chip with a comfortable hit target for the glasses pointer. */
+/** A chamfered stroke button (no fill — waveguide rule) with a comfortable hit
+ *  target for the glasses pointer. */
 @Composable
 private fun TapChip(label: String, onClick: () -> Unit) {
-    Text(
-        label, color = NEON, fontFamily = mono, fontSize = 18.sp,
+    Box(
         modifier = Modifier
             .clickable { onClick() }
-            .background(CHIP, RoundedCornerShape(6.dp))
+            .border(2.dp, G.PhosphorDim, ChamferShape())
             .padding(horizontal = 16.dp, vertical = 10.dp),
-    )
+    ) {
+        Text(label, color = G.Phosphor, fontFamily = G.Mono, fontSize = 17.sp)
+    }
 }
 
+/** LABEL · dotted leader · VALUE — the ledger row, strokes only (style.md §5.3). */
 @Composable
 private fun ReadoutRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            label,
-            color = MAGENTA, fontFamily = mono, fontSize = 15.sp,
-            modifier = Modifier.padding(end = 16.dp),
-        )
-        Text(value, color = Color(0xFF9FEFFF), fontFamily = mono, fontSize = 18.sp)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, color = G.Bone, fontFamily = G.Mono, fontSize = 13.sp, letterSpacing = 1.sp)
+        Canvas(Modifier.weight(1f).height(10.dp).padding(horizontal = 8.dp)) {
+            val y = size.height / 2f
+            drawLine(
+                color = G.Grid, start = Offset(0f, y), end = Offset(size.width, y),
+                strokeWidth = 2.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(2f, 6f), 0f),
+            )
+        }
+        Text(value, color = G.Phosphor, fontFamily = G.Mono, fontSize = 16.sp)
     }
+}
+
+/** A 8dp square status LED (never a circle) — style.md §5.6. */
+@Composable
+private fun StatusLed(color: Color) {
+    Box(Modifier.size(9.dp).background(color))
+}
+
+/** A thin 2px phosphor-dim rule (1px can vanish on the waveguide — style.md §8). */
+@Composable
+private fun HairRule() {
+    Box(Modifier.fillMaxWidth().height(2.dp).background(G.Grid))
+}
+
+private fun ledColor(s: ConnectionState): Color = when (s) {
+    ConnectionState.Live -> G.Phosphor
+    ConnectionState.Connecting, ConnectionState.Discovering -> G.Amber
+    ConnectionState.Disconnected -> G.Alert
+    ConnectionState.PermissionNeeded -> G.Amber
+    ConnectionState.Idle -> G.BoneDim
 }
 
 private fun stateLabel(s: ConnectionState): String = when (s) {
     ConnectionState.Idle -> "idle"
-    ConnectionState.PermissionNeeded -> "needs Bluetooth"
+    ConnectionState.PermissionNeeded -> "needs bluetooth"
     ConnectionState.Connecting -> "connecting…"
     ConnectionState.Discovering -> "discovering…"
-    ConnectionState.Live -> "● LIVE"
+    ConnectionState.Live -> "LIVE"
     ConnectionState.Disconnected -> "disconnected"
 }
