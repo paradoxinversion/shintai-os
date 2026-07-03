@@ -17,6 +17,7 @@
 #include "KehaiBand.h"   // Kehai-Hikari proximity reflex (specs/zokyo/kehai-hikari.md): distance -> Aizu cue
 #include "KankiBand.h"   // Kanki air-quality sense (specs/zokyo/kanki.md): co2_ppm -> Aizu ambient cue
 #include "ThermalGrid.h" // Metsuke thermal sight (specs/zokyo/metsuke.md): MLX frame -> packed 8x8 heat grid
+#include "NesshiBand.h"  // Nesshi heat-sight (specs/zokyo/nesshi.md): hold BOOT -> surface temp -> Aizu cue
 
 // BLE UUIDs
 #define SERVICE_UUID        "12345678-1234-1234-1234-123456789abc"
@@ -105,6 +106,20 @@ float    scdHum     = 0;   // %RH
 // Aizu breathes it) between fresh samples without lapsing to Idle. See KankiBand.h.
 int            kankiBandIdx    = -1;
 const uint32_t KANKI_MAX_AGE_MS = 15000;   // ~3 SCD cycles before the cue is dropped
+
+// Nesshi (熱視) — heat-sight. While BOOT is held, read the surface temperature at
+// the centre of the thermal FOV (spot) — or the scene's hottest point (scene, via a
+// double-hold, ND-3) — and post it to Aizu as an INTERACTIVE, STEADY colour cue
+// (blue->green->amber->orange->red on the burn-safety line). Consumes the cached
+// MLX90640 frame (serviceThermal is the sole read site): no new sensor servicing,
+// no telemetry disturbance, no contract change. Aizu owns the pixel and GPIO0;
+// Nesshi only subscribes to the HOLD gesture and posts cues. See NesshiBand.h.
+bool           nesshiHeld          = false;   // BOOT currently held (HOLD_START..HOLD_END)
+bool           nesshiScene         = false;   // this hold reads the scene max, not the centre
+int            nesshiBandIdx       = -1;      // hysteretic band; -1 re-seeds to the true band each hold
+uint32_t       nesshiLastHoldEndMs = 0;       // last HOLD_END — for double-hold (scene) detection
+const uint32_t NESSHI_DOUBLE_HOLD_MS = 500;   // a new hold within this of the last release => scene mode
+const uint32_t NESSHI_MAX_AGE_MS     = 1000;  // Aizu drops the cue if we stop refreshing (we post every loop while held)
 
 // BME688 state. Present set at boot; performReading() fires the gas heater and
 // blocks ~150 ms, so we read once per loop and cache. Owns air temp/humidity
@@ -425,6 +440,12 @@ void setup() {
   // cues, they never paint. With no source posting it just renders Idle.
   Aizu.begin();
   Serial.println("[OK] Aizu feedback arbiter (NeoPixel)");
+
+  // Nesshi — subscribe to Aizu's BOOT HOLD gesture (AZ-9): hold to read the surface
+  // temp at the centre of the thermal FOV as a colour; a double-hold reads the
+  // scene's hottest point. A short CLICK still toggles Aizu's mute (no collision).
+  Aizu.onHold(nesshiOnHold);
+  Serial.println("[OK] Nesshi heat-sight (hold BOOT to read surface temp)");
   Serial.println("Output: 'h'=human  'c'=CSV  'b'=both (current: both)");
   Serial.println("=============================\n");
 }
@@ -485,6 +506,66 @@ void serviceThermal() {
   gridNotifyCount++;
 }
 
+// Nesshi's HOLD subscriber (registered with Aizu.onHold in setup). Aizu owns the
+// button and emits the primitives HOLD_START/HOLD_END (AZ-9); Nesshi composes them
+// into its two reads: a plain hold measures the CENTRE (spot); two holds in quick
+// succession — a "double-hold" (ND-3) — put the SECOND hold into scene mode (the
+// scene's hottest point). Runs inside Aizu.tick(); only flips flags + clears the
+// cue on release, so it never blocks. The band re-seeds each hold (nesshiBandIdx
+// = -1) so the first frame snaps to the true colour.
+void nesshiOnHold(AizuGesture ev) {
+  if (ev == AIZU_HOLD_START) {
+    uint32_t now  = millis();
+    nesshiScene   = (nesshiLastHoldEndMs != 0) &&
+                    (uint32_t)(now - nesshiLastHoldEndMs) < NESSHI_DOUBLE_HOLD_MS;
+    nesshiBandIdx = -1;                 // snap to the true band on this hold's first frame
+    nesshiHeld    = true;
+  } else {                              // AIZU_HOLD_END
+    nesshiHeld          = false;
+    nesshiLastHoldEndMs = millis();
+    Aizu.clearCue(AIZU_NESSHI);         // release -> LED falls back to whatever's underneath (AC-5)
+  }
+}
+
+// Nesshi tick — posts the temperature cue while BOOT is held. Not held -> nothing
+// (the cue was cleared on HOLD_END). No MLX90640 -> a distinct "no sensor" cue so
+// the hold still gives feedback (integration point 5). Otherwise it reduces the
+// cached thermal frame to the one number this read needs — the centre pixel (spot,
+// same index as the telemetry thermalCtr) or the hottest valid pixel (scene) — and
+// posts the hysteretic band's colour. The frame is NOT read here (serviceThermal is
+// the sole read site); Nesshi only consumes the cache. Never prints, never touches
+// lastUpdate, the telemetry cadence, BLE, or the flash gate.
+void serviceNesshi() {
+  if (!nesshiHeld) return;
+
+  if (!thermalPresent) {                        // hold works, but there's nothing to read
+    NesshiCue nc = nesshiNoSensorCue();
+    Aizu.postCue(AIZU_NESSHI, nc.priority, nc.colour, nc.motion, NESSHI_MAX_AGE_MS);
+    return;
+  }
+  if (!thermalFrameOk) return;                  // no valid frame yet — hold the last cue (maxAge covers a brief gap)
+
+  float readC;
+  if (nesshiScene) {                            // scene: the hottest point anywhere in view
+    float mx = -INFINITY;
+    for (int i = 0; i < 768; i++) { float v = thermalFrame[i]; if (!isnan(v) && v > mx) mx = v; }
+    if (mx == -INFINITY) return;                // all-NaN frame — skip this refresh
+    readC = mx;
+  } else {                                      // spot: the centre of the FOV — what you're pointing at
+    readC = thermalFrame[(12 * 32) + 16];       // same centre index as the telemetry thermalCtr
+    if (isnan(readC)) {                         // NaN centre -> frame mean (as the telemetry summary does)
+      float sum = 0; int valid = 0;
+      for (int i = 0; i < 768; i++) { float v = thermalFrame[i]; if (!isnan(v)) { sum += v; valid++; } }
+      if (valid == 0) return;
+      readC = sum / valid;
+    }
+  }
+
+  nesshiBandIdx = nesshiStep(readC, nesshiBandIdx);   // hysteretic band (re-seeded at HOLD_START)
+  NesshiCue nc  = nesshiCueFor(nesshiBandIdx);
+  Aizu.postCue(AIZU_NESSHI, nc.priority, nc.colour, nc.motion, NESSHI_MAX_AGE_MS);
+}
+
 // Metsuke grid diagnostic (serial 'G'): is a central connected, did it subscribe
 // to the grid CCCD, and are notifies actually going out? Splits "firmware not
 // emitting" from "app not receiving" without needing the phone on USB.
@@ -521,6 +602,7 @@ void loop() {
   // or the flash-logging gate.
   serviceReflex();
   serviceThermal();   // Metsuke: ~2 Hz MLX read + grid notify (sole thermal read site)
+  serviceNesshi();    // Nesshi: while BOOT held, cached-frame surface temp -> Aizu cue
   Aizu.tick();
 
   if (millis() - lastUpdate < UPDATE_MS) return;
