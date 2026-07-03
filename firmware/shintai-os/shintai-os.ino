@@ -13,7 +13,8 @@
 #include <FFat.h>
 #include <Preferences.h>
 #include <math.h>
-#include "Aizu.h"   // shared on-body output bus (specs/platform/aizu.md): sole NeoPixel writer
+#include "Aizu.h"       // shared on-body output bus (specs/platform/aizu.md): sole NeoPixel writer
+#include "KehaiBand.h"  // Kehai-Hikari proximity reflex (specs/zokyo/kehai-hikari.md): distance -> Aizu cue
 
 // BLE UUIDs
 #define SERVICE_UUID        "12345678-1234-1234-1234-123456789abc"
@@ -27,9 +28,18 @@
 #define ENVIRONMENT_UUID    "abcdc0de-ab12-ab12-ab12-abcdef123456"
 
 const int NEAR_MM  = 200;
-const int FAR_MM   = 2000;   // reserved: graded-proximity HUD threshold, not yet
-                             // wired in-loop — see specs/zokyo/kehai-hikari.md
-const int UPDATE_MS = 1500;  // update interval
+const int FAR_MM   = 2000;   // Kehai-Hikari Approach/Clear boundary (was reserved)
+const int UPDATE_MS = 1500;  // telemetry (CSV/BLE) update interval
+
+// Kehai-Hikari proximity reflex — a fast loop decoupled from the 1500 ms telemetry
+// cadence. serviceReflex() services the ToF here, caches the range, and posts the
+// distance band as an Aizu cue. The telemetry block consumes the cached range so
+// the two never fight over the sensor's dataReady (Kehai-Hikari note 2).
+const int      REFLEX_MS               = 120;    // reflex tick (spec: ~100-150 ms)
+const uint32_t REFLEX_TIMING_BUDGET_US = 50000;  // lower ToF budget -> fresher range (D-4)
+const uint32_t KEHAI_MAX_AGE_MS        = 500;    // Aizu drops the cue if we stop posting
+int16_t       cachedMm     = -1;                 // latest ToF range; -1 = no target
+unsigned long lastReflexMs = 0;
 
 VL53L4CX sensor(&Wire, -1);
 Adafruit_LSM6DSOX imu;
@@ -214,8 +224,13 @@ void setup() {
   sensor.VL53L4CX_Off();
   tofPresent = (sensor.InitSensor(0x29) == VL53L4CX_ERROR_NONE);
   if (tofPresent) {
+    // Favour reflex latency over the old slow cadence (Kehai-Hikari D-4) — a fresh
+    // range then lands close to the reflex tick. Non-fatal: keep the default budget
+    // if the device rejects this value.
+    if (sensor.VL53L4CX_SetMeasurementTimingBudgetMicroSeconds(REFLEX_TIMING_BUDGET_US) != VL53L4CX_ERROR_NONE)
+      Serial.println("[WARN] ToF timing-budget set failed — using default cadence");
     sensor.VL53L4CX_StartMeasurement();
-    Serial.println("[OK] VL53L4CX ToF");
+    Serial.println("[OK] VL53L4CX ToF (reflex-tuned)");
   } else {
     Serial.println("[WARN] VL53L4CX not found — distance disabled");
   }
@@ -310,6 +325,38 @@ void setup() {
   Serial.println("=============================\n");
 }
 
+// Kehai-Hikari reflex tick — the sole ToF read site. Self-rate-limits to REFLEX_MS.
+// Services the sensor into cachedMm (holding the last range between fresh samples),
+// then posts the distance band as an Aizu cue (or clears it when quiescent). Never
+// prints to the telemetry stream, never touches lastUpdate or the flash gate.
+void serviceReflex() {
+  if (millis() - lastReflexMs < REFLEX_MS) return;
+  lastReflexMs = millis();
+
+  if (tofPresent) {
+    uint8_t dataReady = 0;
+    sensor.VL53L4CX_GetMeasurementDataReady(&dataReady);
+    if (dataReady) {
+      VL53L4CX_MultiRangingData_t data;
+      sensor.VL53L4CX_GetMultiRangingData(&data);
+      int16_t newMm = -1;
+      for (int i = 0; i < data.NumberOfObjectsFound; i++) {
+        if (data.RangeData[i].RangeStatus == 0) {
+          newMm = data.RangeData[i].RangeMilliMeter;
+          break;
+        }
+      }
+      cachedMm = newMm;
+      sensor.VL53L4CX_ClearInterruptAndStartMeasurement();
+    }
+  }
+
+  // Post the band (Approach/Reflex) or withdraw (Clear/no-target -> Aizu Idle).
+  KehaiCue kc = kehaiCueFor(cachedMm, NEAR_MM, FAR_MM);
+  if (kc.post) Aizu.postCue(AIZU_KEHAI, kc.priority, kc.colour, kc.motion, KEHAI_MAX_AGE_MS);
+  else         Aizu.clearCue(AIZU_KEHAI);
+}
+
 void loop() {
   // Always read GPS in background
   GPS.read();
@@ -326,10 +373,11 @@ void loop() {
     else if (cmd == 'E' || cmd == 'e') { eraseLogs();   lastUpdate = millis(); }
   }
 
-  // Aizu renders on its own ~20 ms clock and services the BOOT button — call it
-  // every iteration, BEFORE the 1500 ms telemetry gate so it isn't starved by it.
-  // It self-rate-limits and never touches lastUpdate, the telemetry stream, BLE,
+  // Kehai reflex (ToF -> Aizu cue) + Aizu render, both on their own fast clocks —
+  // call every iteration, BEFORE the 1500 ms telemetry gate so neither is starved.
+  // Each self-rate-limits and never touches lastUpdate, the telemetry stream, BLE,
   // or the flash-logging gate.
+  serviceReflex();
   Aizu.tick();
 
   if (millis() - lastUpdate < UPDATE_MS) return;
@@ -338,23 +386,11 @@ void loop() {
   bool human = (outputMode == HUMAN || outputMode == BOTH);
   bool csv   = (outputMode == CSV   || outputMode == BOTH);
 
-  // ── ToF ── (optional; gated so an absent sensor doesn't poll I2C every loop)
-  int16_t mm = -1;
-  if (tofPresent) {
-    uint8_t dataReady = 0;
-    sensor.VL53L4CX_GetMeasurementDataReady(&dataReady);
-    if (dataReady) {
-      VL53L4CX_MultiRangingData_t data;
-      sensor.VL53L4CX_GetMultiRangingData(&data);
-      for (int i = 0; i < data.NumberOfObjectsFound; i++) {
-        if (data.RangeData[i].RangeStatus == 0) {
-          mm = data.RangeData[i].RangeMilliMeter;
-          break;
-        }
-      }
-      sensor.VL53L4CX_ClearInterruptAndStartMeasurement();
-    }
-  }
+  // ── ToF ── serviced in the reflex tick (serviceReflex), not here — telemetry
+  // consumes the cached range so the two consumers don't fight over dataReady
+  // (Kehai-Hikari note 2). alert stays coherent with the Reflex band: both key off
+  // the same cached mm against NEAR_MM.
+  int16_t mm = cachedMm;
   bool alertNow = (mm > 0 && mm <= NEAR_MM);
 
   // ── IMU + Magnetometer ── (each optional; zeroed when absent)
