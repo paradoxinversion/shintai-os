@@ -62,7 +62,7 @@ payload (see [Thermal Grid](#thermal-grid-binary) below).
 | Thermal | `abcd6789-ab12-ab12-ab12-abcdef123456` | `Ctr:23.1 Min:22.6 Max:31.4C` |
 | Climate | `abcdba98-ab12-ab12-ab12-abcdef123456` | `23.0C 41%RH 750ppm` |
 | Environment | `abcdc0de-ab12-ab12-ab12-abcdef123456` | `1007.2hPa 84200ohm 22.8C 39%RH` |
-| Thermal Grid | `abcd7890-ab12-ab12-ab12-abcdef123456` | 68-byte **binary** heat grid (see below) |
+| Thermal Grid | `abcd7890-ab12-ab12-ab12-abcdef123456` | 196-byte **binary** heat grid (see below) |
 
 To receive notifications a central must write `ENABLE_NOTIFICATION` to each
 characteristic's CCCD. **The CCCD UUID is the Bluetooth Base UUID
@@ -76,20 +76,22 @@ and the first field to touch this contract (every other characteristic is a UTF-
 string). It streams a downsampled MLX90640 heat image for the glasses to render as a
 false-colour panel, at the camera's **~2 Hz**, **only while a central is subscribed**.
 
-Payload — **68 bytes, little-endian**:
+Payload — **196 bytes, little-endian**:
 
 | Offset | Type | Field | Meaning |
 |--------|------|-------|---------|
 | 0 | `int16` | `min_dC` | min cell temperature ×10 (°C·10, signed) |
 | 2 | `int16` | `max_dC` | max cell temperature ×10 (°C·10, signed) |
-| 4 | `64 × uint8` | `cells` | row-major 8×8 grid, `cell = round((t − min)/(max − min) × 255)` |
+| 4 | `192 × uint8` | `cells` | row-major 16×12 grid, `cell = round((t − min)/(max − min) × 255)` |
 
-- The 32×24 frame is block-averaged on-device to **8×8** (each cell = mean of its
-  4×3 source block, NaN pixels skipped). `min`/`max` are the **grid's** range, so the
-  cells span the full palette; the consumer auto-ranges the palette to `min_dC`/`max_dC`.
-- **68 bytes exceeds the default 20-byte ATT payload**, so the central must negotiate a
-  larger **MTU** (~185+; the apps request 247). The string characteristics never needed
-  this; Thermal Grid does.
+- The 32×24 frame is block-averaged on-device to **16×12** (each cell = mean of its
+  2×2 source block, NaN pixels skipped) — the sensor's native 4:3 aspect. `min`/`max`
+  are the **grid's** range, so the cells span the full palette; the consumer auto-ranges
+  the palette to `min_dC`/`max_dC` and **bilinear-upscales** the grid for a smooth panel.
+- **196 bytes far exceeds the default 20-byte ATT payload**, so the central must
+  negotiate a larger **MTU** — it needs at least ~199, and the apps request **247**
+  (payload = MTU − 3 = 244, so the whole grid lands in one notification). The string
+  characteristics never needed this; Thermal Grid does.
 - **Not logged** — this grid is BLE-live-only; it is **not** in the CSV schema or the
   flash log. The summary `thermal_*` columns remain the logged thermal representation.
 - CCCD gotcha still applies (the `8000` above).

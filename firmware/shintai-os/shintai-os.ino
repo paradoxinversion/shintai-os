@@ -412,7 +412,7 @@ void setup() {
   thermalGridChar->addDescriptor(thermalGridCccd);
   {
     BLEDescriptor *d = new BLEDescriptor(BLEUUID((uint16_t)0x2901));
-    d->setValue("Thermal Grid (8x8)");
+    d->setValue("Thermal Grid (16x12)");
     thermalGridChar->addDescriptor(d);
   }
 

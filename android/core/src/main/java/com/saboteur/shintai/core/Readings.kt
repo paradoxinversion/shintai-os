@@ -27,7 +27,7 @@ enum class ConnectionState { Idle, PermissionNeeded, Connecting, Discovering, Li
 
 /**
  * Metsuke's decoded thermal grid (the contract's one binary characteristic).
- * [cells] is a row-major 8×8 of 0..255 normalised levels; [minC]/[maxC] are the
+ * [cells] is a row-major 16×12 of 0..255 normalised levels; [minC]/[maxC] are the
  * scene's temperature range in °C, so the renderer auto-ranges the palette across
  * exactly the span these cells were normalised over. Uses `List<Int>` (not IntArray)
  * so the enclosing data class keeps value equality.
@@ -38,9 +38,9 @@ data class ThermalGrid(
     val cells: List<Int>,
 ) {
     companion object {
-        const val W = 8
-        const val H = 8
-        const val BYTES = 68
+        const val W = 16
+        const val H = 12
+        const val BYTES = 196
 
         /** Parse a 68-byte little-endian packet (see CONTRACT.md "Thermal Grid"); null if short. */
         fun parse(b: ByteArray): ThermalGrid? {
@@ -81,6 +81,17 @@ fun ironbow(level: Int): Triple<Int, Int, Int> {
     val f = if (span > 0f) (t - lo[0]) / span else 0f
     fun mix(c: Int) = (lo[c] + (hi[c] - lo[c]) * f).toInt().coerceIn(0, 255)
     return Triple(mix(1), mix(2), mix(3))
+}
+
+/**
+ * The grid as a row-major `W*H` array of opaque ARGB pixels (ironbow), ready to be
+ * wrapped in a Bitmap/ImageBitmap and **bilinear-upscaled** for a smooth heat panel
+ * (Metsuke Forward-path: interpolation costs zero extra BLE bytes). UI-free — plain
+ * Int packing — so `:core` stays Compose-independent; each app wraps the array.
+ */
+fun ThermalGrid.argb(): IntArray = IntArray(cells.size) { i ->
+    val (r, g, b) = ironbow(cells[i])
+    (0xFF shl 24) or (r shl 16) or (g shl 8) or b
 }
 
 /**

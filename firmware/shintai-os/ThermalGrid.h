@@ -12,27 +12,28 @@
 // characteristic is a UTF-8 string):
 //   [0..1] int16 min_dC  (min cell temp * 10, little-endian, signed)
 //   [2..3] int16 max_dC  (max cell temp * 10, little-endian, signed)
-//   [4..67] 64 x uint8   row-major 8x8, cell = round((t-min)/(max-min) * 255)
-// Total 68 bytes. min/max are the DOWNSAMPLED grid's own range (not the raw
-// frame's) so the 0..255 cells span the full palette — best contrast when the
-// glasses auto-range (AC-2). A flat scene (max==min) packs all cells to 0.
+//   [4..] 192 x uint8    row-major 16x12, cell = round((t-min)/(max-min) * 255)
+// Total 196 bytes — fits one notification at the negotiated MTU 247 (payload
+// MTU-3 = 244). min/max are the DOWNSAMPLED grid's own range (not the raw frame's)
+// so the 0..255 cells span the full palette — best contrast when the consumer
+// auto-ranges (AC-2). A flat scene (max==min) packs all cells to 0.
 
 #include <stdint.h>
 #include <math.h>
 
 static const int MLX_W = 32, MLX_H = 24;                    // source frame dims
-static const int METSUKE_GRID_W = 8, METSUKE_GRID_H = 8;    // v1 grid (MD-1)
-static const int METSUKE_GRID_CELLS = METSUKE_GRID_W * METSUKE_GRID_H;  // 64
-static const int METSUKE_GRID_BYTES = 4 + METSUKE_GRID_CELLS;           // 68
+static const int METSUKE_GRID_W = 16, METSUKE_GRID_H = 12;  // grid (MD-1 upgrade; native 4:3)
+static const int METSUKE_GRID_CELLS = METSUKE_GRID_W * METSUKE_GRID_H;  // 192
+static const int METSUKE_GRID_BYTES = 4 + METSUKE_GRID_CELLS;           // 196
 
-// Block-average the 32x24 frame to 8x8 (each cell = mean of its 4-wide x 3-tall
-// source block, skipping NaN pixels). Writes cellsOut[64] row-major (NaN for an
-// all-NaN block) and the min/max over valid cells. Returns the valid-cell count;
-// 0 means no usable thermal data (caller should not emit).
+// Block-average the 32x24 frame to 16x12 (each cell = mean of its 2x2 source
+// block, skipping NaN pixels). Writes cellsOut[192] row-major (NaN for an all-NaN
+// block) and the min/max over valid cells. Returns the valid-cell count; 0 means
+// no usable thermal data (caller should not emit).
 static inline int metsukeDownsample(const float* frame, float* cellsOut,
                                     float* minOut, float* maxOut) {
-  const int bw = MLX_W / METSUKE_GRID_W;   // 4 source cols per cell
-  const int bh = MLX_H / METSUKE_GRID_H;   // 3 source rows per cell
+  const int bw = MLX_W / METSUKE_GRID_W;   // 2 source cols per cell
+  const int bh = MLX_H / METSUKE_GRID_H;   // 2 source rows per cell
   float mn = INFINITY, mx = -INFINITY;
   int validCells = 0;
   for (int gr = 0; gr < METSUKE_GRID_H; gr++) {

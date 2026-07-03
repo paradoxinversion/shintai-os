@@ -1,9 +1,9 @@
 // Host unit tests for Metsuke's pure thermal downsample + binary pack (ThermalGrid.h).
 //
 // Same posture as kanki-band-test.cpp / kehai-band-test.cpp: the firmware has no
-// on-target harness, so the decidable-from-values logic — the 32x24 -> 8x8 block
-// average, NaN handling, and the 68-byte little-endian wire format — is checked on
-// the host with no board.
+// on-target harness, so the decidable-from-values logic — the 32x24 -> 16x12 block
+// average, NaN handling, and the little-endian wire format — is checked on the
+// host with no board.
 //
 //   c++ -std=c++17 -Wall -o /tmp/thermal-test tools/thermal-grid-test.cpp && /tmp/thermal-test
 
@@ -13,6 +13,9 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+
+static const int W = METSUKE_GRID_W;   // 16
+static const int H = METSUKE_GRID_H;   // 12
 
 // Fill a 32x24 frame via a f(row,col)->temp generator.
 template <typename F>
@@ -27,8 +30,11 @@ static int16_t rd_i16(const uint8_t* p) {   // little-endian signed read-back
 }
 
 static void test_dims_and_format() {
-  assert(METSUKE_GRID_CELLS == 64);
-  assert(METSUKE_GRID_BYTES == 68);
+  assert(W == 16 && H == 12);
+  assert(METSUKE_GRID_CELLS == 192);
+  assert(METSUKE_GRID_BYTES == 196);
+  // Must fit one BLE notification at the negotiated MTU 247 (payload MTU-3 = 244).
+  assert(METSUKE_GRID_BYTES <= 244);
 }
 
 static void test_uniform_frame() {
@@ -44,39 +50,38 @@ static void test_uniform_frame() {
 static void test_gradient_and_endpoints() {
   // Temperature rising with column: left cells cool, right cells hot. After block
   // averaging the grid spans its own min..max, so the coldest cell -> 0 and the
-  // hottest -> 255, and the row is monotonic left-to-right.
+  // hottest -> 255, and each row is monotonic left-to-right.
   float frame[MLX_W * MLX_H];
   fill(frame, [](int, int c) { return 10.0f + (float)c; });   // 10..41 C across width
   uint8_t out[METSUKE_GRID_BYTES];
   assert(metsukePackGrid(frame, out));
 
-  // Header min/max are the grid-cell extremes (block means), not the raw 10/41.
   int16_t mn = rd_i16(out), mx = rd_i16(out + 2);
   assert(mn < mx);
 
-  // First row: cell 0 is the coldest -> 0, cell 7 is the hottest -> 255, monotonic.
+  // First row: cell 0 is coldest -> 0, cell W-1 is hottest -> 255, monotonic.
   const uint8_t* row0 = out + 4;
-  assert(row0[0] == 0 && row0[7] == 255);
-  for (int c = 0; c < 7; c++) assert(row0[c] < row0[c + 1]);
+  assert(row0[0] == 0 && row0[W - 1] == 255);
+  for (int c = 0; c < W - 1; c++) assert(row0[c] < row0[c + 1]);
 
   // Column-only gradient: every row is identical.
-  for (int gr = 1; gr < METSUKE_GRID_H; gr++)
-    assert(std::memcmp(out + 4, out + 4 + gr * METSUKE_GRID_W, METSUKE_GRID_W) == 0);
+  for (int gr = 1; gr < H; gr++)
+    assert(std::memcmp(out + 4, out + 4 + gr * W, W) == 0);
 }
 
 static void test_hot_spot_localises() {
-  // One hot block in the middle should light exactly its grid cell brightest.
+  // One hot 2x2 block should light exactly its grid cell brightest. Grid cell
+  // (gr,gc) covers source rows [gr*2, gr*2+2), cols [gc*2, gc*2+2).
+  const int gr = 6, gc = 8;
   float frame[MLX_W * MLX_H];
   fill(frame, [](int, int) { return 20.0f; });
-  // grid cell (gr=4, gc=4) covers rows 12..14, cols 16..19.
-  for (int r = 12; r < 15; r++)
-    for (int c = 16; c < 20; c++)
+  for (int r = gr * 2; r < gr * 2 + 2; r++)
+    for (int c = gc * 2; c < gc * 2 + 2; c++)
       frame[r * MLX_W + c] = 60.0f;
   uint8_t out[METSUKE_GRID_BYTES];
   assert(metsukePackGrid(frame, out));
-  int hot = out[4 + 4 * METSUKE_GRID_W + 4];
-  assert(hot == 255);                       // the hot cell saturates
-  assert(out[4 + 0] == 0);                  // a cool corner stays at floor
+  assert(out[4 + gr * W + gc] == 255);   // the hot cell saturates
+  assert(out[4 + 0] == 0);               // a cool corner stays at floor
 }
 
 static void test_nan_handling() {
