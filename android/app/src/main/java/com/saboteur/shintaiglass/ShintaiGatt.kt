@@ -47,4 +47,4 @@ data class ShintaiReadings(
     val packets: Int = 0,              // total notifications received — a visible heartbeat
 )
 
-enum class ConnectionState { Idle, Connecting, Discovering, Live, Disconnected }
+enum class ConnectionState { Idle, PermissionNeeded, Connecting, Discovering, Live, Disconnected }

@@ -1,10 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- BLE is required; this app is useless without it. -->
+    <!--
+      BLE is functionally required, but declared required="false" on purpose: a
+      hard requirement lets some launchers/installers hide or block a sideload on
+      a device that doesn't advertise the feature flag (exactly the kind of
+      surprise the RayNeo X3 Pro can spring). The real gate is the runtime adapter
+      check in ShintaiBleClient.connect(), which fails gracefully to Disconnected
+      when BLE is absent or off — so we always install, then degrade cleanly.
+    -->
     <uses-feature
         android:name="android.hardware.bluetooth_le"
-        android:required="true" />
+        android:required="false" />
 
     <!--
       We connect to a KNOWN device by MAC and never scan, so we only need

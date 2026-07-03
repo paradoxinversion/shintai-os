@@ -68,3 +68,8 @@ typo makes `getDescriptor()` return null and silently kills every subscription.
 
 A characteristic only notifies when its sensor is present and has data (e.g. Climate
 warms up ~5 s and updates every ~5 s; Thermal needs the MLX90640 attached).
+
+**Consumer coverage.** The Android app (`android/`) subscribes to every characteristic
+except **Environment** (`abcdc0de`, BME688 pressure + gas). This is acknowledged, not a
+deliberate omission — rendering pressure and the VOC/gas proxy on the glasses is planned
+as a post-review follow-up.

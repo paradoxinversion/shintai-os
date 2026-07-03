@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -67,13 +69,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // API 35 enforces edge-to-edge; opt in explicitly and inset the content
+        // (see EyePane's safeDrawingPadding) so text never hides behind a phone's
+        // status/nav bars. The glasses report zero insets, so it's a no-op there.
+        enableEdgeToEdge()
         setContent {
-            // Connect as soon as BLUETOOTH_CONNECT is granted — on launch.
+            // Request BLUETOOTH_CONNECT, then connect. On denial we surface a
+            // PermissionNeeded state (with a tappable retry) instead of silently
+            // sitting idle forever — a dead-end that's easy to hit on the glasses.
             val permLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
                 ActivityResultContracts.RequestPermission()
-            ) { granted -> if (granted) vm.connect() }
+            ) { granted -> if (granted) vm.connect() else vm.onPermissionDenied() }
 
-            androidx.compose.runtime.LaunchedEffect(Unit) {
+            val requestPermission = {
                 if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
                     == PackageManager.PERMISSION_GRANTED
                 ) {
@@ -82,6 +90,8 @@ class MainActivity : ComponentActivity() {
                     permLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
                 }
             }
+
+            androidx.compose.runtime.LaunchedEffect(Unit) { requestPermission() }
 
             val readings by vm.readings.collectAsState()
             var settingsOpen by rememberSaveable { mutableStateOf(false) }
@@ -93,6 +103,7 @@ class MainActivity : ComponentActivity() {
                 onToggleSettings = { settingsOpen = !settingsOpen },
                 onAdjustIpd = { vm.adjustIpd(it) },
                 onToggleUnits = { vm.toggleUnits() },
+                onRequestPermission = requestPermission,
             )
         }
     }
@@ -123,6 +134,7 @@ private fun ShintaiHud(
     onToggleSettings: () -> Unit,
     onAdjustIpd: (Int) -> Unit,
     onToggleUnits: () -> Unit,
+    onRequestPermission: () -> Unit = {},
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -133,7 +145,8 @@ private fun ShintaiHud(
         // stereo framebuffer (the X3 Pro is 1280x480 = 2.67:1) is far wider than any
         // phone — even a Pixel 7 Pro locked to landscape is ~2.16:1. Above the
         // threshold -> draw the readout into each eye-half; below -> a single pane.
-        val stereo = (maxWidth.value / maxHeight.value) >= STEREO_ASPECT
+        val stereo = maxHeight.value > 0f &&
+            (maxWidth.value / maxHeight.value) >= STEREO_ASPECT
         if (stereo) {
             val nudge = ipdNudge.dp
             // Same readout in both halves (one source of truth, drawn twice) so the
@@ -143,16 +156,16 @@ private fun ShintaiHud(
                 EyePane(r, Modifier.weight(1f).fillMaxHeight(), units, nudge = -nudge,
                     stereo = true, ipdNudge = ipdNudge, settingsOpen = settingsOpen,
                     onToggleSettings = onToggleSettings, onAdjustIpd = onAdjustIpd,
-                    onToggleUnits = onToggleUnits)
+                    onToggleUnits = onToggleUnits, onRequestPermission = onRequestPermission)
                 EyePane(r, Modifier.weight(1f).fillMaxHeight(), units, nudge = nudge,
                     stereo = true, ipdNudge = ipdNudge, settingsOpen = settingsOpen,
                     onToggleSettings = onToggleSettings, onAdjustIpd = onAdjustIpd,
-                    onToggleUnits = onToggleUnits)
+                    onToggleUnits = onToggleUnits, onRequestPermission = onRequestPermission)
             }
         } else {
             EyePane(r, Modifier.fillMaxSize(), units, settingsOpen = settingsOpen,
                 onToggleSettings = onToggleSettings, onAdjustIpd = onAdjustIpd,
-                onToggleUnits = onToggleUnits)
+                onToggleUnits = onToggleUnits, onRequestPermission = onRequestPermission)
         }
     }
 }
@@ -172,8 +185,9 @@ private fun EyePane(
     onToggleSettings: () -> Unit = {},
     onAdjustIpd: (Int) -> Unit = {},
     onToggleUnits: () -> Unit = {},
+    onRequestPermission: () -> Unit = {},
 ) {
-    Box(modifier.offset(x = nudge).padding(horizontal = 22.dp, vertical = 16.dp)) {
+    Box(modifier.offset(x = nudge).safeDrawingPadding().padding(horizontal = 22.dp, vertical = 16.dp)) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -216,6 +230,10 @@ private fun EyePane(
                 // Inline at the top (real bounds, never below the fold) instead of a
                 // floating overlay.
                 SettingsPanel(units, stereo, ipdNudge, onAdjustIpd, onToggleUnits, onToggleSettings)
+            } else if (r.connection == ConnectionState.PermissionNeeded) {
+                // Denied BLUETOOTH_CONNECT: explain and offer a retry rather than
+                // leaving a blank "—" readout that never fills in.
+                PermissionPrompt(onRequestPermission)
             } else {
                 // The headline: distance, big (converted to the chosen unit).
                 val (distVal, distUnit) = distanceParts(r.distanceMm, r.distanceText, units)
@@ -252,6 +270,33 @@ private fun EyePane(
                 }
             }
         }
+    }
+}
+
+/** Shown when BLUETOOTH_CONNECT was denied: a clear reason plus a retry with a
+ *  hit target the glasses pointer can land on. Tapping re-fires the request; if
+ *  the system no longer shows the dialog (permanently denied), the user is
+ *  pointed at app settings. */
+@Composable
+private fun PermissionPrompt(onRequestPermission: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(PANEL, RoundedCornerShape(10.dp))
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Text("BLUETOOTH NEEDED", color = MAGENTA, fontFamily = mono,
+            fontWeight = FontWeight.Bold, fontSize = 20.sp)
+        Text(
+            "Shintai Glass reads the board over Bluetooth. Grant the permission to start streaming.",
+            color = DIM, fontFamily = mono, fontSize = 14.sp,
+        )
+        TapChip("GRANT BLUETOOTH", onRequestPermission)
+        Text(
+            "If no dialog appears, enable it in system settings → apps → Shintai Glass → permissions.",
+            color = DIM, fontFamily = mono, fontSize = 11.sp,
+        )
     }
 }
 
@@ -330,6 +375,7 @@ private fun ReadoutRow(label: String, value: String) {
 
 private fun stateLabel(s: ConnectionState): String = when (s) {
     ConnectionState.Idle -> "idle"
+    ConnectionState.PermissionNeeded -> "needs Bluetooth"
     ConnectionState.Connecting -> "connecting…"
     ConnectionState.Discovering -> "discovering…"
     ConnectionState.Live -> "● LIVE"

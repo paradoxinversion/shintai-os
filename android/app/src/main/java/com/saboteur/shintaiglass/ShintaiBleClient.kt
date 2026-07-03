@@ -16,11 +16,13 @@ import java.util.ArrayDeque
 import java.util.UUID
 
 /**
- * Connects to the Shintai-OS board by a HARDCODED MAC and streams its five
+ * Connects to the Shintai-OS board by a HARDCODED MAC and streams its seven
  * notify characteristics back to [listener]. No scanning anywhere — on the
  * RayNeo X3 Pro the glasses' own BLE traffic starves a scan, so we go straight
  * to [android.bluetooth.BluetoothAdapter.getRemoteDevice] + connectGatt with
- * autoConnect=true (the stack reconnects on its own when the board is in range).
+ * autoConnect=false — a fast, deterministic DIRECT connect (autoConnect=true on
+ * this radio often never reports STATE_CONNECTED). A direct connect won't retry
+ * on its own, so [reconnectSoon] re-fires it after a disconnect.
  *
  * The one non-obvious BLE rule this class exists to honour: only ONE GATT
  * operation may be in flight at a time. Enabling notifications on five
@@ -45,6 +47,9 @@ class ShintaiBleClient(
 
     /** CCCDs still to be written, drained one-at-a-time as each write completes. */
     private val subscribeQueue = ArrayDeque<UUID>()
+
+    /** Guards discoverServices() to a single call — the MTU callback races its watchdog. */
+    private var discoveryKicked = false
 
     fun connect() {
         val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -91,6 +96,13 @@ class ShintaiBleClient(
         false
     }
 
+    /** Start service discovery exactly once — the MTU callback and its watchdog race. */
+    private fun kickDiscovery(g: BluetoothGatt) {
+        if (discoveryKicked) return
+        discoveryKicked = true
+        g.discoverServices()
+    }
+
     /** Tear down the dead GATT and fire a fresh direct connect after a short delay. */
     private fun reconnectSoon() {
         gatt?.close()
@@ -106,6 +118,7 @@ class ShintaiBleClient(
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     listener.onState(ConnectionState.Discovering)
+                    discoveryKicked = false
                     // Clear Android's cached GATT table first — a stale cache from an
                     // earlier firmware layout serves the characteristics WITHOUT their
                     // 0x2902 CCCDs, which silently kills all notifications. refresh()
@@ -118,8 +131,13 @@ class ShintaiBleClient(
                     main.postDelayed({
                         if (!g.requestMtu(247)) {
                             Log.w(TAG, "requestMtu failed; discovering at default MTU")
-                            g.discoverServices()
+                            kickDiscovery(g)
                         }
+                        // Watchdog: some stacks accept requestMtu but never fire
+                        // onMtuChanged, leaving us stuck in Discovering forever. If
+                        // discovery hasn't started by the deadline, force it at
+                        // whatever MTU we have. kickDiscovery() dedupes the race.
+                        main.postDelayed({ kickDiscovery(g) }, MTU_TIMEOUT_MS)
                     }, 600)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
@@ -132,7 +150,7 @@ class ShintaiBleClient(
 
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
             Log.i(TAG, "MTU negotiated=$mtu status=$status — discovering")
-            g.discoverServices()
+            kickDiscovery(g)
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
@@ -142,8 +160,13 @@ class ShintaiBleClient(
                 listener.onState(ConnectionState.Disconnected)
                 return
             }
-            // Log the full characteristic/descriptor inventory once, so a capture
-            // tells us immediately whether the CCCDs we expect are even present.
+            // Log the characteristic/descriptor inventory once, so a capture tells us
+            // immediately whether the 0x2902 CCCDs we depend on are actually present —
+            // their absence is the exact failure the serialized subscribe guards against.
+            for (ch in service.characteristics) {
+                val hasCccd = ch.getDescriptor(ShintaiGatt.CCCD) != null
+                Log.i(TAG, "char ${ch.uuid} cccd=${if (hasCccd) "present" else "MISSING"}")
+            }
             // Queue every characteristic, then kick off the serialized subscribe.
             subscribeQueue.clear()
             subscribeQueue.addAll(ShintaiGatt.SUBSCRIPTIONS)
@@ -216,5 +239,7 @@ class ShintaiBleClient(
     companion object {
         private const val TAG = "ShintaiBle"
         private const val RETRY_MS = 2000L
+        /** How long to wait for onMtuChanged before forcing discovery anyway. */
+        private const val MTU_TIMEOUT_MS = 1500L
     }
 }

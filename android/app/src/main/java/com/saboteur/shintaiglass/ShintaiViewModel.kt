@@ -55,33 +55,39 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
         client = ShintaiBleClient(getApplication(), DEVICE_ADDRESS, listener).also { it.connect() }
     }
 
+    /** BLUETOOTH_CONNECT was denied — surface it so the UI can prompt a retry
+     *  instead of sitting silently at [ConnectionState.Idle] forever. */
+    fun onPermissionDenied() {
+        _readings.update { it.copy(connection = ConnectionState.PermissionNeeded) }
+    }
+
     private val listener = object : ShintaiBleClient.Listener {
         override fun onState(state: ConnectionState) {
             _readings.update { it.copy(connection = state) }
         }
 
         override fun onValue(uuid: UUID, value: String) {
-            _readings.update { r ->
-                val r = r.copy(packets = r.packets + 1) // heartbeat: every notification counts
+            _readings.update { prev ->
+                val base = prev.copy(packets = prev.packets + 1) // heartbeat: every notification counts
                 when (uuid) {
                     ShintaiGatt.DISTANCE -> {
                         val mm = Regex("""\d+""").find(value)?.value?.toIntOrNull()
-                        r.copy(
+                        base.copy(
                             distanceText = value,
                             distanceMm = mm,
                             // Mirror the firmware: the warning clears once we're back past 20 cm.
-                            alertActive = if (mm != null && mm > NEAR_MM) false else r.alertActive,
+                            alertActive = if (mm != null && mm > NEAR_MM) false else base.alertActive,
                         )
                     }
                     // Alert is edge-triggered ("CLOSE") with no explicit clear, so we
                     // latch it here and let a far distance reading above clear it.
-                    ShintaiGatt.ALERT -> r.copy(alertActive = true)
-                    ShintaiGatt.HEADING -> r.copy(heading = value)
-                    ShintaiGatt.ACCEL -> r.copy(accel = value)
-                    ShintaiGatt.GPS -> r.copy(gps = value)
-                    ShintaiGatt.CLIMATE -> r.copy(climate = value)
-                    ShintaiGatt.THERMAL -> r.copy(thermal = value)
-                    else -> r
+                    ShintaiGatt.ALERT -> base.copy(alertActive = true)
+                    ShintaiGatt.HEADING -> base.copy(heading = value)
+                    ShintaiGatt.ACCEL -> base.copy(accel = value)
+                    ShintaiGatt.GPS -> base.copy(gps = value)
+                    ShintaiGatt.CLIMATE -> base.copy(climate = value)
+                    ShintaiGatt.THERMAL -> base.copy(thermal = value)
+                    else -> base
                 }
             }
         }
