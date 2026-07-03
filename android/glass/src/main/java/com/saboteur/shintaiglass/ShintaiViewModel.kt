@@ -7,6 +7,12 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
+import com.saboteur.shintai.core.ConnectionState
+import com.saboteur.shintai.core.ShintaiBleClient
+import com.saboteur.shintai.core.ShintaiGatt
+import com.saboteur.shintai.core.ShintaiReadings
+import com.saboteur.shintai.core.Units
+import com.saboteur.shintai.core.fold
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,8 +21,9 @@ import java.util.UUID
 
 /**
  * Owns the BLE client and folds each notification into a single [ShintaiReadings]
- * snapshot the UI observes. Parsing lives here, not in the BLE layer, so the
- * client stays a dumb transport.
+ * snapshot the HUD observes. The parse lives in `:core` ([fold]) so Glass and
+ * Operator can never disagree on how a payload becomes state; this view model
+ * only adds the glass-specific concerns — the hardcoded MAC, IPD nudge, and units.
  */
 class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -52,7 +59,10 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
     /** Called once the BLUETOOTH_CONNECT permission is in hand. Idempotent. */
     fun connect() {
         if (client != null) return
-        client = ShintaiBleClient(getApplication(), DEVICE_ADDRESS, listener).also { it.connect() }
+        // The HUD deliberately skips ENVIRONMENT (pressure/gas) — the seven
+        // channels below are all it renders. See CONTRACT.md "Consumer coverage".
+        client = ShintaiBleClient(getApplication(), DEVICE_ADDRESS, GLASS_SUBSCRIPTIONS, listener)
+            .also { it.connect() }
     }
 
     /** BLUETOOTH_CONNECT was denied — surface it so the UI can prompt a retry
@@ -67,29 +77,7 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         override fun onValue(uuid: UUID, value: String) {
-            _readings.update { prev ->
-                val base = prev.copy(packets = prev.packets + 1) // heartbeat: every notification counts
-                when (uuid) {
-                    ShintaiGatt.DISTANCE -> {
-                        val mm = Regex("""\d+""").find(value)?.value?.toIntOrNull()
-                        base.copy(
-                            distanceText = value,
-                            distanceMm = mm,
-                            // Mirror the firmware: the warning clears once we're back past 20 cm.
-                            alertActive = if (mm != null && mm > NEAR_MM) false else base.alertActive,
-                        )
-                    }
-                    // Alert is edge-triggered ("CLOSE") with no explicit clear, so we
-                    // latch it here and let a far distance reading above clear it.
-                    ShintaiGatt.ALERT -> base.copy(alertActive = true)
-                    ShintaiGatt.HEADING -> base.copy(heading = value)
-                    ShintaiGatt.ACCEL -> base.copy(accel = value)
-                    ShintaiGatt.GPS -> base.copy(gps = value)
-                    ShintaiGatt.CLIMATE -> base.copy(climate = value)
-                    ShintaiGatt.THERMAL -> base.copy(thermal = value)
-                    else -> base
-                }
-            }
+            _readings.update { it.fold(uuid, value) }
         }
     }
 
@@ -101,14 +89,19 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
     companion object {
         /**
          * ▒▒▒ HARDCODE THE BOARD'S MAC HERE ▒▒▒
-         * No scanning, so this must be the real static address of your QT Py.
-         * Find it once over USB serial, or from `bluetoothctl`/a scanner app:
-         * look for the device advertising as "ShintaiOS".
+         * No scanning on the glasses (the RayNeo radio starves a scan), so this
+         * must be the real static address of your QT Py. Find it once over USB
+         * serial, or from `bluetoothctl`/a scanner app: look for the device
+         * advertising as "ShintaiOS". (The Operator app scans instead.)
          */
         const val DEVICE_ADDRESS = "68:EE:8F:6E:77:BD"
 
-        /** Proximity-alert threshold, matching NEAR_MM in shintai-os.ino. */
-        private const val NEAR_MM = 200
+        /** The seven channels the HUD renders — every characteristic except
+         *  ENVIRONMENT (BME688 pressure + gas), which only the Operator shows. */
+        private val GLASS_SUBSCRIPTIONS = listOf(
+            ShintaiGatt.DISTANCE, ShintaiGatt.ALERT, ShintaiGatt.HEADING, ShintaiGatt.ACCEL,
+            ShintaiGatt.GPS, ShintaiGatt.CLIMATE, ShintaiGatt.THERMAL,
+        )
 
         private const val KEY_IPD = "ipd_nudge"
         private const val KEY_IMPERIAL = "imperial"

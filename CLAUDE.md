@@ -11,8 +11,10 @@ The project is three modules that meet at one seam — the data contract in
 - `firmware/shintai-os/` — the ESP32-S3 sketch (Shintai-OS core): reads sensors and
   publishes them three ways (serial CSV, onboard FFat flash, BLE notify).
 - `groundstation/` — the Python consumer: capture + analysis over serial/flash.
-- `android/` — the BLE consumer: a Kotlin/Compose HUD app for RayNeo X3 Pro / phone
-  (has its own `android/README.md` and build toolchain).
+- `android/` — the BLE consumers: a Gradle project with a shared `:core` module (the
+  one Kotlin mirror of the contract + BLE transport) and **two** Kotlin/Compose apps —
+  `:glass` (RayNeo X3 Pro HUD) and `:operator` (phone field console). Has its own
+  `android/README.md` and build toolchain.
 
 The board produces; the two consumers only ever meet it at the contract. The
 data flow is the architecture:
@@ -23,7 +25,8 @@ firmware/shintai-os ──USB serial (CSV+human)──▶ groundstation/shintai-
        ├── onboard FFat flash (untethered) ──groundstation/shintai-pull.py (dump)──▶ logs/*.csv
        │                                                                                  │
        │                                                  groundstation/{hud,analyze}.py ─┘ ──▶ analysis/
-       └── BLE GATT (notify) ─────────────────────────▶ android/ app (RayNeo X3 Pro / phone)
+       └── BLE GATT (notify) ──▶ android :core ──┬─▶ :glass  app (RayNeo X3 Pro HUD)
+                                                  └─▶ :operator app (phone field console)
 ```
 
 ## Commands
@@ -76,7 +79,7 @@ warn about — a renamed/reordered CSV column, a mistyped GATT UUID, and the CCC
 
 These are wired into a **scope-aware pre-commit hook** (`tools/hooks/pre-commit`):
 the contract linter runs on every commit; `verify.sh` runs only when `firmware/`
-changed; strict `detekt` (fails on issues not in `android/app/detekt-baseline.xml`)
+changed; strict `detekt` (fails on issues not in each module's `detekt-baseline.xml`)
 runs only when `android/` changed. Enable once per clone — it's local git config:
 
 ```sh
@@ -88,8 +91,9 @@ git commit --no-verify                  # bypass it for a single commit
 
 - **`CONTRACT.md` is the source of truth.** The CSV column schema and the BLE GATT
   characteristics are defined there; the firmware `CSV_HEADER`, the Kotlin UUIDs in
-  `android/.../ShintaiGatt.kt`, and any hardcoded column names in `groundstation/`
-  all mirror it. Change a field → edit `CONTRACT.md` first, then those sites.
+  `android/core/…/ShintaiGatt.kt` (the shared `:core` module — both apps import it),
+  and any hardcoded column names in `groundstation/` all mirror it. Change a field →
+  edit `CONTRACT.md` first, then those sites.
 - **CSV framing.** The sketch emits a `timestamp_ms,...` header then numeric rows;
   consumers key off `line.startswith("timestamp_ms")` and `line[0].isdigit()`.
 - **Serial modes** `h`/`c`/`b` (human/csv/both): the logger sends `b\n` on connect

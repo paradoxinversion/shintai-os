@@ -1,4 +1,4 @@
-package com.saboteur.shintaiglass
+package com.saboteur.shintai.core
 
 import java.util.Locale
 
@@ -24,6 +24,14 @@ fun formatThermal(raw: String, u: Units): String {
     }
     return converted.replace(Regex("C$"), "F") // trailing unit only (not the "Ctr" label)
 }
+
+/** Environment raw: "1007.2hPa 84200ohm 22.8C 39%RH" -> the "<n>C" temp to Fahrenheit.
+ *  Pressure (hPa) and gas resistance (ohm) are unit-agnostic, so they pass through. */
+fun formatEnvironment(raw: String, u: Units): String =
+    if (u == Units.METRIC) raw
+    else Regex("""(-?\d+(?:\.\d+)?)C""").replace(raw) { m ->
+        "${f1(cToF(m.groupValues[1].toDouble()))}F"
+    }
 
 /** GPS raw: "lat,lon 826m 0.0km/h" -> altitude in feet, speed in mph. */
 fun formatGps(raw: String, u: Units): String {

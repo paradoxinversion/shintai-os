@@ -1,4 +1,4 @@
-package com.saboteur.shintaiglass
+package com.saboteur.shintai.core
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
@@ -16,23 +16,27 @@ import java.util.ArrayDeque
 import java.util.UUID
 
 /**
- * Connects to the Shintai-OS board by a HARDCODED MAC and streams its seven
- * notify characteristics back to [listener]. No scanning anywhere — on the
- * RayNeo X3 Pro the glasses' own BLE traffic starves a scan, so we go straight
- * to [android.bluetooth.BluetoothAdapter.getRemoteDevice] + connectGatt with
- * autoConnect=false — a fast, deterministic DIRECT connect (autoConnect=true on
- * this radio often never reports STATE_CONNECTED). A direct connect won't retry
- * on its own, so [reconnectSoon] re-fires it after a disconnect.
+ * Connects to the Shintai-OS board by MAC and streams its notify characteristics
+ * back to [listener]. No scanning here — a direct
+ * [android.bluetooth.BluetoothAdapter.getRemoteDevice] + connectGatt with
+ * autoConnect=false is fast and deterministic (autoConnect=true on the RayNeo
+ * radio often never reports STATE_CONNECTED). A direct connect won't retry on
+ * its own, so [reconnectSoon] re-fires it after a disconnect.
+ *
+ * [subscriptions] is the ordered set of characteristics THIS app wants; the
+ * Glass HUD passes seven, the Operator passes all eight. The board is the same —
+ * only the consumer's appetite differs.
  *
  * The one non-obvious BLE rule this class exists to honour: only ONE GATT
- * operation may be in flight at a time. Enabling notifications on five
- * characteristics therefore can't be fired in a loop — each CCCD write must
- * wait for the previous onDescriptorWrite. See [subscribeQueue]/[subscribeNext].
+ * operation may be in flight at a time. Enabling notifications therefore can't be
+ * fired in a loop — each CCCD write must wait for the previous onDescriptorWrite.
+ * See [subscribeQueue]/[subscribeNext].
  */
 @SuppressLint("MissingPermission") // caller guarantees BLUETOOTH_CONNECT is granted before connect()
 class ShintaiBleClient(
     private val context: Context,
     private val deviceAddress: String,
+    private val subscriptions: List<UUID>,
     private val listener: Listener,
 ) {
     interface Listener {
@@ -91,7 +95,8 @@ class ShintaiBleClient(
      */
     private fun refreshDeviceCache(g: BluetoothGatt): Boolean = try {
         (g.javaClass.getMethod("refresh").invoke(g) as? Boolean) ?: false
-    } catch (e: Exception) {
+    } catch (e: ReflectiveOperationException) {
+        // Hidden API absent/renamed on this ROM — degrade to the stale cache path.
         Log.w(TAG, "refresh() unavailable: $e")
         false
     }
@@ -167,9 +172,10 @@ class ShintaiBleClient(
                 val hasCccd = ch.getDescriptor(ShintaiGatt.CCCD) != null
                 Log.i(TAG, "char ${ch.uuid} cccd=${if (hasCccd) "present" else "MISSING"}")
             }
-            // Queue every characteristic, then kick off the serialized subscribe.
+            // Queue the characteristics this app asked for, then kick off the
+            // serialized subscribe.
             subscribeQueue.clear()
-            subscribeQueue.addAll(ShintaiGatt.SUBSCRIPTIONS)
+            subscribeQueue.addAll(subscriptions)
             subscribeNext(g)
         }
 

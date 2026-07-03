@@ -13,5 +13,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ShintaiGlass"
-include(":app")
+rootProject.name = "ShintaiOS"
+include(":core")       // shared BLE contract + transport (no UI)
+include(":glass")      // RayNeo X3 Pro HUD app  (com.saboteur.shintaiglass)
+include(":operator")   // phone field-console app (com.saboteur.shintaioperator)

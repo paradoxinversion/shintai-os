@@ -1,4 +1,4 @@
-package com.saboteur.shintaiglass
+package com.saboteur.shintai.core
 
 import java.util.UUID
 
@@ -12,6 +12,10 @@ import java.util.UUID
  * The standard 0x2902 Client Characteristic Configuration Descriptor (CCCD)
  * sits on each characteristic; writing ENABLE_NOTIFICATION to it is what turns
  * the notify stream on.
+ *
+ * This lives in `:core` because it is the ONE mirror of `CONTRACT.md`'s GATT
+ * table shared by both consumer apps (`:glass` and `:operator`). Which subset
+ * an app subscribes to is the app's choice — see [ALL] and each app's own list.
  */
 object ShintaiGatt {
 
@@ -24,27 +28,14 @@ object ShintaiGatt {
     val GPS: UUID = UUID.fromString("abcd3456-ab12-ab12-ab12-abcdef123456")
     val CLIMATE: UUID = UUID.fromString("abcdba98-ab12-ab12-ab12-abcdef123456")
     val THERMAL: UUID = UUID.fromString("abcd6789-ab12-ab12-ab12-abcdef123456")
+    val ENVIRONMENT: UUID = UUID.fromString("abcdc0de-ab12-ab12-ab12-abcdef123456")
 
     /** Standard CCCD UUID (Bluetooth Base UUID: note the `8000`, not `0000`). */
     val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
-    /** Characteristics this app subscribes to, in subscription order. */
-    val SUBSCRIPTIONS: List<UUID> =
-        listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL)
+    /** Every characteristic the board exposes, in a sensible subscribe order.
+     *  Apps pass the subset they render to [ShintaiBleClient]; nothing forces an
+     *  app to take them all (the Glass HUD deliberately skips [ENVIRONMENT]). */
+    val ALL: List<UUID> =
+        listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT)
 }
-
-/** Immutable snapshot of everything the UI renders. */
-data class ShintaiReadings(
-    val connection: ConnectionState = ConnectionState.Idle,
-    val distanceText: String = "—",   // e.g. "1234 mm" or "no reading"
-    val distanceMm: Int? = null,       // parsed numeric mm, null when no reading
-    val alertActive: Boolean = false,  // proximity warning latched from the Alert char
-    val heading: String = "—",         // e.g. "169.0° S"
-    val accel: String = "—",           // e.g. "X:1.8 Y:0.0 Z:9.8"
-    val gps: String = "—",             // e.g. "37.12345,-122.12345 12m 3.4km/h"
-    val climate: String = "—",         // e.g. "23.0C 41%RH 750ppm" (SCD-40, warms up ~5s)
-    val thermal: String = "—",         // e.g. "Ctr:23.1 Min:22.6 Max:31.4C" (MLX90640)
-    val packets: Int = 0,              // total notifications received — a visible heartbeat
-)
-
-enum class ConnectionState { Idle, PermissionNeeded, Connecting, Discovering, Live, Disconnected }

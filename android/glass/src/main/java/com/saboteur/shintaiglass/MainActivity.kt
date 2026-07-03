@@ -4,6 +4,13 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.KeyEvent
+import com.saboteur.shintai.core.ConnectionState
+import com.saboteur.shintai.core.ShintaiReadings
+import com.saboteur.shintai.core.Units
+import com.saboteur.shintai.core.distanceParts
+import com.saboteur.shintai.core.formatClimate
+import com.saboteur.shintai.core.formatGps
+import com.saboteur.shintai.core.formatThermal
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
