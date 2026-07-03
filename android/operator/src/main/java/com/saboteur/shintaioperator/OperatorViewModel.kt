@@ -14,6 +14,7 @@ import com.saboteur.shintai.core.ShintaiGatt
 import com.saboteur.shintai.core.ShintaiReadings
 import com.saboteur.shintai.core.Units
 import com.saboteur.shintai.core.fold
+import com.saboteur.shintai.core.foldBinary
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -114,8 +115,9 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
         if (client != null) return
         prefs.edit().putString(KEY_LAST_ADDR, address).apply()
         log("CONNECT $address")
-        // Operator takes EVERY channel, ENVIRONMENT included — it's the complete readout.
-        client = ShintaiBleClient(getApplication(), address, ShintaiGatt.ALL, listener)
+        // Operator takes EVERY string channel (ENVIRONMENT included — the complete
+        // readout) plus Metsuke's binary thermal grid for its own heat panel.
+        client = ShintaiBleClient(getApplication(), address, ShintaiGatt.ALL + ShintaiGatt.THERMAL_GRID, listener)
             .also { it.connect() }
     }
 
@@ -172,6 +174,11 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
                 ShintaiGatt.DISTANCE -> snap.distanceMm?.let { push(distances, it.toFloat(), _distanceHistory) }
                 ShintaiGatt.CLIMATE -> co2Ppm(value)?.let { push(co2s, it.toFloat(), _co2History) }
             }
+        }
+
+        override fun onBinary(uuid: UUID, value: ByteArray) {
+            // Metsuke's thermal grid — the one binary channel. Parsed in :core.
+            _readings.update { it.foldBinary(uuid, value) }
         }
     }
 

@@ -13,9 +13,10 @@
 #include <FFat.h>
 #include <Preferences.h>
 #include <math.h>
-#include "Aizu.h"       // shared on-body output bus (specs/platform/aizu.md): sole NeoPixel writer
-#include "KehaiBand.h"  // Kehai-Hikari proximity reflex (specs/zokyo/kehai-hikari.md): distance -> Aizu cue
-#include "KankiBand.h"  // Kanki air-quality sense (specs/zokyo/kanki.md): co2_ppm -> Aizu ambient cue
+#include "Aizu.h"        // shared on-body output bus (specs/platform/aizu.md): sole NeoPixel writer
+#include "KehaiBand.h"   // Kehai-Hikari proximity reflex (specs/zokyo/kehai-hikari.md): distance -> Aizu cue
+#include "KankiBand.h"   // Kanki air-quality sense (specs/zokyo/kanki.md): co2_ppm -> Aizu ambient cue
+#include "ThermalGrid.h" // Metsuke thermal sight (specs/zokyo/metsuke.md): MLX frame -> packed 8x8 heat grid
 
 // BLE UUIDs
 #define SERVICE_UUID        "12345678-1234-1234-1234-123456789abc"
@@ -27,6 +28,7 @@
 #define THERMAL_UUID        "abcd6789-ab12-ab12-ab12-abcdef123456"
 #define CLIMATE_UUID        "abcdba98-ab12-ab12-ab12-abcdef123456"
 #define ENVIRONMENT_UUID    "abcdc0de-ab12-ab12-ab12-abcdef123456"
+#define THERMAL_GRID_UUID   "abcd7890-ab12-ab12-ab12-abcdef123456"  // Metsuke: binary heat grid
 
 const int NEAR_MM  = 200;
 const int FAR_MM   = 2000;   // Kehai-Hikari Approach/Clear boundary (was reserved)
@@ -52,6 +54,18 @@ Adafruit_BME680 bme;       // BME688: gas + pressure, plus authoritative air tem
 
 float thermalFrame[32 * 24];
 
+// Metsuke (目付) — live thermal grid over BLE. The MLX90640 frame is now serviced
+// on its own ~2 Hz tick (serviceThermal), the single read site; the 1500 ms
+// telemetry block consumes the cached frame for its summary temps, so the two
+// never fight over getFrame (same pattern Kehai uses for the ToF). On each fresh
+// frame Metsuke downsamples 32x24 -> 8x8, packs 68 bytes, and notifies the grid
+// characteristic — gated on a subscribed central. NOTE: getFrame() blocks while
+// reading; validate on-wrist that this 2 Hz cadence doesn't hitch the Kehai
+// reflex (see specs/platform/follow-up-work.md).
+const int     THERMAL_MS     = 500;      // ~2 Hz camera cadence (MD-5)
+unsigned long lastThermalMs  = 0;
+bool          thermalFrameOk = false;    // last getFrame() succeeded (telemetry reads this)
+
 BLECharacteristic *distanceChar;
 BLECharacteristic *alertChar;
 BLECharacteristic *headingChar;
@@ -60,6 +74,9 @@ BLECharacteristic *gpsChar;
 BLECharacteristic *thermalChar;
 BLECharacteristic *climateChar;
 BLECharacteristic *environmentChar;
+BLECharacteristic *thermalGridChar;   // Metsuke: binary 8x8 heat grid
+BLE2902           *thermalGridCccd = nullptr;   // its CCCD — emit only while subscribed
+uint32_t           gridNotifyCount = 0;         // grid notifies sent (for the 'G' probe)
 
 bool deviceConnected = false;
 bool alertSent = false;
@@ -272,6 +289,12 @@ void setup() {
   }
 
   Wire.begin(41, 40);
+  // I2C Fast Mode (400 kHz). The MLX90640 grid read is ~3.3 KB over the bus; at the
+  // default 100 kHz it blocks the loop long enough (~175 ms) to stretch the telemetry
+  // cadence and hitch Kehai's reflex once Metsuke reads at 2 Hz. 400 kHz roughly
+  // quarters every I2C transfer (and speeds the ToF reflex read too). Every sensor
+  // on the chain supports Fast Mode; the MLX itself goes to 1 MHz.
+  Wire.setClock(400000);
   delay(100);
 
   // ToF — non-fatal: warn and continue if absent (mirrors the other sensors).
@@ -313,7 +336,13 @@ void setup() {
   if (thermalPresent) {
     mlx.setMode(MLX90640_CHESS);
     mlx.setResolution(MLX90640_ADC_18BIT);
-    mlx.setRefreshRate(MLX90640_2_HZ);
+    // Refresh at 8 Hz, well ABOVE Metsuke's 2 Hz grid read (serviceThermal). Reading
+    // slower than the sensor produces means getFrame() finds data already waiting and
+    // returns without polling — the ~175 ms blocking wait that stretched the telemetry
+    // cadence and threatened the reflex was that poll, not the I2C transfer (400 kHz
+    // alone didn't move it). Faster refresh is noisier per pixel, but the 4x3 block
+    // average per grid cell absorbs it.
+    mlx.setRefreshRate(MLX90640_8_HZ);
     Serial.println("[OK] MLX90640 Thermal");
   } else {
     Serial.println("[WARN] MLX90640 not found — thermal disabled");
@@ -346,6 +375,9 @@ void setup() {
 
   // BLE
   BLEDevice::init("ShintaiOS");
+  // Metsuke's 68-byte grid exceeds the default 20-byte ATT payload, so allow a
+  // larger MTU; the central drives the actual negotiation (the apps request 247).
+  BLEDevice::setMTU(247);
   BLEServer *server = BLEDevice::createServer();
   server->setCallbacks(new ServerCallbacks());
   BLEService *service = server->createService(BLEUUID(SERVICE_UUID), 64);
@@ -368,6 +400,21 @@ void setup() {
   thermalChar  = makeChar(THERMAL_UUID,  "Thermal (C)");
   climateChar  = makeChar(CLIMATE_UUID,  "Climate (CO2/Temp/RH)");
   environmentChar = makeChar(ENVIRONMENT_UUID, "Environment (P/gas/T/RH)");
+  // Metsuke: the one BINARY characteristic (68-byte packed heat grid). Built
+  // directly (not via makeChar) so we KEEP the BLE2902 pointer — we gate emission
+  // on the client having subscribed (getNotifications, AC-4), and on this stack
+  // getDescriptorByUUID(0x2902) returns null (16-bit-vs-stored-UUID mismatch),
+  // which silently left the grid gated off. The string chars never hit this: they
+  // notify() unconditionally, so they never needed the CCCD handle.
+  thermalGridChar = service->createCharacteristic(THERMAL_GRID_UUID,
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+  thermalGridCccd = new BLE2902();
+  thermalGridChar->addDescriptor(thermalGridCccd);
+  {
+    BLEDescriptor *d = new BLEDescriptor(BLEUUID((uint16_t)0x2901));
+    d->setValue("Thermal Grid (16x12)");
+    thermalGridChar->addDescriptor(d);
+  }
 
   service->start();
   server->getAdvertising()->start();
@@ -414,6 +461,41 @@ void serviceReflex() {
   else         Aizu.clearCue(AIZU_KEHAI);
 }
 
+// Metsuke thermal tick — the sole MLX90640 read site. Self-rate-limits to
+// THERMAL_MS (~2 Hz), reads a fresh frame into the cached thermalFrame (telemetry
+// consumes it for its summary temps), then downsamples + packs + notifies the
+// binary grid IF a central is subscribed. Never prints to the telemetry stream,
+// never touches lastUpdate, the CSV, or the flash gate (the grid is BLE-live-only).
+void serviceThermal() {
+  if (!thermalPresent) return;
+  if (millis() - lastThermalMs < THERMAL_MS) return;
+  lastThermalMs = millis();
+
+  thermalFrameOk = (mlx.getFrame(thermalFrame) == 0);
+  if (!thermalFrameOk) return;
+
+  // Emit only while the grid CCCD is subscribed (AC-4) — no central, no airtime.
+  if (!deviceConnected || thermalGridCccd == nullptr || !thermalGridCccd->getNotifications())
+    return;
+
+  uint8_t packed[METSUKE_GRID_BYTES];
+  if (!metsukePackGrid(thermalFrame, packed)) return;   // all-NaN frame -> skip
+  thermalGridChar->setValue(packed, METSUKE_GRID_BYTES);
+  thermalGridChar->notify();
+  gridNotifyCount++;
+}
+
+// Metsuke grid diagnostic (serial 'G'): is a central connected, did it subscribe
+// to the grid CCCD, and are notifies actually going out? Splits "firmware not
+// emitting" from "app not receiving" without needing the phone on USB.
+void probeGrid() {
+  Serial.printf("<<<GRID connected=%d thermalPresent=%d frameOk=%d cccd=%d subscribed=%d notifies=%lu>>>\n",
+                deviceConnected ? 1 : 0, thermalPresent ? 1 : 0, thermalFrameOk ? 1 : 0,
+                thermalGridCccd != nullptr ? 1 : 0,
+                (thermalGridCccd && thermalGridCccd->getNotifications()) ? 1 : 0,
+                (unsigned long)gridNotifyCount);
+}
+
 void loop() {
   // Always read GPS in background
   GPS.read();
@@ -428,8 +510,9 @@ void loop() {
     else if (cmd == 'L' || cmd == 'l') listLogs();
     else if (cmd == 'P' || cmd == 'p') { dumpAllLogs(); lastUpdate = millis(); }
     else if (cmd == 'E' || cmd == 'e') { eraseLogs();   lastUpdate = millis(); }
-    else if (cmd == 'I' || cmd == 'i') { scanI2C();  lastUpdate = millis(); }
-    else if (cmd == 'T' || cmd == 't') { probeTof(); lastUpdate = millis(); }
+    else if (cmd == 'I' || cmd == 'i') { scanI2C();   lastUpdate = millis(); }
+    else if (cmd == 'T' || cmd == 't') { probeTof();  lastUpdate = millis(); }
+    else if (cmd == 'G' || cmd == 'g') { probeGrid(); lastUpdate = millis(); }
   }
 
   // Kehai reflex (ToF -> Aizu cue) + Aizu render, both on their own fast clocks —
@@ -437,6 +520,7 @@ void loop() {
   // Each self-rate-limits and never touches lastUpdate, the telemetry stream, BLE,
   // or the flash-logging gate.
   serviceReflex();
+  serviceThermal();   // Metsuke: ~2 Hz MLX read + grid notify (sole thermal read site)
   Aizu.tick();
 
   if (millis() - lastUpdate < UPDATE_MS) return;
@@ -481,8 +565,11 @@ void loop() {
   float gpsSpeed = GPS.speed * 1.852;
   int   gpsSats  = (int)GPS.satellites;
 
-  // ── Thermal camera (MLX90640): surface temps across the scene ──
-  bool  thermalOk  = thermalPresent && (mlx.getFrame(thermalFrame) == 0);
+  // ── Thermal camera (MLX90640): surface temps across the scene ── the frame is
+  // read in serviceThermal (the sole read site, ~2 Hz for Metsuke); telemetry
+  // consumes the cached frame so the two don't fight over getFrame. thermalFrameOk
+  // is the last read's success; the summary logic below is otherwise unchanged.
+  bool  thermalOk  = thermalPresent && thermalFrameOk;
   float thermalMin = 0, thermalMax = 0, thermalCtr = 0, thermalMean = 0;
   if (thermalOk) {
     thermalMin = INFINITY;

@@ -2,7 +2,7 @@
 
 *The gaze: a live low-res thermal overlay in the glasses — heat-vision on the no-PSRAM board.*
 
-**Status:** spec (unbuilt) · **Zōkyō:** Metsuke (candidate — thermal sight, realized through [Shikai](../../REGISTRY.md#shikai-視界--field-of-view)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) — **changes it** (first spec to) · **Date:** 2026-07-02
+**Status:** built (2026-07-02) · **Zōkyō:** Metsuke (thermal sight, realized through [Shikai](../../REGISTRY.md#shikai-視界--field-of-view)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) — **changes it** (first spec to) · **Date:** 2026-07-02
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 

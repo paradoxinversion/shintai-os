@@ -48,7 +48,9 @@ Serial output modes (toggle live by sending a byte): `h` human · `c` CSV · `b`
 ## BLE GATT
 
 Device name `ShintaiOS`. Service `12345678-1234-1234-1234-123456789abc`. Every
-characteristic is `READ | NOTIFY` and carries a **UTF-8 string** (no binary packing).
+characteristic is `READ | NOTIFY`. All but one carry a **UTF-8 string** (no binary
+packing); the exception is **Thermal Grid**, which carries a packed **binary**
+payload (see [Thermal Grid](#thermal-grid-binary) below).
 
 | Characteristic | UUID | Example payload |
 |----------------|------|-----------------|
@@ -60,11 +62,39 @@ characteristic is `READ | NOTIFY` and carries a **UTF-8 string** (no binary pack
 | Thermal | `abcd6789-ab12-ab12-ab12-abcdef123456` | `Ctr:23.1 Min:22.6 Max:31.4C` |
 | Climate | `abcdba98-ab12-ab12-ab12-abcdef123456` | `23.0C 41%RH 750ppm` |
 | Environment | `abcdc0de-ab12-ab12-ab12-abcdef123456` | `1007.2hPa 84200ohm 22.8C 39%RH` |
+| Thermal Grid | `abcd7890-ab12-ab12-ab12-abcdef123456` | 196-byte **binary** heat grid (see below) |
 
 To receive notifications a central must write `ENABLE_NOTIFICATION` to each
 characteristic's CCCD. **The CCCD UUID is the Bluetooth Base UUID
 `00002902-0000-1000-8000-00805f9b34fb`** — note the `8000`, not `0000`; the one-char
 typo makes `getDescriptor()` return null and silently kills every subscription.
+
+### Thermal Grid (binary)
+
+Added by **Metsuke** (`specs/zokyo/metsuke.md`) — the **first binary characteristic**
+and the first field to touch this contract (every other characteristic is a UTF-8
+string). It streams a downsampled MLX90640 heat image for the glasses to render as a
+false-colour panel, at the camera's **~2 Hz**, **only while a central is subscribed**.
+
+Payload — **196 bytes, little-endian**:
+
+| Offset | Type | Field | Meaning |
+|--------|------|-------|---------|
+| 0 | `int16` | `min_dC` | min cell temperature ×10 (°C·10, signed) |
+| 2 | `int16` | `max_dC` | max cell temperature ×10 (°C·10, signed) |
+| 4 | `192 × uint8` | `cells` | row-major 16×12 grid, `cell = round((t − min)/(max − min) × 255)` |
+
+- The 32×24 frame is block-averaged on-device to **16×12** (each cell = mean of its
+  2×2 source block, NaN pixels skipped) — the sensor's native 4:3 aspect. `min`/`max`
+  are the **grid's** range, so the cells span the full palette; the consumer auto-ranges
+  the palette to `min_dC`/`max_dC` and **bilinear-upscales** the grid for a smooth panel.
+- **196 bytes far exceeds the default 20-byte ATT payload**, so the central must
+  negotiate a larger **MTU** — it needs at least ~199, and the apps request **247**
+  (payload = MTU − 3 = 244, so the whole grid lands in one notification). The string
+  characteristics never needed this; Thermal Grid does.
+- **Not logged** — this grid is BLE-live-only; it is **not** in the CSV schema or the
+  flash log. The summary `thermal_*` columns remain the logged thermal representation.
+- CCCD gotcha still applies (the `8000` above).
 
 A characteristic only notifies when its sensor is present and has data (e.g. Climate
 warms up ~5 s and updates every ~5 s; Thermal needs the MLX90640 attached).
@@ -73,10 +103,17 @@ warms up ~5 s and updates every ~5 s; Thermal needs the MLX90640 attached).
 differently by design (see `android/`):
 
 - **Operator** (`com.saboteur.shintaioperator`, the phone field console) subscribes to
-  **all eight** characteristics, Environment included — it is the complete readout.
-- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **seven**,
-  deliberately skipping **Environment** (`abcdc0de`, BME688 pressure + gas): the glanceable
-  overlay keeps its surface lean, and pressure/VOC belong on the full-fidelity phone.
+  the **eight string** characteristics, Environment included — the complete numeric readout —
+  **plus Thermal Grid** (the Metsuke heat panel). Nine channels: the full-fidelity console.
+- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **eight** —
+  seven string channels plus **Thermal Grid**, and deliberately skips **Environment**
+  (`abcdc0de`, BME688 pressure + gas): the glanceable overlay keeps its readout surface lean,
+  and pressure/VOC belong on the full-fidelity phone.
+
+Both apps render the Metsuke heat panel (`THERMAL_GRID`) — the one binary channel — from the
+shared `:core` parse + ironbow palette; only the surrounding surface differs (waveguide HUD vs
+phone console). Thermal Grid is kept out of `ShintaiGatt.ALL` (the string set), so each app
+appends it explicitly.
 
 Both apps share one mirror of this table — `ShintaiGatt` in the `:core` module — so the
 subset each subscribes to is a per-app choice, never a second source of truth.

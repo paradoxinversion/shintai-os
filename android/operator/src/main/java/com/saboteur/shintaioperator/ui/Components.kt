@@ -15,6 +15,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,20 +26,28 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
+import android.graphics.Bitmap
+import com.saboteur.shintai.core.ThermalGrid
+import com.saboteur.shintai.core.argb
 import com.saboteur.shintaioperator.ChamferShape
 import com.saboteur.shintaioperator.T
+import kotlin.math.roundToInt
 
 /** A steady ~1Hz blink alpha for alerts (style.md §7: blink, never glitch). */
 @Composable
@@ -177,6 +186,25 @@ fun SegmentBar(
                     .background(if (i < on) lit else dim.copy(alpha = 0.35f)),
             )
         }
+    }
+}
+
+/** Metsuke's 16×12 thermal grid as a false-colour heat panel (ironbow, shared with
+ *  Glass via `:core`), bilinear-upscaled so the coarse grid reads as a smooth heat
+ *  image. A phone screen can carry a full fill, so hot cells are bright, cool dark.
+ *  The 4:3 box matches the grid's native aspect (no geometric distortion). */
+@Composable
+fun HeatGrid(grid: ThermalGrid, modifier: Modifier = Modifier) {
+    val heat = remember(grid) {
+        Bitmap.createBitmap(grid.argb(), ThermalGrid.W, ThermalGrid.H, Bitmap.Config.ARGB_8888)
+            .asImageBitmap()
+    }
+    Canvas(modifier.fillMaxWidth().aspectRatio(4f / 3f).border(1.dp, T.Grid)) {
+        drawImage(
+            image = heat,
+            dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
+            filterQuality = FilterQuality.High,
+        )
     }
 }
 

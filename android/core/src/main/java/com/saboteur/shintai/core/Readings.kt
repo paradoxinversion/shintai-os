@@ -19,10 +19,80 @@ data class ShintaiReadings(
     val climate: String = "—",         // e.g. "23.0C 41%RH 750ppm" (SCD-40, warms up ~5s)
     val thermal: String = "—",         // e.g. "Ctr:23.1 Min:22.6 Max:31.4C" (MLX90640)
     val environment: String = "—",     // e.g. "1007.2hPa 84200ohm 22.8C 39%RH" (BME688)
+    val thermalGrid: ThermalGrid? = null,  // Metsuke's 8x8 heat grid, null until the first frame
     val packets: Int = 0,              // total notifications received — a visible heartbeat
 )
 
 enum class ConnectionState { Idle, PermissionNeeded, Connecting, Discovering, Live, Disconnected }
+
+/**
+ * Metsuke's decoded thermal grid (the contract's one binary characteristic).
+ * [cells] is a row-major 16×12 of 0..255 normalised levels; [minC]/[maxC] are the
+ * scene's temperature range in °C, so the renderer auto-ranges the palette across
+ * exactly the span these cells were normalised over. Uses `List<Int>` (not IntArray)
+ * so the enclosing data class keeps value equality.
+ */
+data class ThermalGrid(
+    val minC: Float,
+    val maxC: Float,
+    val cells: List<Int>,
+) {
+    companion object {
+        const val W = 16
+        const val H = 12
+        const val BYTES = 196
+
+        /** Parse a 68-byte little-endian packet (see CONTRACT.md "Thermal Grid"); null if short. */
+        fun parse(b: ByteArray): ThermalGrid? {
+            if (b.size < BYTES) return null
+            // Little-endian signed int16: combine bytes then narrow to Short for the sign.
+            fun le16(i: Int): Int =
+                ((((b[i + 1].toInt() and 0xFF) shl 8) or (b[i].toInt() and 0xFF)).toShort()).toInt()
+            val cells = List(W * H) { b[4 + it].toInt() and 0xFF }
+            return ThermalGrid(minC = le16(0) / 10f, maxC = le16(2) / 10f, cells = cells)
+        }
+    }
+}
+
+/**
+ * Ironbow heat ramp (Metsuke MD-4): map a 0..255 cell level to an (r, g, b) triple —
+ * black → deep red → orange → yellow → near-white, piecewise-linear. Shared so Glass
+ * and Operator render the *same* palette for the one binary channel. Returns plain
+ * ints (no toolkit `Color`) so `:core` stays UI-free; each app wraps the triple in
+ * its own colour type. Cold stays black, so on the Glass waveguide it reads as
+ * see-through and only real heat emits light.
+ */
+fun ironbow(level: Int): Triple<Int, Int, Int> {
+    val t = level.coerceIn(0, 255) / 255f
+    // Each stop is (position, r, g, b) along the ramp.
+    val stops = arrayOf(
+        floatArrayOf(0.00f, 0f, 0f, 0f),
+        floatArrayOf(0.30f, 90f, 0f, 0f),
+        floatArrayOf(0.55f, 200f, 40f, 0f),
+        floatArrayOf(0.75f, 255f, 130f, 0f),
+        floatArrayOf(0.90f, 255f, 210f, 40f),
+        floatArrayOf(1.00f, 255f, 255f, 210f),
+    )
+    var i = 0
+    while (i < stops.size - 1 && t > stops[i + 1][0]) i++
+    val lo = stops[i]
+    val hi = stops[minOf(i + 1, stops.size - 1)]
+    val span = hi[0] - lo[0]
+    val f = if (span > 0f) (t - lo[0]) / span else 0f
+    fun mix(c: Int) = (lo[c] + (hi[c] - lo[c]) * f).toInt().coerceIn(0, 255)
+    return Triple(mix(1), mix(2), mix(3))
+}
+
+/**
+ * The grid as a row-major `W*H` array of opaque ARGB pixels (ironbow), ready to be
+ * wrapped in a Bitmap/ImageBitmap and **bilinear-upscaled** for a smooth heat panel
+ * (Metsuke Forward-path: interpolation costs zero extra BLE bytes). UI-free — plain
+ * Int packing — so `:core` stays Compose-independent; each app wraps the array.
+ */
+fun ThermalGrid.argb(): IntArray = IntArray(cells.size) { i ->
+    val (r, g, b) = ironbow(cells[i])
+    (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+}
 
 /**
  * Fold one characteristic notification into a new snapshot. Parsing lives here,
@@ -51,6 +121,20 @@ fun ShintaiReadings.fold(uuid: UUID, value: String): ShintaiReadings {
         ShintaiGatt.CLIMATE -> base.copy(climate = value)
         ShintaiGatt.THERMAL -> base.copy(thermal = value)
         ShintaiGatt.ENVIRONMENT -> base.copy(environment = value)
+        else -> base
+    }
+}
+
+/**
+ * Fold one BINARY notification (currently only [ShintaiGatt.THERMAL_GRID]) into a
+ * new snapshot. The string [fold] can't take raw bytes, so binary payloads route
+ * here — same packet-heartbeat bookkeeping, parsing kept in `:core` so both apps
+ * agree. A malformed packet keeps the previous grid rather than dropping to null.
+ */
+fun ShintaiReadings.foldBinary(uuid: UUID, value: ByteArray): ShintaiReadings {
+    val base = copy(packets = packets + 1)
+    return when (uuid) {
+        ShintaiGatt.THERMAL_GRID -> base.copy(thermalGrid = ThermalGrid.parse(value) ?: thermalGrid)
         else -> base
     }
 }

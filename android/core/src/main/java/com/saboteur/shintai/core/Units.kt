@@ -46,6 +46,11 @@ fun formatGps(raw: String, u: Units): String {
     return s
 }
 
+/** A single temperature for a label: "31.4°C" (metric) or "88.5°F" (imperial).
+ *  Used by Metsuke's thermal-grid panel to show the auto-range endpoints. */
+fun formatTemp(c: Float, u: Units): String =
+    if (u == Units.METRIC) "${f1(c.toDouble())}°C" else "${f1(cToF(c.toDouble()))}°F"
+
 /** Distance headline as (value, unit). mm stays mm; imperial shows inches. */
 fun distanceParts(mm: Int?, fallbackText: String, u: Units): Pair<String, String> =
     when {
