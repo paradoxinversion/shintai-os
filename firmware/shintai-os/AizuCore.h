@@ -38,6 +38,7 @@ enum {
   AIZU_PRIO_KEHAI_APPROACH =  60,  // rank 5 — something approaching         (AMBIENT+)
   AIZU_PRIO_KANKI_POOR     =  50,  // rank 6 — open a window (1200-2000)     (AMBIENT)
   AIZU_PRIO_KANKI_STUFFY   =  40,  // rank 7 — ventilation slipping (800-1200) (AMBIENT)
+  AIZU_PRIO_KANKI_WARMUP   =  30,  // rank 8 — SCD-40 warming (~5 s post-boot)(AMBIENT)
   AIZU_PRIO_IDLE           =  -1   // nothing live -> Idle wallpaper
 };
 

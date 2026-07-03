@@ -10,9 +10,12 @@ on or enables.
   sources that post cues were all separate, unbuilt specs. As of 2026-07-02,
   [Kehai-Hikari](../zokyo/kehai-hikari.md) is **built** and posts Approach/Reflex
   cues via `serviceReflex()` — the first live exercise of the cue bus, confirming
-  the `postCue`/`clearCue` seam. Still unbuilt: [Kanki](../zokyo/kanki.md),
-  [Nesshi](../zokyo/nesshi.md), [Hokan](../zokyo/hokan.md). With no source posting,
-  Aizu still renders **Idle only** (the intended degraded state).
+  the `postCue`/`clearCue` seam. **[Kanki](../zokyo/kanki.md) is now built too**
+  (2026-07-02) — it posts Ambient CO2 cues (Stuffy/Poor/Bad + warm-up) from the
+  telemetry loop, the **second** source on the bus and the first *ambient*-class
+  one. Two sources now share the pixel, so the arbiter's preempt/release path
+  (Kehai Reflex over Kanki air colour) is live, not just by-inspection. Still
+  unbuilt: [Nesshi](../zokyo/nesshi.md), [Hokan](../zokyo/hokan.md).
 
 - **Nesshi HOLD subscriber not registered.** The gesture layer exposes
   `Aizu.onHold(handler)` for HOLD_START/HOLD_END (CLICK→mute is internal). Nesshi
