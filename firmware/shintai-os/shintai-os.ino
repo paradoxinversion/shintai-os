@@ -15,6 +15,7 @@
 #include <math.h>
 #include "Aizu.h"       // shared on-body output bus (specs/platform/aizu.md): sole NeoPixel writer
 #include "KehaiBand.h"  // Kehai-Hikari proximity reflex (specs/zokyo/kehai-hikari.md): distance -> Aizu cue
+#include "KankiBand.h"  // Kanki air-quality sense (specs/zokyo/kanki.md): co2_ppm -> Aizu ambient cue
 
 // BLE UUIDs
 #define SERVICE_UUID        "12345678-1234-1234-1234-123456789abc"
@@ -79,6 +80,14 @@ bool     scdHasData = false;
 uint16_t scdCo2     = 0;
 float    scdTemp    = 0;   // °C
 float    scdHum     = 0;   // %RH
+
+// Kanki (換気) — air-quality light. The hysteretic CO2 band derived from scdCo2,
+// posted to Aizu as an Ambient cue (Kanki never touches the pixel). -1 = unseeded
+// (warm-up); it snaps to the true band on the first reading, then steps with ±50
+// ppm hysteresis. maxAge outlives the SCD's ~5 s cadence so the cue holds (and
+// Aizu breathes it) between fresh samples without lapsing to Idle. See KankiBand.h.
+int            kankiBandIdx    = -1;
+const uint32_t KANKI_MAX_AGE_MS = 15000;   // ~3 SCD cycles before the cue is dropped
 
 // BME688 state. Present set at boot; performReading() fires the gas heater and
 // blocks ~150 ms, so we read once per loop and cache. Owns air temp/humidity
@@ -185,6 +194,54 @@ void eraseLogs() {
   openNewLog();                       // resume logging into a fresh file
   fsReady = (bool)logFile;
   Serial.printf("<<<ERASED %d>>>\n", erased);
+}
+
+// ── Diagnostics (serial commands 'I' / 'T') ── the boot banner is uncatchable on
+// native-USB, so these let us probe the I2C bus and the ToF live after boot.
+
+// Scan the I2C bus and print every responding address. NOTE: the VL53L4CX (0x29)
+// does NOT ACK a bare address-only scan while it's continuously ranging, so it
+// will be MISSING here even when it's healthy — use 'T' (probeTof) as the
+// authoritative ToF check, not this scan. A 0x29 absence here is only meaningful
+// when the ToF also fails to init at boot (probeTof present=0).
+void scanI2C() {
+  Serial.println("<<<I2C scan>>>");
+  int n = 0;
+  for (uint8_t a = 0x08; a <= 0x77; a++) {
+    Wire.beginTransmission(a);
+    if (Wire.endTransmission() == 0) { Serial.printf("  0x%02X\n", a); n++; }
+  }
+  Serial.printf("  %d device(s) (expect ToF=0x29, IMU=0x6a, mag=0x1c/0x1e, GPS=0x10, thermal=0x33, SCD=0x62, BME=0x77)\n", n);
+}
+
+// Probe the VL53L4CX directly: report the boot presence flag, then poll for a
+// fresh measurement and dump each object's RangeStatus + range. Distinguishes
+// not-present (InitSensor failed) from not-ranging (dataReady never fires) from
+// ranging-but-filtered (objects come back with RangeStatus != 0).
+void probeTof() {
+  Serial.printf("<<<TOF present=%d budget=%lu us>>>\n",
+                tofPresent ? 1 : 0, (unsigned long)REFLEX_TIMING_BUDGET_US);
+  if (!tofPresent) {
+    Serial.println("  not initialized at boot — InitSensor(0x29) failed (check the I2C scan)");
+    return;
+  }
+  for (int attempt = 0; attempt < 25; attempt++) {   // ~500 ms window
+    uint8_t dr = 0;
+    sensor.VL53L4CX_GetMeasurementDataReady(&dr);
+    if (dr) {
+      VL53L4CX_MultiRangingData_t d;
+      sensor.VL53L4CX_GetMultiRangingData(&d);
+      Serial.printf("  dataReady after %d ms: objects=%d\n", attempt * 20, d.NumberOfObjectsFound);
+      for (int i = 0; i < d.NumberOfObjectsFound; i++) {
+        Serial.printf("    [%d] status=%d range=%d mm\n",
+                      i, d.RangeData[i].RangeStatus, d.RangeData[i].RangeMilliMeter);
+      }
+      sensor.VL53L4CX_ClearInterruptAndStartMeasurement();
+      return;
+    }
+    delay(20);
+  }
+  Serial.println("  dataReady never asserted over ~500 ms — sensor present but not measuring");
 }
 
 class ServerCallbacks : public BLEServerCallbacks {
@@ -371,6 +428,8 @@ void loop() {
     else if (cmd == 'L' || cmd == 'l') listLogs();
     else if (cmd == 'P' || cmd == 'p') { dumpAllLogs(); lastUpdate = millis(); }
     else if (cmd == 'E' || cmd == 'e') { eraseLogs();   lastUpdate = millis(); }
+    else if (cmd == 'I' || cmd == 'i') { scanI2C();  lastUpdate = millis(); }
+    else if (cmd == 'T' || cmd == 't') { probeTof(); lastUpdate = millis(); }
   }
 
   // Kehai reflex (ToF -> Aizu cue) + Aizu render, both on their own fast clocks —
@@ -452,8 +511,24 @@ void loop() {
       uint16_t co2; float t, rh;
       if (scd4x.readMeasurement(co2, t, rh) == 0 && co2 != 0) {
         scdCo2 = co2; scdTemp = t; scdHum = rh; scdHasData = true;
+        kankiBandIdx = kankiStep(scdCo2, kankiBandIdx);   // Kanki: advance the hysteretic band
       }
     }
+  }
+
+  // ── Kanki (換気): express the CO2 band as an Aizu Ambient cue — the arbiter
+  // animates the calm colour breathe/pulse on the shared pixel. POST, never paint.
+  // Fresh posts nothing and falls through to Aizu's Idle green (== the Fresh
+  // state). Warming up (no reading yet) shows the distinct dim white/blue cue.
+  // Standalone-safe: no SCD -> post nothing, arbiter falls through to whatever
+  // else is active (or Idle). Derives entirely from the existing scdCo2 — no
+  // contract change, no telemetry disturbance.
+  if (scdPresent) {
+    KankiCue kc = scdHasData ? kankiCueFor(kankiBandIdx) : kankiWarmupCue();
+    if (kc.post) Aizu.postCue(AIZU_KANKI, kc.priority, kc.colour, kc.motion, KANKI_MAX_AGE_MS);
+    else         Aizu.clearCue(AIZU_KANKI);
+  } else {
+    Aizu.clearCue(AIZU_KANKI);
   }
 
   // ── BME688 (env): pressure + gas resistance, plus the authoritative air T/RH.

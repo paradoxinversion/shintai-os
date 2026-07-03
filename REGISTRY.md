@@ -14,8 +14,10 @@ Zōkyō can draw from.
 | Zōkyō | Meaning | What it does | Status |
 |-------|---------|--------------|--------|
 | **[Rokkan (六感)](#rokkan-六感--sixth-sense)** | *"sixth sense"* | Wearable environmental-perception suite — extends the senses past the ordinary five and feeds them back to the wearer. | active |
+| **[Kanki (換気)](specs/zokyo/kanki.md)** | *"ventilation"* | Standalone air-quality guardian — maps SCD-40 `co2_ppm` to a calm→alarm colour on the onboard NeoPixel (via [Aizu](specs/platform/aizu.md)). One sense, one cue; runs on host + SCD-40 alone. | active |
 
-Rokkan is the only Zōkyō built so far. Others land here as their own sections below,
+Rokkan is the first Zōkyō built; Kanki is its small sibling — one sense, one cue,
+drawn from the same parts catalog. Others land here as their own sections below,
 each composed of Tsukiwaza over the same shared [parts catalog](#parts-catalog) and
 [data contract](CONTRACT.md).
 
