@@ -23,6 +23,11 @@ The Python **ground-station** (`groundstation/`) is base-side tooling you dock t
 for capture and analysis — shared across every Zōkyō, not a worn Tsukiwaza of any
 one of them.
 
+**[Aizu (合図)](specs/platform/aizu.md)** is the on-body counterpart: a shared host
+capability (not a Zōkyō) that owns the onboard NeoPixel — sources post cues, Aizu
+arbitrates and renders the winner. Every Zōkyō with local feedback (Kehai-Hikari,
+Kanki, Nesshi, Hokan) draws on it rather than touching the pixel directly.
+
 ## Parts catalog
 
 The shared inventory every Zōkyō draws from — each part and what it does. Each
@@ -57,8 +62,9 @@ parts rather than re-describing them — see [Rokkan](#rokkan-六感--sixth-sens
 
 | Part | What it does | Alternatives / upgrades |
 |------|--------------|-------------------------|
+| **QT Py ESP32-S3 onboard NeoPixel** | The single onboard RGB pixel — [Aizu](specs/platform/aizu.md)'s primary output surface: every on-body cue (proximity, air, idle) is rendered here. | An external NeoPixel/strip (a future Aizu output sink, not v1); the DRV2605 haptic below is Aizu's planned *second* sink |
 | **RayNeo X3 Pro** AR glasses | Binocular AR display running the `android/` BLE-central HUD app. | Any Android phone (the app's fallback target); **XREAL One / Air 2**, **Vuzix**, **Even Realities G1** — anything that can run a BLE-central Android build |
-| **DRV2605L + LRA/ERM motor** *(planned)* | Haptic driver + vibration motor for the Kehai proximity alert. | A bare vibration motor + transistor for the minimal path; Adafruit STEMMA haptic breakout |
+| **DRV2605L + LRA/ERM motor** *(planned)* | Haptic driver + vibration motor for the Kehai proximity alert — registers as [Aizu](specs/platform/aizu.md)'s second output sink so a winning cue drives light and vibration together. | A bare vibration motor + transistor for the minimal path; Adafruit STEMMA haptic breakout |
 
 ## Rokkan (六感) — sixth sense
 
