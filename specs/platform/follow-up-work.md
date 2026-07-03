@@ -6,13 +6,13 @@ on or enables.
 
 ## 2026-07-02 — initial build
 
-- **Cue sources are not implemented yet.** Aizu is *shared infrastructure*; the
-  sources that post cues — [Kehai-Hikari](../zokyo/kehai-hikari.md),
-  [Kanki](../zokyo/kanki.md), [Nesshi](../zokyo/nesshi.md), [Hokan](../zokyo/hokan.md) —
-  are separate specs, still unbuilt. Until one calls `Aizu.postCue(...)`, Aizu
-  renders **Idle only** (the correct degraded behaviour per the spec's "Degrades
-  to nothing"). The seam is ready: each source is a `postCue`/`clearCue` call plus
-  a priority-table row (both already defined in `AizuCore.h`).
+- **Cue sources — first one now built.** Aizu is *shared infrastructure*; the
+  sources that post cues were all separate, unbuilt specs. As of 2026-07-02,
+  [Kehai-Hikari](../zokyo/kehai-hikari.md) is **built** and posts Approach/Reflex
+  cues via `serviceReflex()` — the first live exercise of the cue bus, confirming
+  the `postCue`/`clearCue` seam. Still unbuilt: [Kanki](../zokyo/kanki.md),
+  [Nesshi](../zokyo/nesshi.md), [Hokan](../zokyo/hokan.md). With no source posting,
+  Aizu still renders **Idle only** (the intended degraded state).
 
 - **Nesshi HOLD subscriber not registered.** The gesture layer exposes
   `Aizu.onHold(handler)` for HOLD_START/HOLD_END (CLICK→mute is internal). Nesshi

@@ -69,8 +69,8 @@ parts rather than re-describing them — see [Rokkan](#rokkan-六感--sixth-sens
 ## Rokkan (六感) — sixth sense
 
 A wearable environmental-perception suite that extends the senses past the ordinary
-five and feeds them back to the wearer. It is three Tsukiwaza — two active, one
-planned — each drawing its parts from the [catalog](#parts-catalog) above.
+five and feeds them back to the wearer. It is three Tsukiwaza — all active (Kehai
+now built light-first) — each drawing its parts from the [catalog](#parts-catalog) above.
 
 ### Tanchi (探知) — *"detection"*
 
@@ -91,12 +91,19 @@ Parts: [RayNeo X3 Pro](#output--feedback) (or a phone as fallback).
 
 ### Kehai (気配) — *"sensed presence"*
 
-Perception **out** (touch): haptic proximity alert — the original "spidey-sense"
-reflex. Reacts to the `alert` characteristic (see [CONTRACT.md](CONTRACT.md)).
-**Status: planned — not yet built.**
+Perception **out** (touch): the "spidey-sense" proximity reflex. Reacts to
+`distance_mm` / the edge-triggered `alert` (see [CONTRACT.md](CONTRACT.md)).
+**Status: active — light-first.** Built as
+[Kehai-Hikari](specs/zokyo/kehai-hikari.md): the reflex renders on the onboard
+NeoPixel via [Aizu](specs/platform/aizu.md) (amber Approach pulse → red Reflex),
+running on-host independent of any BLE central. The **haptic** path (DRV2605L +
+motor) is still *planned* — it drops in behind Aizu as a second output sink, no
+sensing change.
 
-Parts: [DRV2605L haptic driver + motor](#output--feedback) *(planned)*.
+Parts: [QT Py onboard NeoPixel](#output--feedback) (built); [DRV2605L haptic
+driver + motor](#output--feedback) *(planned second sink)*.
 
-The output side splits by modality: **Shikai** you *see*, **Kehai** you *feel*.
-Kehai's slot already exists in the contract — `alert` is a distinct edge-triggered
-event, separate from `distance_mm` — so it's a reserved seam, not a retrofit.
+The output side splits by modality: **Shikai** you *see*, **Kehai** you *feel* (or,
+today, *see as light*). Kehai's slot already exists in the contract — `alert` is a
+distinct edge-triggered event, separate from `distance_mm` — so it's a reserved
+seam, not a retrofit.
