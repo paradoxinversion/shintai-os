@@ -25,6 +25,7 @@ profiles:
       - Adafruit MLX90640 (1.1.2)
       - Sensirion I2C SCD4x (1.1.0)
       - Adafruit BME680 Library (2.0.6)
+      - Adafruit NeoPixel (1.15.5)   # Aizu's onboard-pixel output sink (specs/platform/aizu.md)
       # transitive deps (profiles use an isolated lib set — must be explicit)
       - Sensirion Core (0.7.3)
       - Adafruit BusIO (1.17.4)

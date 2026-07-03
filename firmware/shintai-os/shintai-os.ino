@@ -13,6 +13,7 @@
 #include <FFat.h>
 #include <Preferences.h>
 #include <math.h>
+#include "Aizu.h"   // shared on-body output bus (specs/platform/aizu.md): sole NeoPixel writer
 
 // BLE UUIDs
 #define SERVICE_UUID        "12345678-1234-1234-1234-123456789abc"
@@ -299,6 +300,12 @@ void setup() {
   service->start();
   server->getAdvertising()->start();
   Serial.println("[OK] BLE advertising as 'ShintaiOS'");
+
+  // Aizu — shared feedback arbiter: brings up the onboard NeoPixel (+ power pin)
+  // and the BOOT-button gesture layer. Sole writer of the pixel; sources post
+  // cues, they never paint. With no source posting it just renders Idle.
+  Aizu.begin();
+  Serial.println("[OK] Aizu feedback arbiter (NeoPixel)");
   Serial.println("Output: 'h'=human  'c'=CSV  'b'=both (current: both)");
   Serial.println("=============================\n");
 }
@@ -318,6 +325,12 @@ void loop() {
     else if (cmd == 'P' || cmd == 'p') { dumpAllLogs(); lastUpdate = millis(); }
     else if (cmd == 'E' || cmd == 'e') { eraseLogs();   lastUpdate = millis(); }
   }
+
+  // Aizu renders on its own ~20 ms clock and services the BOOT button — call it
+  // every iteration, BEFORE the 1500 ms telemetry gate so it isn't starved by it.
+  // It self-rate-limits and never touches lastUpdate, the telemetry stream, BLE,
+  // or the flash-logging gate.
+  Aizu.tick();
 
   if (millis() - lastUpdate < UPDATE_MS) return;
   lastUpdate = millis();
