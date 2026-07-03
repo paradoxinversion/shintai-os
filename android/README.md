@@ -9,23 +9,23 @@ RayNeo X3 Pro glasses.
 The X3 Pro's own BLE stack keeps the radio busy enough to starve a normal
 `startScan()` — the QT Py advertisement often never surfaces. So this app
 **never scans**. It connects straight to a hardcoded MAC with
-`getRemoteDevice(MAC).connectGatt(autoConnect = true, …)`, which makes the
-Android stack reconnect on its own whenever the board comes into range. That
-also means it needs only `BLUETOOTH_CONNECT` — no `BLUETOOTH_SCAN`, no location
-permission.
+`getRemoteDevice(MAC).connectGatt(autoConnect = false, …)` — a fast, deterministic
+DIRECT connect (on this radio `autoConnect = true` often never reports
+`STATE_CONNECTED`). A direct connect won't retry on its own, so the client
+re-fires it after a disconnect (`ShintaiBleClient.reconnectSoon`). That also means
+it needs only `BLUETOOTH_CONNECT` — no `BLUETOOTH_SCAN`, no location permission.
 
 ## Set the MAC (required)
 
-Edit `DEVICE_ADDRESS` in
+Set `DEVICE_ADDRESS` in
 [`ShintaiViewModel.kt`](app/src/main/java/com/saboteur/shintaiglass/ShintaiViewModel.kt)
-— it ships as the placeholder `AA:BB:CC:DD:EE:FF`. Find the board's address by
-looking for the device advertising as **`ShintaiOS`** (a scanner app like nRF
-Connect on a phone, or `bluetoothctl` → `scan on` on a Linux box). ESP32 BLE
-MACs are static, so you set this once.
+to your board's MAC. Find the address by looking for the device advertising as
+**`ShintaiOS`** (a scanner app like nRF Connect on a phone, or `bluetoothctl` →
+`scan on` on a Linux box). ESP32 BLE MACs are static, so you set this once.
 
 ## What it subscribes to
 
-Five `READ | NOTIFY` characteristics under service
+Seven `READ | NOTIFY` characteristics under service
 `12345678-1234-1234-1234-123456789abc`, each a UTF-8 string:
 
 | Channel | UUID (`…-ab12-ab12-ab12-abcdef123456`) | Example payload |
@@ -35,23 +35,30 @@ Five `READ | NOTIFY` characteristics under service
 | Heading | `abcd9012` | `169.0° S` |
 | Accelerometer | `abcdef12` | `X:1.8 Y:0.0 Z:9.8` |
 | GPS | `abcd3456` | `37.12345,-122.12345 12m 3.4km/h` |
+| Climate | `abcdba98` | `23.0C 41%RH 750ppm` |
+| Thermal | `abcd6789` | `Ctr:23.1 Min:22.6 Max:31.4C` |
+
+The contract also defines an eighth **Environment** characteristic (`abcdc0de`,
+BME688 pressure + gas) that this app does not yet subscribe to — see
+[`CONTRACT.md`](../CONTRACT.md).
 
 Notifications are enabled one CCCD-write at a time (Android allows only one GATT
 op in flight); see `ShintaiBleClient.subscribeNext`.
 
 The launch screen shows distance large (red `⚠ TOO CLOSE` when ≤ 20 cm, mirroring
-the firmware's `NEAR_MM`) plus a mini readout of heading, accel, and GPS, with a
-live connection-state indicator.
+the firmware's `NEAR_MM`) plus a mini readout of heading, accel, GPS, climate, and
+thermal, with a live connection-state indicator.
 
 ## Build & install
 
-The Gradle wrapper JAR isn't checked in. Generate it once, then build:
+The Gradle wrapper is checked in, so no separate Gradle install is needed. The
+build needs JDK 17+ — Android Studio's bundled JBR 21 works; point `JAVA_HOME` at
+it if your system default is older (`java -version`).
 
 ```sh
 cd android
-gradle wrapper --gradle-version 8.9   # one-time; or just open the folder in Android Studio
-./gradlew assembleDebug
-adb connect <glasses-ip>              # or USB; RayNeo X3 Pro runs Android
+./gradlew assembleDebug                # wrapper fetches Gradle 8.9 on first run
+adb connect <glasses-ip>               # or USB; RayNeo X3 Pro runs Android
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
