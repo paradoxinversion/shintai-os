@@ -1,0 +1,28 @@
+# detekt config for Shintai Glass. Layered on top of detekt's default rules
+# (buildUponDefaultConfig = true in app/build.gradle.kts) — this file only tunes
+# the handful of rules that are noisy for a small BLE/Compose app.
+complexity:
+  LongMethod:
+    threshold: 90          # Compose UI + GATT callback chains run long by nature
+  TooManyFunctions:
+    thresholdInClasses: 20
+  CyclomaticComplexMethod:
+    threshold: 20
+  LongParameterList:
+    ignoreAnnotated: ['Composable']   # Compose hoists state as params by design
+
+style:
+  MagicNumber:
+    active: false          # UUIDs, timeouts, and unit conversions are self-evident here
+  MaxLineLength:
+    maxLineLength: 120
+  ReturnCount:
+    max: 5
+
+naming:
+  # Allow the GATT/UUID all-caps constants in ShintaiGatt.kt.
+  ObjectPropertyNaming:
+    constantPattern: '[A-Z][_A-Z0-9]*'
+  # @Composable functions are PascalCase by convention — don't flag them.
+  FunctionNaming:
+    ignoreAnnotated: ['Composable']

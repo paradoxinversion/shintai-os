@@ -1,0 +1,33 @@
+# arduino-cli build profile for Shintai-OS core.
+#
+# Pins the board (FQBN + options) and every library — including transitive deps —
+# so `arduino-cli compile --profile qtpy` reproduces the exact toolchain WITHOUT
+# needing the board plugged in. This replaces the long hand-typed incantation and
+# doubles as the Arduino-side "requirements file" the project otherwise lacked.
+#
+#   Compile-check (no hardware):  firmware/verify.sh
+#   Flash to a board:             arduino-cli compile --profile qtpy --upload -p /dev/cu.usbmodem101 firmware/shintai-os
+#
+# Versions below match what is installed today (arduino-cli lib list / core list).
+# Bump deliberately; a compile is only as trustworthy as these pins.
+profiles:
+  qtpy:
+    notes: Adafruit QT Py ESP32-S3 (no PSRAM), CDC-on-boot, tinyuf2 8MB
+    fqbn: esp32:esp32:adafruit_qtpy_esp32s3_nopsram:CDCOnBoot=cdc,PartitionScheme=tinyuf2,FlashSize=8M
+    platforms:
+      - platform: esp32:esp32 (3.3.10)
+        platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+    libraries:
+      - STM32duino VL53L4CX (1.1.0)
+      - Adafruit LSM6DS (4.7.4)
+      - Adafruit LIS3MDL (1.2.5)
+      - Adafruit GPS Library (1.7.5)
+      - Adafruit MLX90640 (1.1.2)
+      - Sensirion I2C SCD4x (1.1.0)
+      - Adafruit BME680 Library (2.0.6)
+      # transitive deps (profiles use an isolated lib set — must be explicit)
+      - Sensirion Core (0.7.3)
+      - Adafruit BusIO (1.17.4)
+      - Adafruit Unified Sensor (1.1.15)
+
+default_profile: qtpy

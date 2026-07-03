@@ -44,15 +44,45 @@ python groundstation/analyze.py   # stitch ALL sessions → combined.csv + pngs 
 
 **Firmware.** The `.ino` lives at `firmware/shintai-os/shintai-os.ino` — Arduino
 requires the sketch file to sit in a folder of the same name, so the compile
-target is the **directory** `firmware/shintai-os`:
+target is the **directory** `firmware/shintai-os`. The board + all library
+versions are pinned in `firmware/shintai-os/sketch.yaml` (profile `qtpy`), so use
+the profile rather than the long flag incantation:
 
 ```sh
-arduino-cli compile --upload \
-  -b esp32:esp32:adafruit_qtpy_esp32s3_nopsram:CDCOnBoot=cdc,PartitionScheme=tinyuf2,FlashSize=8M \
-  -p /dev/cu.usbmodem101 firmware/shintai-os
+firmware/verify.sh            # compile-check, NO hardware needed (do this after every .ino edit)
+firmware/verify.sh --upload   # compile + flash to the board on $SHINTAI_PORT (default /dev/cu.usbmodem101)
 ```
 
 **Android.** See `android/README.md` (Gradle 8.9 + Android Studio JBR / JDK 21).
+The shell's default `java` is too old; `android/build.sh` points `JAVA_HOME` at the
+Studio JBR so Gradle runs headless:
+
+```sh
+android/build.sh              # assembleDebug + lint (default)
+android/build.sh detekt       # Kotlin static analysis (config: android/detekt.yml)
+```
+
+**Checks I can run without hardware** (wire these into pre-commit / CI):
+
+```sh
+python3 tools/check-contract.py   # assert CONTRACT.md == firmware CSV_HEADER == Kotlin UUIDs == groundstation cols
+firmware/verify.sh                # firmware compiles
+android/build.sh detekt lint      # Kotlin compiles + lints
+```
+
+`tools/check-contract.py` is stdlib-only and catches the drift the invariants below
+warn about — a renamed/reordered CSV column, a mistyped GATT UUID, and the CCCD
+`8000`-vs-`0000` typo. Run it before editing any of the three mirror sites.
+
+These are wired into a **scope-aware pre-commit hook** (`tools/hooks/pre-commit`):
+the contract linter runs on every commit; `verify.sh` runs only when `firmware/`
+changed; strict `detekt` (fails on issues not in `android/app/detekt-baseline.xml`)
+runs only when `android/` changed. Enable once per clone — it's local git config:
+
+```sh
+git config core.hooksPath tools/hooks   # enable the hook (already set on this machine)
+git commit --no-verify                  # bypass it for a single commit
+```
 
 ## Key invariants (easy to break)
 

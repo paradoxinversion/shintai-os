@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("io.gitlab.arturbosch.detekt")
 }
 
 android {
@@ -32,6 +33,17 @@ android {
     buildFeatures {
         compose = true
     }
+}
+
+// Kotlin static analysis. Config lives in android/detekt.yml. Advisory by default
+// (findings are reported, not fatal); pass -PstrictDetekt to FAIL on any finding not
+// already in detekt-baseline.xml — the pre-commit hook uses this to block new issues.
+detekt {
+    config.setFrom(rootProject.file("detekt.yml"))
+    buildUponDefaultConfig = true
+    ignoreFailures = !project.hasProperty("strictDetekt")
+    val baseline = file("detekt-baseline.xml")   // regenerate: android/build.sh detektBaseline
+    if (baseline.exists()) this.baseline = baseline
 }
 
 dependencies {

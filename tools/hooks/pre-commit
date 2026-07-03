@@ -1,0 +1,60 @@
+#!/bin/zsh
+# Shintai-OS pre-commit gate. Scope-aware so commits stay fast: the cheap
+# cross-cutting check always runs; the slow native checks run ONLY when their tree
+# is actually part of this commit.
+#
+#   1. contract linter   — ALWAYS (stdlib, instant): CONTRACT.md == firmware == Kotlin == groundstation
+#   2. firmware compile   — only if firmware/ changed (~15-90s)
+#   3. detekt (strict)    — only if android/ changed; fails on issues not in the baseline
+#
+# Enable once with:  git config core.hooksPath tools/hooks
+# Bypass a single commit with:  git commit --no-verify
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+# Files staged for THIS commit (added/copied/modified; skip deletions & renames-away).
+staged=("${(@f)$(git diff --cached --name-only --diff-filter=ACM)}")
+
+changed() {  # changed <path-prefix-regex> — true if any staged file matches
+  print -l -- $staged | grep -qE "$1"
+}
+
+fail=0
+step() { print -P "%F{cyan}▶ $1%f"; }
+bad()  { print -P "%F{red}✗ $1%f"; fail=1; }
+ok()   { print -P "%F{green}✓ $1%f"; }
+
+# 1. Contract drift — always. This is the crown-jewel invariant and costs nothing.
+step "contract linter"
+if python3 tools/check-contract.py; then ok "contract consistent"; else bad "contract drift (fix, or --no-verify)"; fi
+
+# 2. Firmware must compile — only when firmware changed.
+if changed '^firmware/'; then
+  step "firmware compile-check (firmware/ changed)"
+  if firmware/verify.sh >/tmp/shintai-fw-verify.log 2>&1; then
+    ok "firmware compiles"
+  else
+    bad "firmware does NOT compile — see /tmp/shintai-fw-verify.log"
+    tail -15 /tmp/shintai-fw-verify.log
+  fi
+fi
+
+# 3. Kotlin static analysis (strict vs baseline) — only when android changed.
+if changed '^android/.*\.(kt|kts)$'; then
+  step "detekt (android/ changed)"
+  if android/build.sh detekt -PstrictDetekt >/tmp/shintai-detekt.log 2>&1; then
+    ok "detekt clean vs baseline"
+  else
+    bad "detekt found NEW issues — see /tmp/shintai-detekt.log (or accept via 'android/build.sh detektBaseline')"
+    grep -E '\.kt:' /tmp/shintai-detekt.log | tail -15 || true
+  fi
+fi
+
+if (( fail )); then
+  print -P "\n%F{red}pre-commit failed.%f Fix the above, or bypass with %Bgit commit --no-verify%b."
+  exit 1
+fi
+print -P "\n%F{green}pre-commit passed.%f"
+exit 0
