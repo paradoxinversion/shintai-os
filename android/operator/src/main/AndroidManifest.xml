@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- BLE is functionally required but declared optional so a sideload never gets
+         blocked on a device missing the feature flag; the runtime adapter check in
+         ShintaiBleClient.connect() degrades cleanly when BLE is absent. -->
+    <uses-feature
+        android:name="android.hardware.bluetooth_le"
+        android:required="false" />
+
+    <!-- Unlike the glasses, the phone SCANS for the board (its radio isn't starved),
+         so the Operator needs BLUETOOTH_SCAN in addition to BLUETOOTH_CONNECT. The
+         neverForLocation flag asserts we don't derive location from BLE results, so
+         no ACCESS_FINE_LOCATION is required on API 31+. -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <application
+        android:allowBackup="true"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.ShintaiOperator">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.ShintaiOperator">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Waveguide: pure black everywhere. On the RayNeo X3 Pro black pixels emit no
+         light and read as see-through over the world, so the HUD is bright strokes
+         on #000000 (docs/style.md §8). Compose owns the whole surface. -->
+    <style name="Theme.ShintaiGlass" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#FF000000</item>
+        <item name="android:navigationBarColor">#FF000000</item>
+        <item name="android:windowBackground">#FF000000</item>
+    </style>
+</resources>

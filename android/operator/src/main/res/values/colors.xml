@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SHINTAI-OS palette, from docs/style.md §10. Emissive tokens on a near-black
+     void; every color has a job (green=nominal, amber=caution, red=alarm,
+     bone=chrome). Do not use off-label. -->
+<resources>
+    <color name="void_bg">#FF05080A</color>   <!-- 'void' is a reserved Java keyword; token is still VOID in style.md -->
+
+    <color name="panel">#FF0C1410</color>
+    <color name="grid">#FF1C4028</color>
+    <color name="phosphor">#FF58F07A</color>
+    <color name="phosphor_dim">#FF2E7A45</color>
+    <color name="amber">#FFF2A93B</color>
+    <color name="amber_dim">#FF7A5620</color>
+    <color name="alert">#FFFF4438</color>
+    <color name="alert_dim">#FF8A2820</color>
+    <color name="bone">#FFC9CDBC</color>
+    <color name="bone_dim">#FF6B6F62</color>
+</resources>

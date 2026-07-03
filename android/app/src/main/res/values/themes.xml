@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Dark, no action bar — the Compose UI owns the whole surface. -->
-    <style name="Theme.ShintaiGlass" parent="android:Theme.Material.NoActionBar">
-        <item name="android:statusBarColor">#FF05060A</item>
-        <item name="android:navigationBarColor">#FF05060A</item>
-        <item name="android:windowBackground">#FF05060A</item>
-    </style>
-</resources>

@@ -1,0 +1,20 @@
+Shintai Operator — bundled fonts
+================================
+
+The Operator app bundles the following fonts, each under the SIL Open Font
+License, Version 1.1 (full text in the accompanying OFL-*.txt files). All are
+bundled UNMODIFIED; their Reserved Font Names are unchanged.
+
+  Font              Role (style.md §3)          Copyright / license
+  ----------------  --------------------------  ------------------------------------
+  IBM Plex Mono     Interface mono (workhorse)  © 2017 IBM Corp.            — OFL-IBMPlexMono.txt
+  Michroma          Titles / wordmark           © 2011 The Michroma Project Authors — OFL-Michroma.txt
+  DSEG7 Classic     Instrument numerals (hero)  © 2020 keshikan (RFN "DSEG") — OFL-DSEG.txt
+  VT323             CRT / console-log flavor    © 2011 The VT323 Project Authors    — OFL-VT323.txt
+
+The SIL OFL permits bundling and redistribution within software (including
+commercially), provided the license and copyright notice travel with the font
+and the fonts are not sold on their own — both satisfied here.
+
+NOT bundled: Eurostile Bold Extended (style.md's paid "ideal" title face) is
+proprietary and is deliberately omitted; Michroma stands in for that role.

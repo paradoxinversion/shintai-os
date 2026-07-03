@@ -27,7 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACT = ROOT / "CONTRACT.md"
 INO = ROOT / "firmware" / "shintai-os" / "shintai-os.ino"
-GATT = ROOT / "android" / "app" / "src" / "main" / "java" / "com" / "saboteur" / "shintaiglass" / "ShintaiGatt.kt"
+GATT = ROOT / "android" / "core" / "src" / "main" / "java" / "com" / "saboteur" / "shintai" / "core" / "ShintaiGatt.kt"
 GROUNDSTATION = ROOT / "groundstation"
 
 # Characteristic label in CONTRACT.md  ->  Kotlin `val` name in ShintaiGatt.kt.

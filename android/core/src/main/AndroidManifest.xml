@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Library module: no components, no permissions. The consuming app declares
+     the Bluetooth permissions it needs (Glass: CONNECT; Operator: CONNECT+SCAN). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

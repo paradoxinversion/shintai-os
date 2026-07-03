@@ -69,7 +69,14 @@ typo makes `getDescriptor()` return null and silently kills every subscription.
 A characteristic only notifies when its sensor is present and has data (e.g. Climate
 warms up ~5 s and updates every ~5 s; Thermal needs the MLX90640 attached).
 
-**Consumer coverage.** The Android app (`android/`) subscribes to every characteristic
-except **Environment** (`abcdc0de`, BME688 pressure + gas). This is acknowledged, not a
-deliberate omission — rendering pressure and the VOC/gas proxy on the glasses is planned
-as a post-review follow-up.
+**Consumer coverage.** There are two Android consumers, and they cover the GATT table
+differently by design (see `android/`):
+
+- **Operator** (`com.saboteur.shintaioperator`, the phone field console) subscribes to
+  **all eight** characteristics, Environment included — it is the complete readout.
+- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **seven**,
+  deliberately skipping **Environment** (`abcdc0de`, BME688 pressure + gas): the glanceable
+  overlay keeps its surface lean, and pressure/VOC belong on the full-fidelity phone.
+
+Both apps share one mirror of this table — `ShintaiGatt` in the `:core` module — so the
+subset each subscribes to is a per-app choice, never a second source of truth.

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark, no action bar — Compose owns the whole surface. Bars painted VOID
+         so the console reads as one continuous instrument panel. -->
+    <style name="Theme.ShintaiOperator" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@color/void_bg</item>
+        <item name="android:navigationBarColor">@color/void_bg</item>
+        <item name="android:windowBackground">@color/void_bg</item>
+    </style>
+</resources>
