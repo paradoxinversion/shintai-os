@@ -24,6 +24,7 @@ enum AizuSource {
   AIZU_NESSHI,      // hold-to-measure temperature read
   AIZU_HOKAN,       // fall-detection SOS
   AIZU_KYUKAKU,     // sense of smell — VOC spike / foul (AZ-12)
+  AIZU_KIATSU,      // barometric sense — weather turning (AZ-13)
   AIZU_SYSTEM,      // reserved for host-level cues
   AIZU_SOURCE_COUNT
 };
@@ -43,6 +44,7 @@ enum {
   AIZU_PRIO_KANKI_STUFFY   =  40,  // rank 9 — ventilation slipping (800-1200) (AMBIENT)
   AIZU_PRIO_KYUKAKU_TAINT  =  35,  // rank 10 — a mild smell is present      (AMBIENT, AZ-12)
   AIZU_PRIO_KANKI_WARMUP   =  30,  // rank 11 — SCD-40 warming (~5 s post-boot)(AMBIENT)
+  AIZU_PRIO_KIATSU_WX      =  25,  // rank 12 — barometer falling, storm hours out (AMBIENT, AZ-13)
   AIZU_PRIO_IDLE           =  -1   // nothing live -> Idle wallpaper
 };
 
