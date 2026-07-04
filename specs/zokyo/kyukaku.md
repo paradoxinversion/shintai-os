@@ -2,7 +2,7 @@
 
 *A wearable sense of smell: the moment the air changes, told as light.*
 
-**Status:** spec (2026-07-03) · not yet built · **Zōkyō:** Kyūkaku (sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) (no change) · **Shares:** [Aizu](../platform/aizu.md) (output) · **Date:** 2026-07-03
+**Status:** built (2026-07-04) · **Zōkyō:** Kyūkaku (sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) (no change) · **Shares:** [Aizu](../platform/aizu.md) (output) · **Date:** 2026-07-03
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 
