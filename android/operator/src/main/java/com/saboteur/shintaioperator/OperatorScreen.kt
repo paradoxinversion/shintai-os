@@ -122,7 +122,8 @@ private fun Console(
     Panel("Proximity", ledColor = distColor(r.distanceMm)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TrackerGauge(
-                distanceMm = r.distanceMm,
+                leftMm = r.distanceLMm,
+                rightMm = r.distanceRMm,
                 alert = r.alertActive,
                 modifier = Modifier.weight(1f).height(190.dp),
             )
@@ -130,7 +131,9 @@ private fun Console(
             Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(120.dp)) {
                 val (v, u) = distanceParts(r.distanceMm, r.distanceText, units)
                 val numeric = r.distanceMm != null
-                Text("RANGE", color = T.Bone, fontFamily = T.Mono, fontSize = 11.sp, letterSpacing = 2.sp)
+                // Hero = the NEARER arc (closest threat); the per-arc L/R breakdown sits
+                // below it, each line coloured by its own proximity band.
+                Text("NEAREST", color = T.Bone, fontFamily = T.Mono, fontSize = 11.sp, letterSpacing = 2.sp)
                 Text(
                     v, color = distColor(r.distanceMm),
                     // The ONE glanceable value in 7-segment DSEG; the "—" placeholder
@@ -140,6 +143,9 @@ private fun Console(
                     fontSize = if (numeric) 56.sp else 44.sp,
                 )
                 Text(u.uppercase(), color = T.BoneDim, fontFamily = T.Mono, fontSize = 14.sp)
+                Spacer(Modifier.height(8.dp))
+                ArcReadout("L", r.distanceLMm, units)
+                ArcReadout("R", r.distanceRMm, units)
             }
         }
         if (r.alertActive) {
@@ -291,6 +297,17 @@ private fun AccessPanel(onRequestPermissions: () -> Unit) {
             color = T.BoneDim, fontFamily = T.Mono, fontSize = 11.sp,
         )
     }
+}
+
+/** One arc's range line under the hero numeral — "L  1234 mm" / "R  —", coloured by
+ *  that arc's proximity band. The per-arc half of Kōei's rear dual-arc readout. */
+@Composable
+private fun ArcReadout(label: String, mm: Int?, units: Units) {
+    val text = if (mm == null) "—" else distanceParts(mm, "", units).let { (v, u) -> "$v $u" }
+    Text(
+        "$label  $text",
+        color = distColor(mm), fontFamily = T.Mono, fontSize = 13.sp, letterSpacing = 1.sp,
+    )
 }
 
 // --- small mappings --------------------------------------------------------

@@ -59,7 +59,8 @@ class TelemetryRecorder(private val dir: File) {
         val w = writer ?: return
         val cells = listOf(
             wallMs.toString(),
-            r.distanceText, if (r.alertActive) "1" else "0", r.heading, r.accel,
+            r.distanceLMm?.toString().orEmpty(), r.distanceRMm?.toString().orEmpty(),
+            if (r.alertActive) "1" else "0", r.heading, r.accel,
             r.gps, r.climate, r.thermal, r.environment,
         )
         try {
@@ -90,6 +91,6 @@ class TelemetryRecorder(private val dir: File) {
     companion object {
         private const val TAG = "ShintaiRec"
         const val HEADER =
-            "wall_ms,distance,alert,heading,accel,gps,climate,thermal,environment"
+            "wall_ms,distance_l,distance_r,alert,heading,accel,gps,climate,thermal,environment"
     }
 }

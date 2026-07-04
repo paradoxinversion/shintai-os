@@ -18,6 +18,7 @@ Zōkyō can draw from.
 | **[Metsuke (目付)](specs/zokyo/metsuke.md)** | *"the gaze"* | Thermal sight — downsamples the MLX90640 frame to an 8×8 grid, streams it over a **new binary BLE characteristic**, and renders a false-colour heat panel in the glasses (via [Shikai](#shikai-視界--field-of-view)). First module to change the contract. | active |
 | **[Nesshi (熱視)](specs/zokyo/nesshi.md)** | *"heat-sight"* | Point-and-read thermometer — hold the BOOT button and the MLX90640 surface temp reads out as a calm→alarm colour on the NeoPixel (via [Aizu](specs/platform/aizu.md)); a double-hold finds the scene's hottest point. "Is it safe to touch?" No contract change; shares Aizu's input (HOLD) and output. | active |
 | **[Hokan (歩勘)](specs/zokyo/hokan.md)** | *"step-reckoning"* | Pedometer + fall detector + GPS-denied dead-reckoner — live IMU DSP counts steps and catches falls (fall → latching [Aizu](specs/platform/aizu.md) SOS); the ground-station reconstructs the walked path from logged `steps` + heading. First **CSV-half** contract change, first on-device real-time DSP, first module spanning body + base. | active |
+| **[Kōei (後衛)](specs/zokyo/koei.md)** | *"rearguard"* | Rear dual-arc proximity — a left/right VL53L4CX pair behind a PCA9546 mux widens the rear radar from one beam to a spread arc; `alert` + [Kehai](#kehai-気配--sensed-presence) key off the nearer arc. First **multi-instance sensor**, first to **reshape** an existing contract field (split `distance_mm`, repack the `Distance` char). | active |
 
 Rokkan is the first Zōkyō built; Kanki is its small sibling — one sense, one cue,
 drawn from the same parts catalog. Metsuke rides the glasses (Shikai) and is the
@@ -51,13 +52,14 @@ parts rather than re-describing them — see [Rokkan](#rokkan-六感--sixth-sens
 |------|--------------|-------------------------|
 | **Adafruit QT Py ESP32-S3** (no PSRAM, 8 MB flash) | The Shintai-OS host: reads every sensor over I²C, logs to onboard FFat flash, and serves the BLE GATT stream. | QT Py ESP32-S3 **N4R2** (2 MB PSRAM — headroom for full thermal frames); Adafruit **Feather ESP32-S3** (more GPIO + onboard LiPo charging); **ESP32-S3 Reverse TFT Feather** (debug screen); Seeed **XIAO ESP32-S3** (smaller footprint) |
 | **STEMMA QT / Qwiic chain** | Solderless I²C daisy-chain wiring every sensor to the host. | JST-SH breakouts; a custom carrier PCB once the sensor set is frozen |
+| **PCA9546A I²C mux** (0x70) | 4-channel I²C switch isolating the two rear VL53L4CX ToFs (both fixed at 0x29, so they collide on the plain bus) onto separate channels — **ch0 = rear-left arc, ch1 = rear-right arc**. Written one-hot before every bus touch. | **TCA9548A** (8-channel, for more colliding sensors); per-sensor **XSHUT** address reassignment (no mux, but burns a GPIO per sensor) |
 | **USB-C battery bank** | Untethered power — the board flash-logs whenever it's on non-computer power. | LiPo cell (the Feather has the charger built in); a **MAX17048** fuel-gauge for real state-of-charge |
 
 ### Sensors
 
 | Part | What it does | Alternatives / upgrades |
 |------|--------------|-------------------------|
-| **VL53L4CX** — ToF distance (I²C 0x29) | Time-of-flight ranging, multi-target to ~6 m — the proximity sense behind `distance_mm` and the `alert`. | **VL53L1X** (cheaper, 4 m, single-target); **VL53L4CD** (short-range budget); **VL53L5CX** (8×8 multizone — a depth *field*, not a point); ultrasonic **HC-SR04** for long/cheap |
+| **VL53L4CX** — ToF distance (I²C 0x29, ×2) | Time-of-flight ranging, multi-target to ~6 m. A **left/right pair** behind the [PCA9546 mux](#host--infrastructure) forms the rear dual-arc — the proximity sense behind `distance_l_mm` / `distance_r_mm` and the `alert`. | **VL53L1X** (cheaper, 4 m, single-target); **VL53L4CD** (short-range budget); **VL53L5CX** (8×8 multizone — a depth *field*, not a point); ultrasonic **HC-SR04** for long/cheap |
 | **LSM6DSOX** — 6-DoF IMU (0x6A) | Accelerometer + gyro: motion and tilt. | Combined **LSM6DSOX + LIS3MDL 9-DoF** board (one STEMMA part); **BNO085** (on-chip sensor fusion → *absolute* orientation, no manual heading math — the standout upgrade); **ICM-20948**; downgrade **MPU-6050 / LSM6DS3TR-C** |
 | **LIS3MDL** — magnetometer (0x1C) | 3-axis mag → compass heading. | **MMC5603** (higher-res mag); folded into **BNO085** if you take the fused-IMU route above |
 | **Adafruit PA1010D** — GPS (0x10) | Mini I²C GPS: fix, lat/lon, altitude, speed. | **Ultimate GPS breakout / PA1616S** (external antenna, better fix); u-blox **SAM-M8Q** / **NEO-M9N** (multi-constellation); **MAX-M10S** (low power) |
@@ -84,10 +86,26 @@ now built light-first) — each drawing its parts from the [catalog](#parts-cata
 Perception **in**: senses the environment. Runs on `firmware/shintai-os/` + the
 sensor rig. **Status: active.**
 
-Parts: [VL53L4CX](#sensors) (distance), [LSM6DSOX](#sensors) (motion) +
-[LIS3MDL](#sensors) (heading), [PA1010D](#sensors) (GPS), [MLX90640](#sensors)
+Parts: [VL53L4CX](#sensors) ×2 (rear dual-arc distance, via mux), [LSM6DSOX](#sensors)
+(motion) + [LIS3MDL](#sensors) (heading), [PA1010D](#sensors) (GPS), [MLX90640](#sensors)
 (thermal), [SCD-40](#sensors) (climate), [BME688](#sensors) (env: gas/pressure) —
 all wired to the [QT Py ESP32-S3 host](#host--infrastructure).
+
+**Rear dual-arc (ToF) — [Kōei (後衛)](specs/zokyo/koei.md).** The single rear VL53L4CX is
+now a **left/right pair** behind a [PCA9546 mux](#host--infrastructure) — both sensors are
+fixed at 0x29, so the mux isolates them onto separate channels. Channel→direction mapping
+(authoritative):
+
+| Mux channel | One-hot | Arc | CSV column | Range |
+|-------------|---------|-----|------------|-------|
+| ch0 | `0x01` | rear-left  | `distance_l_mm` | ~40 mm – 6 m (multi-target) |
+| ch1 | `0x02` | rear-right | `distance_r_mm` | ~40 mm – 6 m (multi-target) |
+
+Non-fatal per channel: a missing mux disables both arcs, a missing arc blanks only its
+column, and `alert` + [Kehai](#kehai-気配--sensed-presence) key off the **nearer** arc.
+BLE packs both into the one `Distance` characteristic (`L:.. R:.. mm`). **Status:
+active** (bench bring-up on the USB power bank — two ToF + mux exceed the 500 mAh LiPo's
+comfortable draw). See [CONTRACT.md](CONTRACT.md).
 
 ### Shikai (視界) — *"field of view"*
 

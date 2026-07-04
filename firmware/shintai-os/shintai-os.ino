@@ -44,10 +44,39 @@ const int UPDATE_MS = 1500;  // telemetry (CSV/BLE) update interval
 const int      REFLEX_MS               = 120;    // reflex tick (spec: ~100-150 ms)
 const uint32_t REFLEX_TIMING_BUDGET_US = 50000;  // lower ToF budget -> fresher range (D-4)
 const uint32_t KEHAI_MAX_AGE_MS        = 500;    // Aizu drops the cue if we stop posting
-int16_t       cachedMm     = -1;                 // latest ToF range; -1 = no target
+// Kōei (後衛) — rear dual arc (specs/zokyo/koei.md): two VL53L4CX behind a PCA9546
+// I2C mux. Both report at 0x29 and would collide on the plain bus; the mux isolates
+// them onto separate channels (ch0 = LEFT arc, ch1 = RIGHT arc — mapping in REGISTRY.md).
+int16_t       cachedMmL    = -1;                 // latest LEFT-arc range;  -1 = no target
+int16_t       cachedMmR    = -1;                 // latest RIGHT-arc range; -1 = no target
 unsigned long lastReflexMs = 0;
 
-VL53L4CX sensor(&Wire, -1);
+VL53L4CX sensorL(&Wire, -1);   // rear-left  arc, mux ch0
+VL53L4CX sensorR(&Wire, -1);   // rear-right arc, mux ch1
+
+// PCA9546 4-channel I2C mux (0x70) — select a channel by writing a one-hot bitmask
+// BEFORE every bus operation on that channel's sensor (the VL53L4CX library hits
+// I2C on init AND every read; the wrong channel = wrong sensor or errors).
+const uint8_t TOF_MUX_ADDR = 0x70;
+const uint8_t TOF_CH_L     = 0;   // rear-left  arc
+const uint8_t TOF_CH_R     = 1;   // rear-right arc
+bool tofMuxPresent = false;       // PCA9546 acked at boot
+
+void muxSelect(uint8_t ch) {
+  Wire.beginTransmission(TOF_MUX_ADDR);
+  Wire.write((uint8_t)(1 << ch));   // one-hot: 0x01 = ch0, 0x02 = ch1
+  Wire.endTransmission();
+}
+
+// Nearest valid arc: the closer of two ranges, ignoring -1/no-target (-1 if neither
+// has a target). The proximity reflex and the single `alert` bit key off this, so
+// the wearer is warned by whichever arc sees the closest object.
+static inline int16_t nearerMm(int16_t a, int16_t b) {
+  if (a > 0 && b > 0) return a < b ? a : b;
+  if (a > 0) return a;
+  if (b > 0) return b;
+  return -1;
+}
 Adafruit_LSM6DSOX imu;
 Adafruit_LIS3MDL  mag;
 Adafruit_GPS GPS(&Wire);
@@ -89,7 +118,8 @@ unsigned long lastUpdate = 0;
 // Per-module presence — set at boot. Any sensor may be physically absent for a
 // config test; we warn and continue rather than hang, then gate its reads and
 // output below. (SCD-40 has its own scdPresent flag further down.)
-bool tofPresent     = false;
+bool hasTofL        = false;   // rear-left  VL53L4CX inited (mux ch0)
+bool hasTofR        = false;   // rear-right VL53L4CX inited (mux ch1)
 bool imuPresent     = false;
 bool magPresent     = false;
 bool thermalPresent = false;
@@ -158,7 +188,7 @@ bool csvHeaderPrinted = false;
 
 // CSV column order — shared by the Serial stream and the onboard flash log.
 const char* CSV_HEADER =
-  "timestamp_ms,distance_mm,alert,heading_deg,cardinal,"
+  "timestamp_ms,distance_l_mm,distance_r_mm,alert,heading_deg,cardinal,"
   "accel_x,accel_y,accel_z,gps_fix,lat,lon,alt_m,speed_kmh,"
   "sats,thermal_min,thermal_ctr,thermal_max,thermal_mean,"
   "hotspot_delta,co2_ppm,air_temp_c,humidity_pct,pressure_hpa,gas_ohms,"
@@ -249,11 +279,11 @@ void eraseLogs() {
 // ── Diagnostics (serial commands 'I' / 'T') ── the boot banner is uncatchable on
 // native-USB, so these let us probe the I2C bus and the ToF live after boot.
 
-// Scan the I2C bus and print every responding address. NOTE: the VL53L4CX (0x29)
-// does NOT ACK a bare address-only scan while it's continuously ranging, so it
-// will be MISSING here even when it's healthy — use 'T' (probeTof) as the
-// authoritative ToF check, not this scan. A 0x29 absence here is only meaningful
-// when the ToF also fails to init at boot (probeTof present=0).
+// Scan the I2C bus and print every responding address. NOTE: the two VL53L4CX ToFs
+// (both 0x29) sit BEHIND the PCA9546 mux (0x70), which gates them off a naive scan —
+// so 0x29 is EXPECTED to be absent here (the mux, 0x70, should show). And even when a
+// ToF is reachable it does NOT ACK a bare address-only scan while continuously
+// ranging. Use 'T' (probeTof) as the authoritative per-arc check, not this scan.
 void scanI2C() {
   Serial.println("<<<I2C scan>>>");
   int n = 0;
@@ -261,37 +291,65 @@ void scanI2C() {
     Wire.beginTransmission(a);
     if (Wire.endTransmission() == 0) { Serial.printf("  0x%02X\n", a); n++; }
   }
-  Serial.printf("  %d device(s) (expect ToF=0x29, IMU=0x6a, mag=0x1c/0x1e, GPS=0x10, thermal=0x33, SCD=0x62, BME=0x77)\n", n);
+  Serial.printf("  %d device(s) (expect ToF mux=0x70 [gates 0x29x2], IMU=0x6a, mag=0x1c/0x1e, GPS=0x10, thermal=0x33, SCD=0x62, BME=0x77)\n", n);
 }
 
 // Probe the VL53L4CX directly: report the boot presence flag, then poll for a
 // fresh measurement and dump each object's RangeStatus + range. Distinguishes
 // not-present (InitSensor failed) from not-ranging (dataReady never fires) from
 // ranging-but-filtered (objects come back with RangeStatus != 0).
-void probeTof() {
-  Serial.printf("<<<TOF present=%d budget=%lu us>>>\n",
-                tofPresent ? 1 : 0, (unsigned long)REFLEX_TIMING_BUDGET_US);
-  if (!tofPresent) {
-    Serial.println("  not initialized at boot — InitSensor(0x29) failed (check the I2C scan)");
+void probeTofArc(VL53L4CX &s, bool present, uint8_t ch, const char *label) {
+  Serial.printf("  [%s arc / mux ch%u] present=%d\n", label, ch, present ? 1 : 0);
+  if (!present) {
+    Serial.println("    not initialized at boot — InitSensor(0x29) failed (mux missing or arc absent)");
     return;
   }
+  muxSelect(ch);                       // select-before-touch: the probe read hits I2C
   for (int attempt = 0; attempt < 25; attempt++) {   // ~500 ms window
     uint8_t dr = 0;
-    sensor.VL53L4CX_GetMeasurementDataReady(&dr);
+    s.VL53L4CX_GetMeasurementDataReady(&dr);
     if (dr) {
       VL53L4CX_MultiRangingData_t d;
-      sensor.VL53L4CX_GetMultiRangingData(&d);
-      Serial.printf("  dataReady after %d ms: objects=%d\n", attempt * 20, d.NumberOfObjectsFound);
+      s.VL53L4CX_GetMultiRangingData(&d);
+      Serial.printf("    dataReady after %d ms: objects=%d\n", attempt * 20, d.NumberOfObjectsFound);
       for (int i = 0; i < d.NumberOfObjectsFound; i++) {
-        Serial.printf("    [%d] status=%d range=%d mm\n",
+        Serial.printf("      [%d] status=%d range=%d mm\n",
                       i, d.RangeData[i].RangeStatus, d.RangeData[i].RangeMilliMeter);
       }
-      sensor.VL53L4CX_ClearInterruptAndStartMeasurement();
+      s.VL53L4CX_ClearInterruptAndStartMeasurement();
       return;
     }
     delay(20);
   }
-  Serial.println("  dataReady never asserted over ~500 ms — sensor present but not measuring");
+  Serial.println("    dataReady never asserted over ~500 ms — arc present but not measuring");
+}
+
+void probeTof() {
+  Serial.printf("<<<TOF mux=%d budget=%lu us>>>\n",
+                tofMuxPresent ? 1 : 0, (unsigned long)REFLEX_TIMING_BUDGET_US);
+  probeTofArc(sensorL, hasTofL, TOF_CH_L, "left");
+  probeTofArc(sensorR, hasTofR, TOF_CH_R, "right");
+}
+
+// Bring up one rear-arc VL53L4CX on its mux channel. Selects the channel FIRST
+// (InitSensor hits I2C), then inits + reflex-tunes + starts ranging. Non-fatal: a
+// missing arc returns false and must not stall the other arc or block advertising.
+bool initTof(VL53L4CX &s, uint8_t ch, const char *label) {
+  muxSelect(ch);
+  s.begin();
+  s.VL53L4CX_Off();
+  bool ok = (s.InitSensor(0x29) == VL53L4CX_ERROR_NONE);
+  if (ok) {
+    // Favour reflex latency over the old slow cadence (Kehai-Hikari D-4); non-fatal
+    // if the device rejects the budget.
+    if (s.VL53L4CX_SetMeasurementTimingBudgetMicroSeconds(REFLEX_TIMING_BUDGET_US) != VL53L4CX_ERROR_NONE)
+      Serial.printf("[WARN] ToF %s arc timing-budget set failed — using default cadence\n", label);
+    s.VL53L4CX_StartMeasurement();
+    Serial.printf("[OK] VL53L4CX ToF %s arc (mux ch%u, reflex-tuned)\n", label, ch);
+  } else {
+    Serial.printf("[WARN] VL53L4CX %s arc not found on mux ch%u — that arc disabled\n", label, ch);
+  }
+  return ok;
 }
 
 class ServerCallbacks : public BLEServerCallbacks {
@@ -330,22 +388,17 @@ void setup() {
   Wire.setClock(400000);
   delay(100);
 
-  // ToF — non-fatal: warn and continue if absent (mirrors the other sensors).
-  // InitSensor() boots the device + DataInit over I2C, so its status is a
-  // reliable presence probe; gate reads on it so an absent ToF can't spin.
-  sensor.begin();
-  sensor.VL53L4CX_Off();
-  tofPresent = (sensor.InitSensor(0x29) == VL53L4CX_ERROR_NONE);
-  if (tofPresent) {
-    // Favour reflex latency over the old slow cadence (Kehai-Hikari D-4) — a fresh
-    // range then lands close to the reflex tick. Non-fatal: keep the default budget
-    // if the device rejects this value.
-    if (sensor.VL53L4CX_SetMeasurementTimingBudgetMicroSeconds(REFLEX_TIMING_BUDGET_US) != VL53L4CX_ERROR_NONE)
-      Serial.println("[WARN] ToF timing-budget set failed — using default cadence");
-    sensor.VL53L4CX_StartMeasurement();
-    Serial.println("[OK] VL53L4CX ToF (reflex-tuned)");
+  // Rear ToF — dual left/right arc behind the PCA9546 mux (0x70). Non-fatal at every
+  // level: a missing mux or a single missing arc warns and continues so BLE still
+  // advertises. Each arc inits only while its channel is selected (InitSensor hits I2C).
+  Wire.beginTransmission(TOF_MUX_ADDR);
+  tofMuxPresent = (Wire.endTransmission() == 0);
+  if (tofMuxPresent) {
+    Serial.println("[OK] PCA9546 ToF mux @ 0x70");
+    hasTofL = initTof(sensorL, TOF_CH_L, "left");
+    hasTofR = initTof(sensorR, TOF_CH_R, "right");
   } else {
-    Serial.println("[WARN] VL53L4CX not found — distance disabled");
+    Serial.println("[WARN] PCA9546 mux not found @ 0x70 — both rear arcs disabled");
   }
 
   // IMU — non-fatal: warn and continue if absent
@@ -471,34 +524,41 @@ void setup() {
   Serial.println("=============================\n");
 }
 
+// Service one rear arc into its cache. select-before-touch: the read hits I2C, so we
+// muxSelect the arc's channel first. Holds the last range between fresh samples.
+void serviceTofArc(VL53L4CX &s, bool present, uint8_t ch, int16_t &cached) {
+  if (!present) return;
+  muxSelect(ch);
+  uint8_t dataReady = 0;
+  s.VL53L4CX_GetMeasurementDataReady(&dataReady);
+  if (dataReady) {
+    VL53L4CX_MultiRangingData_t data;
+    s.VL53L4CX_GetMultiRangingData(&data);
+    int16_t newMm = -1;
+    for (int i = 0; i < data.NumberOfObjectsFound; i++) {
+      if (data.RangeData[i].RangeStatus == 0) {
+        newMm = data.RangeData[i].RangeMilliMeter;
+        break;
+      }
+    }
+    cached = newMm;
+    s.VL53L4CX_ClearInterruptAndStartMeasurement();
+  }
+}
+
 // Kehai-Hikari reflex tick — the sole ToF read site. Self-rate-limits to REFLEX_MS.
-// Services the sensor into cachedMm (holding the last range between fresh samples),
-// then posts the distance band as an Aizu cue (or clears it when quiescent). Never
-// prints to the telemetry stream, never touches lastUpdate or the flash gate.
+// Services BOTH rear arcs (each behind its mux channel) into cachedMmL/cachedMmR, then
+// posts the distance band for the NEARER arc as an Aizu cue (or clears it when both are
+// quiescent). Never prints to the telemetry stream, never touches lastUpdate or the flash gate.
 void serviceReflex() {
   if (millis() - lastReflexMs < REFLEX_MS) return;
   lastReflexMs = millis();
 
-  if (tofPresent) {
-    uint8_t dataReady = 0;
-    sensor.VL53L4CX_GetMeasurementDataReady(&dataReady);
-    if (dataReady) {
-      VL53L4CX_MultiRangingData_t data;
-      sensor.VL53L4CX_GetMultiRangingData(&data);
-      int16_t newMm = -1;
-      for (int i = 0; i < data.NumberOfObjectsFound; i++) {
-        if (data.RangeData[i].RangeStatus == 0) {
-          newMm = data.RangeData[i].RangeMilliMeter;
-          break;
-        }
-      }
-      cachedMm = newMm;
-      sensor.VL53L4CX_ClearInterruptAndStartMeasurement();
-    }
-  }
+  serviceTofArc(sensorL, hasTofL, TOF_CH_L, cachedMmL);
+  serviceTofArc(sensorR, hasTofR, TOF_CH_R, cachedMmR);
 
-  // Post the band (Approach/Reflex) or withdraw (Clear/no-target -> Aizu Idle).
-  KehaiCue kc = kehaiCueFor(cachedMm, NEAR_MM, FAR_MM);
+  // Post the band (Approach/Reflex) for the nearer arc, or withdraw (-> Aizu Idle).
+  KehaiCue kc = kehaiCueFor(nearerMm(cachedMmL, cachedMmR), NEAR_MM, FAR_MM);
   if (kc.post) Aizu.postCue(AIZU_KEHAI, kc.priority, kc.colour, kc.motion, KEHAI_MAX_AGE_MS);
   else         Aizu.clearCue(AIZU_KEHAI);
 }
@@ -668,12 +728,14 @@ void loop() {
   bool human = (outputMode == HUMAN || outputMode == BOTH);
   bool csv   = (outputMode == CSV   || outputMode == BOTH);
 
-  // ── ToF ── serviced in the reflex tick (serviceReflex), not here — telemetry
-  // consumes the cached range so the two consumers don't fight over dataReady
-  // (Kehai-Hikari note 2). alert stays coherent with the Reflex band: both key off
-  // the same cached mm against NEAR_MM.
-  int16_t mm = cachedMm;
-  bool alertNow = (mm > 0 && mm <= NEAR_MM);
+  // ── ToF ── both rear arcs serviced in the reflex tick (serviceReflex), not here —
+  // telemetry consumes the cached ranges so the two consumers don't fight over
+  // dataReady (Kehai-Hikari note 2). alert stays coherent with the Reflex band: both
+  // key off the NEARER arc against NEAR_MM.
+  int16_t mmL    = cachedMmL;
+  int16_t mmR    = cachedMmR;
+  int16_t mmNear = nearerMm(mmL, mmR);
+  bool alertNow = (mmNear > 0 && mmNear <= NEAR_MM);
 
   // ── IMU + Magnetometer ── (each optional; zeroed when absent)
   sensors_event_t accel = {}, gyro = {}, temp = {}, magEvent = {};
@@ -782,7 +844,8 @@ void loop() {
   // ── Human-readable output ──
   if (human) {
     Serial.println("-----------------------------");
-    Serial.println("DISTANCE : " + (mm > 0 ? String(mm) + " mm" : String("no reading")));
+    Serial.println("DISTANCE : L " + (mmL > 0 ? String(mmL) + " mm" : String("no reading"))
+                 + "   R " + (mmR > 0 ? String(mmR) + " mm" : String("no reading")));
     if (alertNow) Serial.println("ALERT    : *** OBJECT TOO CLOSE ***");
     if (magPresent)
       Serial.println("HEADING  : " + String(heading, 1) + "° " + cardinal);
@@ -826,7 +889,8 @@ void loop() {
     row.reserve(240);            // one alloc up front (rows run ~150–175 chars);
                                  // avoids ~40 incremental reallocs/row of heap churn
     row += lastUpdate;
-    row += ',';  row += (mm > 0 ? String(mm) : String(""));
+    row += ',';  row += (mmL > 0 ? String(mmL) : String(""));
+    row += ',';  row += (mmR > 0 ? String(mmR) : String(""));
     row += ',';  row += (alertNow ? '1' : '0');
     row += ',';  row += (magPresent ? String(heading, 1) : String(""));
     row += ',';  row += cardinal;   // empty when magnetometer absent
@@ -884,7 +948,10 @@ void loop() {
 
   // ── BLE notify (independent of output mode) ──
   if (deviceConnected) {
-    String distStr = mm > 0 ? String(mm) + " mm" : String("no reading");
+    // Both rear arcs in one string char (like Accel's "X:.. Y:.. Z:.."); an arc with
+    // no target is "--". Consumers split on "L:"/"R:" — see CONTRACT.md.
+    String distStr = "L:" + (mmL > 0 ? String(mmL) : String("--"))
+                   + " R:" + (mmR > 0 ? String(mmR) : String("--")) + " mm";
     distanceChar->setValue(distStr.c_str());
     distanceChar->notify();
 

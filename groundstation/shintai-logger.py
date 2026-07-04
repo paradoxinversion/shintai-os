@@ -37,7 +37,9 @@ def dashboard(vals, samples, csv_name):
     W = 38
     out = [f"SHINTAI-OS — live".ljust(W - 8) + f"[#{samples}]", "─" * W]
 
-    dist = f"{g('distance_mm')} mm" if g("distance_mm") else "no reading"
+    dl = f"{g('distance_l_mm')} mm" if g("distance_l_mm") else "no reading"
+    dr = f"{g('distance_r_mm')} mm" if g("distance_r_mm") else "no reading"
+    dist = f"L {dl}  R {dr}"        # rear dual-arc: left (ch0) / right (ch1)
     if g("alert") == "1":
         dist += "   ⚠ TOO CLOSE"
     out.append(f"DISTANCE   {dist}")
