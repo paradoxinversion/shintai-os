@@ -19,6 +19,7 @@
 #include "ThermalGrid.h" // Metsuke thermal sight (specs/zokyo/metsuke.md): MLX frame -> packed 8x8 heat grid
 #include "NesshiBand.h"  // Nesshi heat-sight (specs/zokyo/nesshi.md): hold BOOT -> surface temp -> Aizu cue
 #include "HokanDsp.h"    // Hokan step-reckoning (specs/zokyo/hokan.md): fast IMU -> steps + fall SOS
+#include "KyukakuBand.h" // Kyūkaku sense of smell (specs/zokyo/kyukaku.md): bmeGas -> baseline ratio -> Aizu cue
 
 // BLE UUIDs
 #define SERVICE_UUID        "12345678-1234-1234-1234-123456789abc"
@@ -177,6 +178,18 @@ float bmeTemp     = 0;   // °C
 float bmeHum      = 0;   // %RH
 float bmePressure = 0;   // hPa
 float bmeGas      = 0;   // ohms
+
+// Kyūkaku (嗅覚) — sense of smell. Watches bmeGas against an adaptive clean-air
+// baseline (calibration-free, KY-1): a fast drop of the ratio = a violet→red Spike
+// ("the air just changed", transient ALERT), a sustained low ratio = a violet
+// Foul/Taint ambient. Humidity-vetoed from bmeHum (same reading, KY-4). Settles
+// ~120 s before arming (KY-5). Rolling state lives in KyukakuState; the spike-hold
+// timer is Arduino-domain. POST, never paint; derives from the existing bmeGas — no
+// contract change, no telemetry disturbance. See KyukakuBand.h.
+KyukakuState   kyukakuState        = {0.0f, 1.0f, 0.0f, 1.0f, KYUKAKU_BAND_CLEAN, 0};
+uint32_t       kyukakuSpikeUntilMs = 0;       // Spike cue held until this millis (0 = inactive)
+const uint32_t KYUKAKU_SPIKE_HOLD_MS = 3000;  // a Spike startles for ~3 s, then decays to the band
+const uint32_t KYUKAKU_MAX_AGE_MS    = 6000;  // ~4 BME cadences before Aizu drops a stale cue
 
 static inline float cToF(float c) { return c * 9.0 / 5.0 + 32.0; }
 
@@ -829,6 +842,29 @@ void loop() {
     bmeHasData  = true;
   }
 
+  // ── Kyūkaku (嗅覚): fold the fresh gas reading into the rolling baseline/ratio and
+  // express it as an Aizu cue. A fresh Spike latches a short hold (the startle); while
+  // held we post the violet→red pulse, otherwise the resolved Foul/Taint band (Clean
+  // posts nothing and falls through to Idle). Settling (~120 s) and a missing BME both
+  // post nothing. POST, never paint. Standalone-safe. No contract change.
+  if (bmePresent && bmeHasData) {
+    KyukakuObs ko = kyukakuStepState(kyukakuState, bmeGas, bmeHum);
+    if (ko.spike) kyukakuSpikeUntilMs = millis() + KYUKAKU_SPIKE_HOLD_MS;
+    bool spikeActive = ko.seeded && (int32_t)(kyukakuSpikeUntilMs - millis()) > 0;
+    if (spikeActive) {
+      KyukakuCue c = kyukakuSpikeCue();
+      Aizu.postCue(AIZU_KYUKAKU, c.priority, c.colour, c.motion, KYUKAKU_MAX_AGE_MS);
+    } else if (ko.seeded) {
+      KyukakuCue c = kyukakuCueFor(ko.band);
+      if (c.post) Aizu.postCue(AIZU_KYUKAKU, c.priority, c.colour, c.motion, KYUKAKU_MAX_AGE_MS);
+      else        Aizu.clearCue(AIZU_KYUKAKU);
+    } else {
+      Aizu.clearCue(AIZU_KYUKAKU);   // settling — quiet, Aizu Idle signals "alive"
+    }
+  } else {
+    Aizu.clearCue(AIZU_KYUKAKU);
+  }
+
   // Air temp / humidity are shared semantic slots: BME688 when present (faster,
   // no photoacoustic self-heat offset), else SCD-40, else blank. See CONTRACT.md.
   bool  airHasData = bmeHasData || scdHasData;
@@ -879,6 +915,14 @@ void loop() {
       Serial.println("ENV      : " + String(bmePressure, 1) + " hPa, "
                    + String(bmeGas / 1000.0, 1) + " kΩ gas, "
                    + String(bmeTemp, 1) + "°C air, " + String(bmeHum, 0) + "%RH");
+      // Kyūkaku readout (on-wrist tuning): ratio vs baseline + the resolved state.
+      const char* nose = kyukakuState.count < KYUKAKU_SETTLE_COUNT             ? "settling"
+                       : ((int32_t)(kyukakuSpikeUntilMs - millis()) > 0)       ? "SPIKE"
+                       : kyukakuState.band == KYUKAKU_BAND_FOUL                ? "foul"
+                       : kyukakuState.band == KYUKAKU_BAND_TAINT               ? "taint"
+                                                                              : "clean";
+      Serial.println("NOSE     : r=" + String(kyukakuState.lastRatio, 2)
+                   + " (base " + String(kyukakuState.baseline / 1000.0, 1) + " kΩ) " + nose);
     }
     Serial.println();
   }
