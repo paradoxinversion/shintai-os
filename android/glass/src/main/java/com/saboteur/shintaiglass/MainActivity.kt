@@ -1,3 +1,7 @@
+// The HUD is a stack of small panel @Composables (one per instrument), so the
+// file-level function-count rule doesn't apply here — same call as OperatorScreen.kt.
+@file:Suppress("TooManyFunctions")
+
 package com.saboteur.shintaiglass
 
 import android.Manifest
@@ -48,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.saboteur.shintai.core.ConnectionState
 import com.saboteur.shintai.core.ShintaiReadings
+import com.saboteur.shintai.core.Smell
 import com.saboteur.shintai.core.Units
 import com.saboteur.shintai.core.distanceParts
 import com.saboteur.shintai.core.formatClimate
@@ -257,6 +262,11 @@ private fun EyePane(
                     )
                 }
 
+                // Kyūkaku: the HUD shows ONLY the transient smell SPIKE (its own violet
+                // hue, never the proximity red) — a chemical heads-up is what a waveguide
+                // is for; the full clean/taint/foul readout stays on the phone.
+                SmellSpikeBadge(r.kyukaku.smell)
+
                 Spacer(Modifier.height(16.dp))
                 // Kōei's rear dual-arc — both ToF beams as a glanceable behind-you overlay
                 // under the nearer-arc hero. distanceLMm/distanceRMm are parsed in :core.
@@ -312,6 +322,21 @@ private fun PermissionPrompt(onRequestPermission: () -> Unit) {
             color = G.BoneDim, fontFamily = G.Mono, fontSize = 11.sp,
         )
     }
+}
+
+/** Kyūkaku's smell SPIKE as a blinking violet HUD badge — the one Kyūkaku signal the
+ *  lean overlay shows (the full clean/taint/foul readout is the Operator's). Emits
+ *  nothing unless the air just changed, so it never clutters the nominal HUD. */
+@Composable
+private fun SmellSpikeBadge(smell: Smell) {
+    if (smell != Smell.Spike) return
+    Spacer(Modifier.height(6.dp))
+    Text(
+        "◆ AIR CHANGED — SMELL",
+        color = G.Violet.copy(alpha = alertBlink()),
+        fontFamily = G.Mono, fontWeight = FontWeight.Bold, fontSize = 18.sp,
+        letterSpacing = 1.sp,
+    )
 }
 
 /** The pointer-driven settings overlay: units toggle, and (stereo) IPD +/-. */

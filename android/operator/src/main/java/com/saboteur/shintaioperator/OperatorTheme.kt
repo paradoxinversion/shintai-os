@@ -38,6 +38,8 @@ object T {
     val AmberDim = Color(0xFF7A5620)
     val Alert = Color(0xFFFF4438)
     val AlertDim = Color(0xFF8A2820)
+    val Violet = Color(0xFFB266FF)      // Kyūkaku's identity — smell, distinct from the CO₂ ramp
+    val VioletDim = Color(0xFF5A2E80)
     val Bone = Color(0xFFC9CDBC)
     val BoneDim = Color(0xFF6B6F62)
 

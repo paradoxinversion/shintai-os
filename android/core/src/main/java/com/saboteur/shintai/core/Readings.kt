@@ -24,6 +24,7 @@ data class ShintaiReadings(
     val climate: String = "—",         // e.g. "23.0C 41%RH 750ppm" (SCD-40, warms up ~5s)
     val thermal: String = "—",         // e.g. "Ctr:23.1 Min:22.6 Max:31.4C" (MLX90640)
     val environment: String = "—",     // e.g. "1007.2hPa 84200ohm 22.8C 39%RH" (BME688)
+    val kyukaku: KyukakuState = KyukakuState(),  // Kyūkaku's smell state, derived from environment's gas_ohms
     val thermalGrid: ThermalGrid? = null,  // Metsuke's 8x8 heat grid, null until the first frame
     val hokan: HokanPdr? = null,       // Hokan's dead-reckoned breadcrumb, null until the first notify
     val packets: Int = 0,              // total notifications received — a visible heartbeat
@@ -191,7 +192,9 @@ fun ShintaiReadings.fold(uuid: UUID, value: String): ShintaiReadings {
         ShintaiGatt.GPS -> base.copy(gps = value)
         ShintaiGatt.CLIMATE -> base.copy(climate = value)
         ShintaiGatt.THERMAL -> base.copy(thermal = value)
-        ShintaiGatt.ENVIRONMENT -> base.copy(environment = value)
+        // Environment also feeds Kyūkaku: its gas_ohms is folded into the derived
+        // smell state (no BLE channel of its own — see Kyukaku.kt). Both apps get it.
+        ShintaiGatt.ENVIRONMENT -> base.copy(environment = value, kyukaku = base.kyukaku.fold(value))
         ShintaiGatt.HOKAN -> base.copy(hokan = HokanPdr.fold(base.hokan, value))
         else -> base
     }

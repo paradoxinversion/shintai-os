@@ -22,7 +22,7 @@ GATT table is mirrored and checked by `tools/check-contract.py`.
 | ------------------ | --------------------------------------------- | ------------------------------------------------------- |
 | Role               | Glanceable AR HUD on the RayNeo X3 Pro        | Stable full-fidelity phone console + standalone fallback |
 | Find the board     | **Hardcoded MAC** (the glasses' radio starves a scan) | **Scans & pairs** (the phone's radio is dependable) |
-| Channels           | Seven (skips **Environment** to stay lean)    | **All eight**, Environment included — the complete readout |
+| Channels           | All string channels + Thermal Grid; **Environment** only to derive Kyūkaku's smell **spike** badge (not its raw readout) | All string channels + Thermal Grid — the complete readout, Environment shown in full |
 | Extras             | Stereo/mono split, volume-key IPD tuning      | CSV recording, rolling-history sparklines, motion-tracker gauge |
 | Look               | Phosphor on **pure black** (waveguide) — strokes only, no fills | Phosphor on **VOID** — panels/charts/log per [`docs/style.md`](../docs/style.md) |
 | Permissions        | `BLUETOOTH_CONNECT`                           | `BLUETOOTH_CONNECT` + `BLUETOOTH_SCAN` (`neverForLocation`) |

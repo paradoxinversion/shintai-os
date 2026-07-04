@@ -23,6 +23,7 @@ enum AizuSource {
   AIZU_KANKI,       // air-quality CO2 bands
   AIZU_NESSHI,      // hold-to-measure temperature read
   AIZU_HOKAN,       // fall-detection SOS
+  AIZU_KYUKAKU,     // sense of smell — VOC spike / foul (AZ-12)
   AIZU_SYSTEM,      // reserved for host-level cues
   AIZU_SOURCE_COUNT
 };
@@ -33,12 +34,15 @@ enum AizuSource {
 enum {
   AIZU_PRIO_KEHAI_REFLEX   = 100,  // rank 1 — imminent collision            (ALERT)
   AIZU_PRIO_HOKAN_FALL_SOS =  90,  // rank 2 — a fall just happened, latched (ALERT)
-  AIZU_PRIO_NESSHI_HELD    =  80,  // rank 3 — deliberate read while held    (INTERACTIVE)
-  AIZU_PRIO_KANKI_BAD      =  70,  // rank 4 — dangerous air (>=2000 ppm)    (ALERT)
-  AIZU_PRIO_KEHAI_APPROACH =  60,  // rank 5 — something approaching         (AMBIENT+)
-  AIZU_PRIO_KANKI_POOR     =  50,  // rank 6 — open a window (1200-2000)     (AMBIENT)
-  AIZU_PRIO_KANKI_STUFFY   =  40,  // rank 7 — ventilation slipping (800-1200) (AMBIENT)
-  AIZU_PRIO_KANKI_WARMUP   =  30,  // rank 8 — SCD-40 warming (~5 s post-boot)(AMBIENT)
+  AIZU_PRIO_KYUKAKU_SPIKE  =  85,  // rank 3 — the air just changed, transient (ALERT, AZ-12)
+  AIZU_PRIO_NESSHI_HELD    =  80,  // rank 4 — deliberate read while held    (INTERACTIVE)
+  AIZU_PRIO_KANKI_BAD      =  70,  // rank 5 — dangerous air (>=2000 ppm)    (ALERT)
+  AIZU_PRIO_KEHAI_APPROACH =  60,  // rank 6 — something approaching         (AMBIENT+)
+  AIZU_PRIO_KANKI_POOR     =  50,  // rank 7 — open a window (1200-2000)     (AMBIENT)
+  AIZU_PRIO_KYUKAKU_FOUL   =  45,  // rank 8 — chemically loaded air         (AMBIENT, AZ-12)
+  AIZU_PRIO_KANKI_STUFFY   =  40,  // rank 9 — ventilation slipping (800-1200) (AMBIENT)
+  AIZU_PRIO_KYUKAKU_TAINT  =  35,  // rank 10 — a mild smell is present      (AMBIENT, AZ-12)
+  AIZU_PRIO_KANKI_WARMUP   =  30,  // rank 11 — SCD-40 warming (~5 s post-boot)(AMBIENT)
   AIZU_PRIO_IDLE           =  -1   // nothing live -> Idle wallpaper
 };
 
@@ -77,6 +81,7 @@ struct AizuCue {
 static inline bool aizuIsAlert(int priority) {
   return priority == AIZU_PRIO_KEHAI_REFLEX
       || priority == AIZU_PRIO_HOKAN_FALL_SOS
+      || priority == AIZU_PRIO_KYUKAKU_SPIKE   // a chemical onset preempts instantly (AZ-12)
       || priority == AIZU_PRIO_KANKI_BAD;
 }
 

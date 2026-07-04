@@ -134,10 +134,12 @@ differently by design (see `android/`):
 - **Operator** (`com.saboteur.shintaioperator`, the phone field console) subscribes to
   the **nine string** characteristics, Environment and Hokan included — the complete numeric readout —
   **plus Thermal Grid** (the Metsuke heat panel). Ten channels: the full-fidelity console.
-- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **nine** —
-  eight string channels (Hokan included) plus **Thermal Grid**, and deliberately skips **Environment**
-  (`abcdc0de`, BME688 pressure + gas): the glanceable overlay keeps its readout surface lean,
-  and pressure/VOC belong on the full-fidelity phone.
+- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **all nine string
+  channels plus Thermal Grid** (ten, same as Operator), but treats **Environment** (`abcdc0de`,
+  BME688 pressure + gas) specially: it takes the channel **only to derive Kyūkaku's smell SPIKE
+  badge** from `gas_ohms` (`:core` `Kyukaku.kt`), and does **not** render the raw pressure/VOC
+  readout — that full clean/taint/foul readout stays on the phone. The overlay keeps its *displayed*
+  surface lean; a transient chemical spike is a heads-up worth the waveguide, the numbers aren't.
 
 Both apps render the Metsuke heat panel (`THERMAL_GRID`) — the one binary channel — from the
 shared `:core` parse + ironbow palette; only the surrounding surface differs (waveguide HUD vs

@@ -31,8 +31,10 @@ import com.saboteur.shintai.core.ConnectionState
 import com.saboteur.shintai.core.HokanPdr
 import com.saboteur.shintai.core.NEAR_MM
 import com.saboteur.shintai.core.ShintaiReadings
+import com.saboteur.shintai.core.Smell
 import com.saboteur.shintai.core.Units
 import com.saboteur.shintai.core.distanceParts
+import com.saboteur.shintai.core.label
 import com.saboteur.shintai.core.formatClimate
 import com.saboteur.shintai.core.formatEnvironment
 import com.saboteur.shintai.core.formatGps
@@ -109,6 +111,46 @@ private fun TopBar(r: ShintaiReadings, rec: RecordingUi) {
     }
 }
 
+/** AIR — the climate + environment cluster plus Kyūkaku's derived smell. ENVIRONMENT
+ *  is the channel the glasses take only for the smell spike; the Operator shows it in
+ *  full. Kyūkaku (no BLE channel of its own — see :core Kyukaku.kt) is folded from the
+ *  environment's gas_ohms; violet is its identity, distinct from the CO₂ green→red ramp. */
+@Composable
+private fun AirPanel(r: ShintaiReadings, units: Units) {
+    val ppm = co2Ppm(r.climate)
+    Panel("Air") {
+        ReadoutRow("CO₂", ppm?.let { "$it" } ?: "—", "ppm", valueColor = co2Color(ppm))
+        Spacer(Modifier.height(6.dp))
+        SegmentBar(
+            value = (ppm ?: 0).toFloat(),
+            fullScale = Bands.CO2_FULLSCALE_PPM.toFloat(),
+            warn = Bands.CO2_WARN_PPM.toFloat(),
+            alarm = Bands.CO2_ALARM_PPM.toFloat(),
+        )
+        Spacer(Modifier.height(8.dp))
+        ReadoutRow("Climate", formatClimate(r.climate, units))
+        ReadoutRow("Environment", formatEnvironment(r.environment, units))
+        ReadoutRow(
+            "Nose", r.kyukaku.smell.label.uppercase(), "r ${"%.2f".format(r.kyukaku.ratio)}",
+            valueColor = when (r.kyukaku.smell) {
+                Smell.Settling -> T.BoneDim
+                Smell.Clean -> T.Phosphor
+                else -> T.Violet
+            },
+        )
+    }
+    if (ppm != null && ppm >= Bands.CO2_ALARM_PPM) {
+        AlertBanner("CO₂ $ppm ppm — ventilate", alarm = true)
+    }
+    val smell = r.kyukaku.smell
+    if (smell == Smell.Spike || smell == Smell.Foul) {
+        AlertBanner(
+            if (smell == Smell.Spike) "Nose — the air just changed" else "Nose — air is foul",
+            alarm = false, color = T.Violet,
+        )
+    }
+}
+
 @Composable
 private fun Console(
     r: ShintaiReadings,
@@ -177,28 +219,9 @@ private fun Console(
         }
     }
 
-    // AIR — the climate + environment cluster. ENVIRONMENT is the channel the
-    // glasses omit; the Operator is the complete readout.
-    val ppm = co2Ppm(r.climate)
-    Panel("Air") {
-        ReadoutRow(
-            "CO₂", ppm?.let { "$it" } ?: "—", "ppm",
-            valueColor = co2Color(ppm),
-        )
-        Spacer(Modifier.height(6.dp))
-        SegmentBar(
-            value = (ppm ?: 0).toFloat(),
-            fullScale = Bands.CO2_FULLSCALE_PPM.toFloat(),
-            warn = Bands.CO2_WARN_PPM.toFloat(),
-            alarm = Bands.CO2_ALARM_PPM.toFloat(),
-        )
-        Spacer(Modifier.height(8.dp))
-        ReadoutRow("Climate", formatClimate(r.climate, units))
-        ReadoutRow("Environment", formatEnvironment(r.environment, units))
-    }
-    if (ppm != null && ppm >= Bands.CO2_ALARM_PPM) {
-        AlertBanner("CO₂ $ppm ppm — ventilate", alarm = true)
-    }
+    // AIR — climate + environment + Kyūkaku's derived smell. Its own composable so
+    // Console stays within the method-length/complexity budget (same as NavigationPanel).
+    AirPanel(r, units)
 
     // TREND — rolling history the glasses don't keep.
     Panel("Trend") {
