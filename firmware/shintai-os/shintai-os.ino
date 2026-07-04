@@ -7,6 +7,7 @@
 #include <SensirionI2cScd4x.h>
 #include <Adafruit_BME680.h>
 #include <Adafruit_SSD1306.h>
+#include <Adafruit_APDS9960.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -100,6 +101,34 @@ Adafruit_BME680 bme;       // BME688: gas + pressure, plus authoritative air tem
 #define OLED_ADDR 0x3D
 Adafruit_SSD1306 oled(OLED_W, OLED_H, &Wire, -1);
 bool oledPresent = false;
+
+// The pane is a swipe-paged carousel: a HOME identity splash + four live screens.
+// The APDS9960's gesture engine (below) pages left/right between them.
+enum { PANE_HOME = 0, PANE_NAV, PANE_ENV, PANE_PROX, PANE_THERM, PANE_COUNT };
+uint8_t  oledPage     = PANE_HOME;
+bool     oledDirty    = true;    // force a redraw (set on a page change)
+bool     paneReady    = false;   // first telemetry snapshot captured (live pages have data)
+uint32_t oledLastDraw = 0;
+const uint32_t OLED_REFRESH_MS = 750;   // live-page redraw cadence (HOME is static)
+
+// APDS9960 gesture / proximity / light sensor (STEMMA QT, 0x39) — the pane's swipe
+// input. Only the gesture engine is used here (proximity must be on to feed it); the
+// ambient-light channel is left for later. Polled (not INT-wired: the QT cable is I2C
+// only), rate-limited so it doesn't flood the bus the reflex ToF also rides.
+Adafruit_APDS9960 apds;
+bool apdsPresent = false;
+uint32_t apdsLastPoll = 0;
+const uint32_t APDS_POLL_MS = 50;
+
+// Snapshot of the pane's live fields — captured at the end of each telemetry cycle
+// (these values are otherwise local to loop()), so the renderer can repaint on a swipe
+// from the fast section without waiting for the next 1500 ms cycle.
+struct PaneSnapshot {
+  bool  magOk;   float heading;  char cardinal[4];
+  bool  gpsFix;  float lat, lon, alt;  int sats;
+  int16_t mmL, mmR;  bool alert;
+  bool  thermalOk;  float tCtr, tMin, tMax, hotDelta;
+} pane = {};
 
 float thermalFrame[32 * 24];
 
@@ -559,24 +588,23 @@ void setup() {
   Wire.beginTransmission(OLED_ADDR);
   if (Wire.endTransmission() == 0 && oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
     oledPresent = true;   // SWITCHCAPVCC drives the internal charge pump (the missing piece)
-    // Centre any string on the 128 px width via GFX text metrics.
-    auto centred = [&](const char* s, uint8_t size, int16_t y) {
-      oled.setTextSize(size);
-      int16_t x1, y1; uint16_t w, h;
-      oled.getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
-      oled.setCursor((OLED_W - (int16_t)w) / 2, y);
-      oled.print(s);
-    };
-    oled.clearDisplay();
-    oled.setTextColor(SSD1306_WHITE);
-    oled.drawRect(0, 0, OLED_W, OLED_H, SSD1306_WHITE);
-    centred("SHINTAI-OS", 2, 15);
-    oled.drawLine(16, 39, OLED_W - 16, 39, SSD1306_WHITE);
-    centred("field system", 1, 47);
-    oled.display();
+    renderPane(PANE_HOME);   // the identity splash is page 0 — draw it as the boot screen
     Serial.println("[OK] SSD1306 OLED tertiary pane @ 0x3D");
   } else {
     Serial.println("[WARN] SSD1306 OLED not found @ 0x3D — tertiary pane disabled");
+  }
+
+  // APDS9960 gesture sensor — the pane's swipe input. The gesture engine needs
+  // proximity enabled to feed it. Presence-gated: absent -> the pane still shows and
+  // auto-refreshes, just with no swipe paging. begin() reads the ID register, so it's
+  // a real probe. Defaults suit hand swipes at ~10-20 cm; tune gain on-wrist if needed.
+  apdsPresent = apds.begin();
+  if (apdsPresent) {
+    apds.enableProximity(true);
+    apds.enableGesture(true);
+    Serial.println("[OK] APDS9960 gesture sensor @ 0x39 (swipe to page the pane)");
+  } else {
+    Serial.println("[WARN] APDS9960 not found @ 0x39 — pane swipe paging disabled");
   }
 
   // Nesshi — subscribe to Aizu's BOOT HOLD gesture (AZ-9): hold to read the surface
@@ -759,6 +787,98 @@ void probeGrid() {
                 (unsigned long)gridNotifyCount);
 }
 
+// ── Tertiary pane rendering ──────────────────────────────────────────────────────
+// Each page draws from the `pane` snapshot (+ the already-global env state), so it can
+// repaint from the fast loop section the instant a swipe changes the page.
+
+// Centre a string on the 128 px width via GFX text metrics.
+static void oledCenter(const char* s, uint8_t size, int16_t y) {
+  oled.setTextSize(size);
+  int16_t x1, y1; uint16_t w, h;
+  oled.getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
+  oled.setCursor((OLED_W - (int16_t)w) / 2, y);
+  oled.print(s);
+}
+
+// A page header: title top-left, "n/N" top-right, a rule under. Returns content top y.
+static int16_t oledHeader(const char* title, uint8_t page) {
+  oled.setTextSize(1);
+  oled.setCursor(0, 0);
+  oled.print(title);
+  char idx[8];
+  snprintf(idx, sizeof idx, "%u/%u", (unsigned)(page + 1), (unsigned)PANE_COUNT);
+  int16_t x1, y1; uint16_t w, h;
+  oled.getTextBounds(idx, 0, 0, &x1, &y1, &w, &h);
+  oled.setCursor(OLED_W - (int16_t)w, 0);
+  oled.print(idx);
+  oled.drawLine(0, 10, OLED_W - 1, 10, SSD1306_WHITE);
+  return 14;
+}
+
+void renderPane(uint8_t page) {
+  oled.clearDisplay();
+  oled.setTextColor(SSD1306_WHITE);
+  char buf[24];
+  switch (page) {
+    case PANE_HOME:                             // identity splash (also the boot screen)
+      oled.drawRect(0, 0, OLED_W, OLED_H, SSD1306_WHITE);
+      oledCenter("SHINTAI-OS", 2, 15);
+      oled.drawLine(16, 39, OLED_W - 16, 39, SSD1306_WHITE);
+      oledCenter("field system", 1, 47);
+      break;
+
+    case PANE_NAV:
+      oledHeader("NAV", page);
+      if (pane.magOk) { snprintf(buf, sizeof buf, "%03.0f %s", pane.heading, pane.cardinal); oledCenter(buf, 2, 16); }
+      else            oledCenter("no heading", 1, 20);
+      oled.setTextSize(1);
+      if (pane.gpsFix) {
+        snprintf(buf, sizeof buf, "%.4f %.4f", pane.lat, pane.lon); oled.setCursor(0, 40); oled.print(buf);
+        snprintf(buf, sizeof buf, "%.0fm  %d sat", pane.alt, pane.sats); oled.setCursor(0, 52); oled.print(buf);
+      } else { oled.setCursor(0, 46); oled.print("GPS: no fix"); }
+      break;
+
+    case PANE_ENV:
+      oledHeader("ENV", page);
+      oled.setTextSize(1);
+      if (bmeHasData) {
+        snprintf(buf, sizeof buf, "%.1f hPa", bmePressure);       oled.setCursor(0, 16); oled.print(buf);
+        snprintf(buf, sizeof buf, "%.1f kO gas", bmeGas / 1000.0); oled.setCursor(0, 26); oled.print(buf);
+        snprintf(buf, sizeof buf, "%.1fC %.0f%%RH", bmeTemp, bmeHum); oled.setCursor(0, 36); oled.print(buf);
+        const char* nose = kyukakuState.count < KYUKAKU_SETTLE_COUNT       ? "settling"
+                         : ((int32_t)(kyukakuSpikeUntilMs - millis()) > 0) ? "SPIKE"
+                         : kyukakuState.band == KYUKAKU_BAND_FOUL          ? "foul"
+                         : kyukakuState.band == KYUKAKU_BAND_TAINT         ? "taint" : "clean";
+        const char* wx = !kiatsuObs.spanning                     ? "fill"
+                       : kiatsuObs.state == KIATSU_WX_STORM       ? "fall!"
+                       : kiatsuObs.state == KIATSU_WX_FALLING     ? "fall" : "steady";
+        snprintf(buf, sizeof buf, "nose:%s", nose); oled.setCursor(0, 50);  oled.print(buf);
+        snprintf(buf, sizeof buf, "wx:%s", wx);     oled.setCursor(72, 50); oled.print(buf);
+      } else oledCenter("no BME688", 1, 30);
+      break;
+
+    case PANE_PROX:
+      oledHeader(pane.alert ? "PROX  *CLOSE*" : "PROX", page);
+      oled.setTextSize(2);
+      if (pane.mmL > 0) snprintf(buf, sizeof buf, "L%4dmm", pane.mmL); else snprintf(buf, sizeof buf, "L  --");
+      oled.setCursor(0, 18); oled.print(buf);
+      if (pane.mmR > 0) snprintf(buf, sizeof buf, "R%4dmm", pane.mmR); else snprintf(buf, sizeof buf, "R  --");
+      oled.setCursor(0, 40); oled.print(buf);
+      break;
+
+    case PANE_THERM:
+      oledHeader("THERMAL", page);
+      if (pane.thermalOk) {
+        snprintf(buf, sizeof buf, "%.1fC", pane.tCtr); oledCenter(buf, 2, 16);
+        oled.setTextSize(1);
+        snprintf(buf, sizeof buf, "scene %.0f-%.0fC", pane.tMin, pane.tMax); oled.setCursor(0, 40); oled.print(buf);
+        snprintf(buf, sizeof buf, "hot +%.1fC", pane.hotDelta);              oled.setCursor(0, 52); oled.print(buf);
+      } else oledCenter("no thermal", 1, 28);
+      break;
+  }
+  oled.display();
+}
+
 void loop() {
   // Always read GPS in background
   GPS.read();
@@ -787,6 +907,25 @@ void loop() {
   serviceNesshi();    // Nesshi: while BOOT held, cached-frame surface temp -> Aizu cue
   serviceHokan();     // Hokan: fast IMU DSP -> cumulative steps + latching fall SOS
   Aizu.tick();
+
+  // ── Tertiary pane input + render (both on their own fast clocks, before the
+  // telemetry gate so a swipe registers within ~50 ms, not on the 1500 ms cycle).
+  // Gesture -> page change; then redraw on a change, or on the slow refresh for a
+  // live page (HOME is static, so it only repaints when you land on it).
+  if (apdsPresent && (uint32_t)(millis() - apdsLastPoll) >= APDS_POLL_MS) {
+    apdsLastPoll = millis();
+    uint8_t g = apds.readGesture();   // 0 = none; resolves once a swipe completes
+    // Mapping calibrated on-glass: a physical L->R swipe should page FORWARD. If it
+    // pages the wrong way (or the swipe axis reads as UP/DOWN), swap these directions.
+    if      (g == APDS9960_RIGHT) { oledPage = (oledPage + 1) % PANE_COUNT;             oledDirty = true; }
+    else if (g == APDS9960_LEFT)  { oledPage = (oledPage + PANE_COUNT - 1) % PANE_COUNT; oledDirty = true; }
+    // APDS9960_UP / _DOWN reserved.
+  }
+  if (oledPresent) {
+    bool livePage = (oledPage != PANE_HOME);
+    bool refresh  = livePage && paneReady && (uint32_t)(millis() - oledLastDraw) >= OLED_REFRESH_MS;
+    if (oledDirty || refresh) { renderPane(oledPage); oledLastDraw = millis(); oledDirty = false; }
+  }
 
   if (millis() - lastUpdate < UPDATE_MS) return;
   lastUpdate = millis();
@@ -950,6 +1089,19 @@ void loop() {
   float hotspotBase  = airHasData ? airTemp : thermalMin;
   float hotspotDelta = thermalOk ? (thermalMax - hotspotBase) : 0;
   bool  hotspot      = thermalOk && hotspotDelta >= 5.0;
+
+  // ── Tertiary-pane snapshot ── copy this cycle's fields (otherwise local to loop())
+  // into the global the swipe renderer reads, so a page change repaints instantly with
+  // the latest data instead of waiting for the next telemetry cycle.
+  pane.magOk = magPresent; pane.heading = heading;
+  strncpy(pane.cardinal, cardinal, sizeof(pane.cardinal) - 1);
+  pane.cardinal[sizeof(pane.cardinal) - 1] = '\0';
+  pane.gpsFix = gpsFix; pane.lat = gpsLat; pane.lon = gpsLon; pane.alt = gpsAlt; pane.sats = gpsSats;
+  pane.mmL = mmL; pane.mmR = mmR; pane.alert = alertNow;
+  pane.thermalOk = thermalOk; pane.tCtr = thermalCtr; pane.tMin = thermalMin;
+  pane.tMax = thermalMax; pane.hotDelta = hotspotDelta;
+  paneReady = true;
+  if (oledPage != PANE_HOME) oledDirty = true;   // live page: repaint with fresh data
 
   // ── Human-readable output ──
   if (human) {
