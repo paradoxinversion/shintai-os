@@ -6,6 +6,7 @@
 #include <Adafruit_MLX90640.h>
 #include <SensirionI2cScd4x.h>
 #include <Adafruit_BME680.h>
+#include <Adafruit_SSD1306.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -85,6 +86,20 @@ Adafruit_GPS GPS(&Wire);
 Adafruit_MLX90640 mlx;
 SensirionI2cScd4x scd4x;   // SCD-40: CO2 + ambient air temp + humidity (I2C 0x62)
 Adafruit_BME680 bme;       // BME688: gas + pressure, plus authoritative air temp/RH (I2C 0x77)
+
+// Tertiary info pane — 1.3" 128x64 mono OLED (Adafruit #938) on the STEMMA QT bus at
+// 0x3D. A flare / secondary-readout surface, distinct from Aizu's single-pixel
+// glanceable cue. Presence-gated like every sensor: absent -> warn and boot on. -1 =
+// no hardware reset pin (shared I2C). Two gotchas confirmed on THIS unit via the 'I'
+// bus scan + on-glass test: (1) its address-select sits at 0x3D, not the 0x3C most
+// breakouts default to; (2) it's an SSD1306 controller (Adafruit_SSD1306), NOT the
+// SH1106 the #938 label implies — SH110X left the panel dark (its init omits the
+// SSD1306 charge-pump enable, so the bias supply never came up).
+#define OLED_W    128
+#define OLED_H     64
+#define OLED_ADDR 0x3D
+Adafruit_SSD1306 oled(OLED_W, OLED_H, &Wire, -1);
+bool oledPresent = false;
 
 float thermalFrame[32 * 24];
 
@@ -537,6 +552,32 @@ void setup() {
   // cues, they never paint. With no source posting it just renders Idle.
   Aizu.begin();
   Serial.println("[OK] Aizu feedback arbiter (NeoPixel)");
+
+  // ── Tertiary info pane (SH1106 OLED): pre-probe 0x3C (the same non-fatal ack test the
+  // ToF mux uses) so a missing panel warns cleanly, then draw the SHINTAI-OS wordmark —
+  // a first bring-up flare. Nothing else writes the panel yet, so the splash persists.
+  Wire.beginTransmission(OLED_ADDR);
+  if (Wire.endTransmission() == 0 && oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    oledPresent = true;   // SWITCHCAPVCC drives the internal charge pump (the missing piece)
+    // Centre any string on the 128 px width via GFX text metrics.
+    auto centred = [&](const char* s, uint8_t size, int16_t y) {
+      oled.setTextSize(size);
+      int16_t x1, y1; uint16_t w, h;
+      oled.getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
+      oled.setCursor((OLED_W - (int16_t)w) / 2, y);
+      oled.print(s);
+    };
+    oled.clearDisplay();
+    oled.setTextColor(SSD1306_WHITE);
+    oled.drawRect(0, 0, OLED_W, OLED_H, SSD1306_WHITE);
+    centred("SHINTAI-OS", 2, 15);
+    oled.drawLine(16, 39, OLED_W - 16, 39, SSD1306_WHITE);
+    centred("field system", 1, 47);
+    oled.display();
+    Serial.println("[OK] SSD1306 OLED tertiary pane @ 0x3D");
+  } else {
+    Serial.println("[WARN] SSD1306 OLED not found @ 0x3D — tertiary pane disabled");
+  }
 
   // Nesshi — subscribe to Aizu's BOOT HOLD gesture (AZ-9): hold to read the surface
   // temp at the centre of the thermal FOV as a colour; a double-hold reads the
