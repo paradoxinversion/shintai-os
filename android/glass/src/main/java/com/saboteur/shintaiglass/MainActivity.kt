@@ -267,6 +267,10 @@ private fun EyePane(
                 ReadoutRow("GPS", formatGps(r.gps, units))
                 ReadoutRow("CLIMATE", formatClimate(r.climate, units))
                 ReadoutRow("THERMAL", formatThermal(r.thermal, units))
+                // Hokan: cumulative steps + cadence (the pedometer readout). Always
+                // shown so the row layout is stable; the PDR mini-map below appears
+                // only once there's a walked path.
+                ReadoutRow("STEPS", r.hokan?.let { "${it.steps}  ${it.cadence}/min" } ?: "—")
 
                 // Metsuke: the live 8×8 heat panel — Shikai's one *image* surface.
                 // Only present once the first grid frame arrives (MLX90640 attached
@@ -274,6 +278,13 @@ private fun EyePane(
                 r.thermalGrid?.let { grid ->
                     Spacer(Modifier.height(14.dp))
                     ThermalPanel(grid, units)
+                }
+
+                // Hokan: the dead-reckoned breadcrumb — the HUD's second image
+                // surface. Only once the wearer has moved (track past the origin).
+                r.hokan?.takeIf { it.track.size > 1 }?.let { pdr ->
+                    Spacer(Modifier.height(14.dp))
+                    HokanPanel(pdr)
                 }
             }
         }

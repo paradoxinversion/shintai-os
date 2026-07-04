@@ -18,6 +18,7 @@
 #include "KankiBand.h"   // Kanki air-quality sense (specs/zokyo/kanki.md): co2_ppm -> Aizu ambient cue
 #include "ThermalGrid.h" // Metsuke thermal sight (specs/zokyo/metsuke.md): MLX frame -> packed 8x8 heat grid
 #include "NesshiBand.h"  // Nesshi heat-sight (specs/zokyo/nesshi.md): hold BOOT -> surface temp -> Aizu cue
+#include "HokanDsp.h"    // Hokan step-reckoning (specs/zokyo/hokan.md): fast IMU -> steps + fall SOS
 
 // BLE UUIDs
 #define SERVICE_UUID        "12345678-1234-1234-1234-123456789abc"
@@ -30,6 +31,7 @@
 #define CLIMATE_UUID        "abcdba98-ab12-ab12-ab12-abcdef123456"
 #define ENVIRONMENT_UUID    "abcdc0de-ab12-ab12-ab12-abcdef123456"
 #define THERMAL_GRID_UUID   "abcd7890-ab12-ab12-ab12-abcdef123456"  // Metsuke: binary heat grid
+#define HOKAN_UUID          "abcdf007-ab12-ab12-ab12-abcdef123456"  // Hokan: steps/heading/cadence ("f007" = foot)
 
 const int NEAR_MM  = 200;
 const int FAR_MM   = 2000;   // Kehai-Hikari Approach/Clear boundary (was reserved)
@@ -76,6 +78,7 @@ BLECharacteristic *thermalChar;
 BLECharacteristic *climateChar;
 BLECharacteristic *environmentChar;
 BLECharacteristic *thermalGridChar;   // Metsuke: binary 8x8 heat grid
+BLECharacteristic *hokanChar;         // Hokan: "steps heading cadence" string (live PDR breadcrumb)
 BLE2902           *thermalGridCccd = nullptr;   // its CCCD — emit only while subscribed
 uint32_t           gridNotifyCount = 0;         // grid notifies sent (for the 'G' probe)
 
@@ -121,6 +124,20 @@ uint32_t       nesshiLastHoldEndMs = 0;       // last HOLD_END — for double-ho
 const uint32_t NESSHI_DOUBLE_HOLD_MS = 500;   // a new hold within this of the last release => scene mode
 const uint32_t NESSHI_MAX_AGE_MS     = 1000;  // Aizu drops the cue if we stop refreshing (we post every loop while held)
 
+// Hokan (歩勘) — step-reckoning. The first module to do live on-device DSP: the IMU
+// is sampled fast (serviceHokan, ~50 Hz — well above gait rate and the 1.5 s
+// telemetry gate) and fed to two pure detectors (HokanDsp.h). Steps accumulate into
+// a cumulative counter logged as the CSV `steps` column (the ground-station
+// dead-reckons a GPS-denied path from Δsteps × step_length @ heading). A detected
+// fall posts a latching Aizu SOS (AZ-11, top-tier ALERT), cleared when the wearer
+// gets up. Consumes the existing LSM6DSOX; no new BOM, no telemetry disturbance.
+const uint32_t     HOKAN_SAMPLE_MS   = 20;      // ~50 Hz IMU DSP tick (self-rate-limited)
+const uint32_t     HOKAN_SOS_MAX_AGE_MS = 2000; // re-posted each tick while latched; drop if servicing stops
+unsigned long      lastHokanMs       = 0;
+uint32_t           hokanSteps        = 0;        // cumulative step count since boot (CSV `steps`)
+HokanStepDetector  hokanStep;
+HokanFallDetector  hokanFall;
+
 // BME688 state. Present set at boot; performReading() fires the gas heater and
 // blocks ~150 ms, so we read once per loop and cache. Owns air temp/humidity
 // (precedence over SCD-40) plus the BME-only pressure + gas fields.
@@ -144,7 +161,8 @@ const char* CSV_HEADER =
   "timestamp_ms,distance_mm,alert,heading_deg,cardinal,"
   "accel_x,accel_y,accel_z,gps_fix,lat,lon,alt_m,speed_kmh,"
   "sats,thermal_min,thermal_ctr,thermal_max,thermal_mean,"
-  "hotspot_delta,co2_ppm,air_temp_c,humidity_pct,pressure_hpa,gas_ohms";
+  "hotspot_delta,co2_ppm,air_temp_c,humidity_pct,pressure_hpa,gas_ohms,"
+  "steps";   // Hokan: cumulative pedometer count (appended — CSV-half contract change)
 
 // Onboard flash logging (FFat) — autonomous field capture, pulled over USB.
 // Each power-up writes a new sequential file (/shtNNNN.csv). Rows are logged
@@ -415,6 +433,7 @@ void setup() {
   thermalChar  = makeChar(THERMAL_UUID,  "Thermal (C)");
   climateChar  = makeChar(CLIMATE_UUID,  "Climate (CO2/Temp/RH)");
   environmentChar = makeChar(ENVIRONMENT_UUID, "Environment (P/gas/T/RH)");
+  hokanChar       = makeChar(HOKAN_UUID,       "Hokan (steps/heading/cadence)");
   // Metsuke: the one BINARY characteristic (68-byte packed heat grid). Built
   // directly (not via makeChar) so we KEEP the BLE2902 pointer — we gate emission
   // on the client having subscribed (getNotifications, AC-4), and on this stack
@@ -446,6 +465,8 @@ void setup() {
   // scene's hottest point. A short CLICK still toggles Aizu's mute (no collision).
   Aizu.onHold(nesshiOnHold);
   Serial.println("[OK] Nesshi heat-sight (hold BOOT to read surface temp)");
+  Serial.println(imuPresent ? "[OK] Hokan step-reckoning (pedometer + fall SOS)"
+                            : "[WARN] Hokan disabled — no IMU (steps stay 0)");
   Serial.println("Output: 'h'=human  'c'=CSV  'b'=both (current: both)");
   Serial.println("=============================\n");
 }
@@ -566,6 +587,41 @@ void serviceNesshi() {
   Aizu.postCue(AIZU_NESSHI, nc.priority, nc.colour, nc.motion, NESSHI_MAX_AGE_MS);
 }
 
+// Hokan step-reckoning tick — the fast IMU DSP loop (~50 Hz, self-rate-limited).
+// Reads accel magnitude, feeds the pure step + fall detectors (HokanDsp.h), keeps
+// the cumulative `steps` counter, and drives the latching fall SOS through Aizu.
+// This is Hokan's "first on-device real-time DSP": the gait signal is faster than
+// the 1.5 s telemetry cadence, so steps CANNOT be recovered from the CSV after the
+// fact — they must be detected live here. Its own read site (register reads, no
+// dataReady contention with the telemetry accel read). Never prints, never touches
+// lastUpdate, the telemetry cadence, BLE, or the flash gate.
+void serviceHokan() {
+  if (!imuPresent) return;                        // no IMU -> steps stay 0, no falls (degrades)
+  if (millis() - lastHokanMs < HOKAN_SAMPLE_MS) return;
+  uint32_t now = millis();
+  lastHokanMs = now;
+
+  sensors_event_t a, g, t;
+  imu.getEvent(&a, &g, &t);
+  float mag = sqrtf(a.acceleration.x * a.acceleration.x
+                  + a.acceleration.y * a.acceleration.y
+                  + a.acceleration.z * a.acceleration.z);
+
+  if (hokanStep.update(mag, now)) hokanSteps++;   // one cumulative step
+
+  // Fall SOS: while latched (DOWN), re-post each tick so the ALERT cue never ages
+  // out; clear it when the wearer gets up (RESOLVED). Aizu ranks it top-tier (AZ-11)
+  // so it preempts everything but a Kehai Reflex, which it doesn't meaningfully
+  // co-occur with. A mute gesture (Aizu CLICK) blanks it like any cue (AZ-8).
+  HokanFallEvent fe = hokanFall.update(mag, now);
+  if (hokanFall.down()) {
+    HokanCue c = hokanFallCue();
+    Aizu.postCue(AIZU_HOKAN, c.priority, c.colour, c.motion, HOKAN_SOS_MAX_AGE_MS);
+  } else if (fe == HOKAN_FALL_RESOLVED) {
+    Aizu.clearCue(AIZU_HOKAN);
+  }
+}
+
 // Metsuke grid diagnostic (serial 'G'): is a central connected, did it subscribe
 // to the grid CCCD, and are notifies actually going out? Splits "firmware not
 // emitting" from "app not receiving" without needing the phone on USB.
@@ -603,6 +659,7 @@ void loop() {
   serviceReflex();
   serviceThermal();   // Metsuke: ~2 Hz MLX read + grid notify (sole thermal read site)
   serviceNesshi();    // Nesshi: while BOOT held, cached-frame surface temp -> Aizu cue
+  serviceHokan();     // Hokan: fast IMU DSP -> cumulative steps + latching fall SOS
   Aizu.tick();
 
   if (millis() - lastUpdate < UPDATE_MS) return;
@@ -792,6 +849,7 @@ void loop() {
     row += ',';  row += (airHasData ? String(airHum, 1)     : String(""));
     row += ',';  row += (bmeHasData ? String(bmePressure, 1): String(""));
     row += ',';  row += (bmeHasData ? String(bmeGas, 0)     : String(""));
+    row += ',';  row += (imuPresent ? String(hokanSteps)    : String(""));   // Hokan cumulative steps
 
     // Persist to onboard flash only while untethered (no USB host). close() on a
     // row cadence (and on host-connect, below) commits the directory entry so a
@@ -881,6 +939,15 @@ void loop() {
                     + String(bmeHum, 0) + "%RH";
       environmentChar->setValue(envStr.c_str());
       environmentChar->notify();
+    }
+    // Hokan (歩勘): "steps heading cadence" — the live PDR breadcrumb the apps
+    // integrate into a dead-reckoned mini-map. Space-separated so the consumer just
+    // splits; heading is the same value reported to the Heading char (0 if no mag).
+    if (imuPresent) {
+      String hokanStr = String(hokanSteps) + " " + String(heading, 1)
+                      + " " + String(hokanStep.cadenceSpm(millis()));
+      hokanChar->setValue(hokanStr.c_str());
+      hokanChar->notify();
     }
   }
 }

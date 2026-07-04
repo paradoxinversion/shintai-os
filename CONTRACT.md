@@ -32,6 +32,7 @@ Consumers key off `line.startswith("timestamp_ms")` (header) and `line[0].isdigi
 | `humidity_pct` | %RH | Relative humidity — BME688 when present, else SCD-40, else blank |
 | `pressure_hpa` | hPa (blank = none) | BME688 barometric pressure |
 | `gas_ohms` | Ω (blank = none) | BME688 gas-sensor resistance (VOC proxy; lower = more VOC) |
+| `steps` | count (cumulative) | Hokan pedometer — cumulative step count since boot, detected live from the LSM6DSOX (0 when the IMU is absent) |
 
 `thermal_*` are *surface* temps (the IR camera); `air_temp_c`/`humidity_pct`/`co2_ppm`
 are *air*. `air_temp_c` and `humidity_pct` are **shared semantic slots**: whichever
@@ -41,6 +42,14 @@ climate sensor is present fills them, the **BME688 taking precedence over the SC
 when no present sensor supplies it — consumers key on the *column*, never on which chip
 produced it, so a SCD-40 ↔ BME688 swap never moves a field. (SCD-40 warms up ~5 s and
 updates ~every 5 s, blank until then.)
+
+`steps` is added by **Hokan** (`specs/zokyo/hokan.md`) — the **first CSV-half contract
+change** (Metsuke changed the BLE half). It's a cumulative pedometer count detected live
+on-device from the IMU, **appended at the end** of the schema so consumers that key on
+column *names* (and the `line[0].isdigit()` framing) are unaffected; old logs without the
+column still parse. It's the logged basis for the ground-station's GPS-denied
+dead-reckoned path (`Δsteps × step_length @ heading_deg`). CSV-only — there is no `steps`
+GATT characteristic in v1.
 
 Serial output modes (toggle live by sending a byte): `h` human · `c` CSV · `b` both
 (default; the logger requests `b`). Onboard-flash control bytes: `L` list · `P` dump · `E` erase.
@@ -62,6 +71,7 @@ payload (see [Thermal Grid](#thermal-grid-binary) below).
 | Thermal | `abcd6789-ab12-ab12-ab12-abcdef123456` | `Ctr:23.1 Min:22.6 Max:31.4C` |
 | Climate | `abcdba98-ab12-ab12-ab12-abcdef123456` | `23.0C 41%RH 750ppm` |
 | Environment | `abcdc0de-ab12-ab12-ab12-abcdef123456` | `1007.2hPa 84200ohm 22.8C 39%RH` |
+| Hokan | `abcdf007-ab12-ab12-ab12-abcdef123456` | `1240 98.5 112` (cumulative `steps` · `heading_deg` · `cadence` steps/min) |
 | Thermal Grid | `abcd7890-ab12-ab12-ab12-abcdef123456` | 196-byte **binary** heat grid (see below) |
 
 To receive notifications a central must write `ENABLE_NOTIFICATION` to each
@@ -96,17 +106,26 @@ Payload — **196 bytes, little-endian**:
   flash log. The summary `thermal_*` columns remain the logged thermal representation.
 - CCCD gotcha still applies (the `8000` above).
 
+The **Hokan** characteristic is added by `specs/zokyo/hokan.md` — the **second BLE-half
+addition** (after Metsuke's binary grid) and the only *string* characteristic beyond the
+original set. It streams the live pedometer state — cumulative `steps`, current
+`heading_deg`, and `cadence` (steps/min) — which both apps integrate over time
+(`Δsteps × step_length @ heading`) into a **dead-reckoned breadcrumb mini-map**, the live
+on-glasses twin of the base-side path `groundstation/analyze.py` draws from the CSV. It
+notifies only while the IMU is present. (The CSV `steps` column remains the logged basis;
+this characteristic is the live-only companion — the two halves of Hokan's output.)
+
 A characteristic only notifies when its sensor is present and has data (e.g. Climate
-warms up ~5 s and updates every ~5 s; Thermal needs the MLX90640 attached).
+warms up ~5 s and updates every ~5 s; Thermal needs the MLX90640 attached; Hokan needs the IMU).
 
 **Consumer coverage.** There are two Android consumers, and they cover the GATT table
 differently by design (see `android/`):
 
 - **Operator** (`com.saboteur.shintaioperator`, the phone field console) subscribes to
-  the **eight string** characteristics, Environment included — the complete numeric readout —
-  **plus Thermal Grid** (the Metsuke heat panel). Nine channels: the full-fidelity console.
-- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **eight** —
-  seven string channels plus **Thermal Grid**, and deliberately skips **Environment**
+  the **nine string** characteristics, Environment and Hokan included — the complete numeric readout —
+  **plus Thermal Grid** (the Metsuke heat panel). Ten channels: the full-fidelity console.
+- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **nine** —
+  eight string channels (Hokan included) plus **Thermal Grid**, and deliberately skips **Environment**
   (`abcdc0de`, BME688 pressure + gas): the glanceable overlay keeps its readout surface lean,
   and pressure/VOC belong on the full-fidelity phone.
 

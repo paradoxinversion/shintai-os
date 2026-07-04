@@ -63,3 +63,49 @@ one thing to validate on hardware *because* of the Kehai reflex:
   construction* here — host-tested pack (`tools/thermal-grid-test.cpp`), compiled
   firmware + Android. Re-run them live: subscribe from Glass, wave a warm hand, and
   confirm the hot cells track and the panel auto-ranges.
+
+## 2026-07-03 — Hokan (steps, falls, PDR breadcrumb) hardware validation
+
+Hokan ([`../zokyo/hokan.md`](../zokyo/hokan.md)) is built (firmware DSP + CSV `steps`
++ base-side `groundstation/hokan.py` PDR + a live BLE breadcrumb characteristic
+`abcdf007` rendered as a mini-map in both apps). Host tests pass
+(`tools/hokan-dsp-test.cpp`, `tools/hokan-pdr-test.py`), firmware compiles, Android
+`detekt`+`lint` clean. What still needs the body:
+
+- **Step counting — spot-verified, not calibrated.** A live tethered walk counted
+  **~34 for a called 30** (~13% over) and held flat at rest (no drift, no false
+  falls). Good enough to trust the detector, but `STEP_LEN` (0.7 m), `HOKAN_STEP_DELTA`
+  (2.2 m/s²), and the debounce are first-draft defaults — calibrate over a longer
+  measured walk, and against a known distance.
+
+- **Fall detection — UNVERIFIED on hardware.** The freefall→impact→stillness state
+  machine + latching Aizu SOS (rank-2 ALERT, AZ-11) and the RESOLVED-on-getting-up
+  clear are host-tested only. Never triggered on the board. Do a **cushioned drop
+  test**: confirm the red urgent pulse fires within ~1 s, latches, and clears when
+  the board is picked up — and that normal sitting/dropping-into-a-chair doesn't
+  false-trigger. Tune `HOKAN_FREEFALL_TH` / `HOKAN_IMPACT_TH` / `HOKAN_STILL_HOLD_MS`.
+
+- **PDR breadcrumb heading — the real gap.** A house loop reconstructs as a **wobbly
+  line, not a loop**. Diagnosed: step counting and the integration are correct and
+  the apps draw the data faithfully (verified) — the **shape is entirely heading**,
+  and indoor heading is unreliable for four stacked reasons: (1) indoor magnetic
+  disturbance (steel/wiring — the HkD-3 non-goal), (2) heading is raw
+  `atan2(mag.y, mag.x)` with **no tilt compensation**, (3) it's device orientation,
+  not travel direction, (4) no hard/soft-iron calibration. The magnetometer reads
+  *stable at rest* (parked cleanly at 171°), so it's turn-tracking that fails.
+  - **To confirm:** walk a loop **on a power bank** (phone USB-C power opened the
+    CDC port and flipped the board to *tethered* → the walk did NOT log to flash;
+    only a power bank guarantees untethered logging of `heading_deg`+`steps`), then
+    check whether the logged heading sweeps ~360°. Try it **outdoors, away from
+    steel**, board held flat with a fixed forward axis, to test the algorithm clean.
+  - **Real fix (forward path):** a tilt-compensated **fused heading (BNO085)** — the
+    Hokan spec's own "Better heading" item — cuts PDR drift at the source.
+
+- **BLE breadcrumb mini-map — renders, heading aside.** The `Hokan` characteristic
+  and the Glass/Operator mini-maps were seen drawing live on the phone (so parse +
+  render work); only the heading accuracy above is open. Glass mini-map not yet
+  seen on the RayNeo (only `:operator` was installed this session).
+
+- **Phone-power gotcha (confirmed).** On the Pixel, powering the board over USB-C
+  opens the CDC serial port → the board reads as tethered → **flash logging is
+  suppressed**. Field capture needs a plain power bank, not the phone.

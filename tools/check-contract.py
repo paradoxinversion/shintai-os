@@ -40,6 +40,7 @@ CHAR_TO_KOTLIN = {
     "Thermal": "THERMAL",
     "Climate": "CLIMATE",
     "Environment": "ENVIRONMENT",
+    "Hokan": "HOKAN",
     "Thermal Grid": "THERMAL_GRID",
 }
 # Characteristics the Android app is documented NOT to expose (CONTRACT.md "Consumer

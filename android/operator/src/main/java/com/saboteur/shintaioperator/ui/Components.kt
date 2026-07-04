@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
 import android.graphics.Bitmap
+import com.saboteur.shintai.core.HokanPdr
 import com.saboteur.shintai.core.ThermalGrid
 import com.saboteur.shintai.core.argb
 import com.saboteur.shintaioperator.ChamferShape
@@ -205,6 +206,38 @@ fun HeatGrid(grid: ThermalGrid, modifier: Modifier = Modifier) {
             dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
             filterQuality = FilterQuality.High,
         )
+    }
+}
+
+/** Hokan's dead-reckoned breadcrumb as a square mini-map: the walked path integrated
+ *  in `:core` ([HokanPdr], same math as `groundstation/hokan.py`), autoscaled with
+ *  equal x/y so the route shape isn't distorted. Phosphor trail, a bright "you are
+ *  here" dot at the current end, a dim origin dot — strokes only, the phone twin of
+ *  the base-side path `analyze.py` draws. Needs a walked path (track past origin). */
+@Composable
+fun HokanMap(pdr: HokanPdr, modifier: Modifier = Modifier) {
+    Canvas(modifier.fillMaxWidth().aspectRatio(1f).border(1.dp, T.Grid)) {
+        val pts = pdr.track
+        if (pts.size < 2) return@Canvas
+        val pad = 12.dp.toPx()
+        val minX = pts.minOf { it.x }
+        val maxX = pts.maxOf { it.x }
+        val minY = pts.minOf { it.y }
+        val maxY = pts.maxOf { it.y }
+        val spanX = (maxX - minX).coerceAtLeast(0.1f)
+        val spanY = (maxY - minY).coerceAtLeast(0.1f)
+        val scale = minOf((size.width - 2 * pad) / spanX, (size.height - 2 * pad) / spanY)
+        val offX = (size.width - spanX * scale) / 2f
+        val offY = (size.height - spanY * scale) / 2f
+        // metres -> canvas px; North (y+) is UP, so invert the screen y axis.
+        val screen = pts.map { p ->
+            Offset(offX + (p.x - minX) * scale, size.height - (offY + (p.y - minY) * scale))
+        }
+        for (i in 1 until screen.size) {
+            drawLine(T.Phosphor, screen[i - 1], screen[i], strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+        }
+        drawCircle(T.PhosphorDim, radius = 3.dp.toPx(), center = screen.first())   // origin
+        drawCircle(T.Phosphor, radius = 4.5f.dp.toPx(), center = screen.last())    // you are here
     }
 }
 
