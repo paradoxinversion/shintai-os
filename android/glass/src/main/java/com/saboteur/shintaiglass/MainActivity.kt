@@ -237,7 +237,7 @@ private fun EyePane(
                 val blink = if (r.alertActive) alertBlink() else 1f
                 val heroColor = if (r.alertActive) G.Alert.copy(alpha = blink) else G.Phosphor
 
-                Text("RANGE", color = G.Bone, fontFamily = G.Mono, fontSize = 13.sp, letterSpacing = 2.sp)
+                Text("NEAREST", color = G.Bone, fontFamily = G.Mono, fontSize = 13.sp, letterSpacing = 2.sp)
                 Text(
                     text = distVal,
                     color = heroColor,
@@ -256,6 +256,11 @@ private fun EyePane(
                         letterSpacing = 1.sp,
                     )
                 }
+
+                Spacer(Modifier.height(16.dp))
+                // Kōei's rear dual-arc — both ToF beams as a glanceable behind-you overlay
+                // under the nearer-arc hero. distanceLMm/distanceRMm are parsed in :core.
+                RearArcPanel(r.distanceLMm, r.distanceRMm, r.alertActive, units)
 
                 Spacer(Modifier.height(22.dp))
                 HairRule()

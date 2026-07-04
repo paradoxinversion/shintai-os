@@ -23,13 +23,13 @@ import kotlin.math.sin
 /**
  * The motion-tracker gauge — the project's soul and the most direct Aliens
  * quotation (style.md §5.1). Bottom-anchored origin is the wearer; concentric
- * range rings climb outward; a sweep line rotates across the forward field; the
- * nearest contact shows as a blip whose colour crosses green → amber → red as it
- * enters FAR_MM then NEAR_MM. We only have forward range (the ToF looks ahead),
- * so the single contact sits dead-ahead at a radius proportional to distance.
+ * range rings climb outward; a sweep line rotates across the field. Kōei's rear
+ * dual-arc shows as TWO contacts — the left arc upper-left, the right arc
+ * upper-right — each a blip whose colour crosses green → amber → red as it enters
+ * FAR_MM then NEAR_MM, at a radius proportional to that arc's distance.
  */
 @Composable
-fun TrackerGauge(distanceMm: Int?, alert: Boolean, modifier: Modifier = Modifier) {
+fun TrackerGauge(leftMm: Int?, rightMm: Int?, alert: Boolean, modifier: Modifier = Modifier) {
     val sweep = rememberInfiniteTransition(label = "sweep").animateFloat(
         initialValue = 180f, targetValue = 360f,
         animationSpec = infiniteRepeatable(tween(2600, easing = LinearEasing), RepeatMode.Restart),
@@ -73,15 +73,18 @@ fun TrackerGauge(distanceMm: Int?, alert: Boolean, modifier: Modifier = Modifier
         drawLine(T.Phosphor, Offset(cx - ch, cy), Offset(cx + ch, cy), 1.5.dp.toPx())
         drawLine(T.Phosphor, Offset(cx, cy - ch), Offset(cx, cy), 1.5.dp.toPx())
 
-        // The contact blip, dead-ahead (12 o'clock = 270°), radius ∝ distance.
-        if (distanceMm != null) {
-            val frac = (distanceMm.toFloat() / Bands.RANGE_MAX_MM).coerceIn(0f, 1f)
+        // Rear dual-arc contacts: left arc upper-left (225°), right arc upper-right
+        // (315°). Each blip's radius tracks its own distance and its colour crosses its
+        // own FAR/NEAR bands; a null arc (no target / sensor absent) simply doesn't draw.
+        for ((mm, deg) in listOf(leftMm to 225f, rightMm to 315f)) {
+            if (mm == null) continue
+            val frac = (mm.toFloat() / Bands.RANGE_MAX_MM).coerceIn(0f, 1f)
             val color = when {
-                distanceMm <= NEAR_MM -> T.Alert
-                distanceMm <= Bands.FAR_MM -> T.Amber
+                mm <= NEAR_MM -> T.Alert
+                mm <= Bands.FAR_MM -> T.Amber
                 else -> T.Phosphor
             }
-            drawCircle(color.copy(alpha = blipAlpha), radius = 5.dp.toPx(), center = onArc(270f, maxR * frac))
+            drawCircle(color.copy(alpha = blipAlpha), radius = 5.dp.toPx(), center = onArc(deg, maxR * frac))
         }
     }
 }

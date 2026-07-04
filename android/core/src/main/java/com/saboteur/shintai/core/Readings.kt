@@ -13,8 +13,10 @@ const val NEAR_MM = 200
  *  [environment]), so the model is a superset of what either app shows. */
 data class ShintaiReadings(
     val connection: ConnectionState = ConnectionState.Idle,
-    val distanceText: String = "—",   // e.g. "1234 mm" or "no reading"
-    val distanceMm: Int? = null,       // parsed numeric mm, null when no reading
+    val distanceText: String = "—",   // packed dual-arc, e.g. "L:1234 R:1180 mm"
+    val distanceMm: Int? = null,       // the NEARER arc in mm, null when neither has a target
+    val distanceLMm: Int? = null,      // rear-left  arc (mux ch0), null = no target/absent
+    val distanceRMm: Int? = null,      // rear-right arc (mux ch1), null = no target/absent
     val alertActive: Boolean = false,  // proximity warning latched from the Alert char
     val heading: String = "—",         // e.g. "169.0° S"
     val accel: String = "—",           // e.g. "X:1.8 Y:0.0 Z:9.8"
@@ -167,11 +169,20 @@ fun ShintaiReadings.fold(uuid: UUID, value: String): ShintaiReadings {
     val base = copy(packets = packets + 1) // heartbeat: every notification counts
     return when (uuid) {
         ShintaiGatt.DISTANCE -> {
-            val mm = Regex("""\d+""").find(value)?.value?.toIntOrNull()
+            // Packed dual-arc payload "L:1234 R:1180 mm" (per-arc "--" = no target).
+            // The nearer arc drives the single-value proximity UI + alert latch, so
+            // an app that shows one distance still sees the closest object. See CONTRACT.md.
+            fun arc(tag: String) =
+                Regex("""$tag:(\d+)""").find(value)?.groupValues?.get(1)?.toIntOrNull()
+            val l = arc("L")
+            val r = arc("R")
+            val near = listOfNotNull(l, r).minOrNull()
             base.copy(
                 distanceText = value,
-                distanceMm = mm,
-                alertActive = if (mm != null && mm > NEAR_MM) false else base.alertActive,
+                distanceMm = near,
+                distanceLMm = l,
+                distanceRMm = r,
+                alertActive = if (near != null && near > NEAR_MM) false else base.alertActive,
             )
         }
         ShintaiGatt.ALERT -> base.copy(alertActive = true)

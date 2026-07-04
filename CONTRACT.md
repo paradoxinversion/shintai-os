@@ -15,8 +15,9 @@ Consumers key off `line.startswith("timestamp_ms")` (header) and `line[0].isdigi
 | Column | Unit / values | Meaning |
 |--------|---------------|---------|
 | `timestamp_ms` | ms | Milliseconds since boot (`millis()`) |
-| `distance_mm` | mm (blank = none) | VL53L4CX time-of-flight distance |
-| `alert` | 0 / 1 | 1 when an object is within `NEAR_MM` (200 mm) |
+| `distance_l_mm` | mm (blank = none) | Rear-**left** VL53L4CX time-of-flight distance (mux ch0) |
+| `distance_r_mm` | mm (blank = none) | Rear-**right** VL53L4CX time-of-flight distance (mux ch1) |
+| `alert` | 0 / 1 | 1 when the **nearer** arc is within `NEAR_MM` (200 mm) |
 | `heading_deg` | 0–360° | Compass heading (0 = North) |
 | `cardinal` | N…NW | Heading as a cardinal label |
 | `accel_x` / `accel_y` / `accel_z` | m/s² | Acceleration per axis (~9.8 on the up axis at rest) |
@@ -51,6 +52,15 @@ column still parse. It's the logged basis for the ground-station's GPS-denied
 dead-reckoned path (`Δsteps × step_length @ heading_deg`). CSV-only — there is no `steps`
 GATT characteristic in v1.
 
+`distance_l_mm` / `distance_r_mm` are the **dual rear arc** — **Kōei (後衛)**
+(`specs/zokyo/koei.md`) — two VL53L4CX behind a PCA9546 I²C mux (both report at `0x29`;
+the mux isolates them onto separate channels,
+**ch0 = left, ch1 = right**, recorded in [`REGISTRY.md`](REGISTRY.md)). They replace the
+former single `distance_mm` column. Each arc is independent and blank when its channel
+has no target or its sensor is absent (non-fatal per channel — a missing arc never
+blanks the other). `alert` and the on-body Kehai reflex both key off the **nearer** of
+the two arcs, so the wearer is warned by whichever beam sees the closest object.
+
 Serial output modes (toggle live by sending a byte): `h` human · `c` CSV · `b` both
 (default; the logger requests `b`). Onboard-flash control bytes: `L` list · `P` dump · `E` erase.
 
@@ -63,7 +73,7 @@ payload (see [Thermal Grid](#thermal-grid-binary) below).
 
 | Characteristic | UUID | Example payload |
 |----------------|------|-----------------|
-| Distance | `abcd1234-ab12-ab12-ab12-abcdef123456` | `1234 mm` / `no reading` |
+| Distance | `abcd1234-ab12-ab12-ab12-abcdef123456` | `L:1234 R:1180 mm` / `L:-- R:1180 mm` (per-arc `--` = no target) |
 | Alert | `abcd5678-ab12-ab12-ab12-abcdef123456` | `CLOSE` (edge-triggered; no explicit clear) |
 | Heading | `abcd9012-ab12-ab12-ab12-abcdef123456` | `169.0° S` |
 | Accelerometer | `abcdef12-ab12-ab12-ab12-abcdef123456` | `X:1.8 Y:0.0 Z:9.8` |

@@ -82,11 +82,12 @@ BG, PANEL, GRID = "#05060a", "#0b0e1a", "#16203a"
 NEON = ["#00f0ff", "#ff2bd6", "#b14bff", "#39ff14", "#ffd300"]
 NEON_RGB = [(0, 240, 255), (255, 43, 214), (177, 75, 255), (57, 255, 20), (255, 211, 0)]
 NEON_SCALE = [[0, "#0d1b4c"], [0.4, "#b14bff"], [0.7, "#ff2bd6"], [1, "#00f0ff"]]
-SENSORS = [("co2_ppm", "CO₂ ppm"), ("accel_mag", "ACCEL |g|"),
+SENSORS = [("distance_l_mm", "REAR-L mm"), ("distance_r_mm", "REAR-R mm"),
+           ("co2_ppm", "CO₂ ppm"), ("accel_mag", "ACCEL |g|"),
            ("hotspot_delta", "THERMAL Δ"), ("humidity_pct", "HUMID %"),
            ("air_temp_c", "TEMP °C"), ("pressure_hpa", "PRESS hPa"),
            ("gas_kohm", "GAS kΩ")]
-SENSORS = [s for s in SENSORS if s[0] in df.columns]   # drop fields a log lacks (e.g. pre-BME688)
+SENSORS = [s for s in SENSORS if s[0] in df.columns]   # drop fields a log lacks (pre-BME688, or pre-dual-arc distance_mm)
 
 # --- try to bake a DarkMatter basemap; fall back to tileless if offline ----
 R = 6378137.0
