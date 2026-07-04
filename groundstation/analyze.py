@@ -22,6 +22,7 @@ import matplotlib.dates as mdates
 import folium
 
 import hokan  # Hokan (歩勘) dead-reckoning — base-side PDR path from the `steps` column
+import kiatsu  # Kiatsu (気圧) — base-side floor/altitude from pressure_hpa (the z for Hokan's x,y)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(HERE, "logs")
@@ -127,6 +128,27 @@ def main():
         print(f"  Steps (Hokan): {walked:,} "
               f"(~{walked * hokan.STEP_LEN_M / 1000:.2f} km on foot @ {hokan.STEP_LEN_M} m/step)")
 
+    # ── Kiatsu: barometric floor/altitude reconstruction (base-side, KiD-4) — derive a
+    # relative floor index + altitude (m) per session from pressure_hpa, temperature-
+    # corrected via air_temp_c (KiD-2). The derived columns feed the timeseries Z-strip
+    # and the PDR floor tags below. Degrades: sessions with <2 valid pressures skip.
+    floor_label = {}
+    for _, _, df in sessions:
+        if "pressure_hpa" not in df.columns:
+            continue
+        p = pd.to_numeric(df["pressure_hpa"], errors="coerce").tolist()
+        t = (pd.to_numeric(df["air_temp_c"], errors="coerce").tolist()
+             if "air_temp_c" in df.columns else None)
+        if sum(1 for v in p if kiatsu._is_num(v) and v > 0) < 2:
+            continue
+        df["baro_floor"] = kiatsu.floor_steps(p)
+        df["baro_alt"] = kiatsu.altitude_profile(p, t)
+        name = df["session"].iloc[0]
+        floor_label[name] = f"floors {min(df['baro_floor'])}..{max(df['baro_floor'])}"
+        line = kiatsu.summary(p, t)
+        if line:
+            print(f"  Kiatsu ({name}): {line}")
+
     # ── Time-series figure ──
     panels = [
         ("speed_kmh", "Speed (km/h)"),
@@ -140,6 +162,12 @@ def main():
     # timeline beside the environment panels.
     if "steps" in combined.columns and pd.to_numeric(combined["steps"], errors="coerce").notna().any():
         panels.append(("steps", "Steps (cumulative)"))
+    # Kiatsu: pressure and the derived relative-altitude Z-strip (the z for Hokan's x,y),
+    # only when a barometer logged. baro_alt is a per-session derived column (above).
+    if "pressure_hpa" in combined.columns and pd.to_numeric(combined["pressure_hpa"], errors="coerce").notna().any():
+        panels.append(("pressure_hpa", "Pressure (hPa)"))
+    if any("baro_alt" in df.columns for _, _, df in sessions):
+        panels.append(("baro_alt", "Baro altitude (m, rel)"))
     fig, axes = plt.subplots(len(panels), 1, figsize=(12, 13), sharex=True)
     for ax, (col, label) in zip(axes, panels):
         for _, _, df in sessions:
@@ -207,10 +235,14 @@ def main():
                               icon=folium.Icon(color="red")).add_to(fmap)
         # Dead-reckoned tracks in a deliberately distinct style (black dashed) so
         # they read apart from the solid coloured GPS routes.
+        # Kiatsu composes z onto the track: where a barometer logged, the PDR tooltip
+        # carries the floor range it crossed — the 2-D dead-reckoned path tagged 3-D.
         for name, (lats, lons) in pdr_tracks:
+            tip = "Hokan PDR: " + name
+            if name in floor_label:
+                tip += " — Kiatsu " + floor_label[name]
             folium.PolyLine(list(zip(lats, lons)), color="black", weight=2.5,
-                            opacity=0.75, dash_array="5,8",
-                            tooltip="Hokan PDR: " + name).add_to(fmap)
+                            opacity=0.75, dash_array="5,8", tooltip=tip).add_to(fmap)
         fmap.save(os.path.join(OUT_DIR, "route_map.html"))
         print(f"Wrote {os.path.join(OUT_DIR, 'route_map.html')}")
 

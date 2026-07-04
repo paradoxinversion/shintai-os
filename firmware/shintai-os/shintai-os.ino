@@ -20,6 +20,7 @@
 #include "NesshiBand.h"  // Nesshi heat-sight (specs/zokyo/nesshi.md): hold BOOT -> surface temp -> Aizu cue
 #include "HokanDsp.h"    // Hokan step-reckoning (specs/zokyo/hokan.md): fast IMU -> steps + fall SOS
 #include "KyukakuBand.h" // Kyūkaku sense of smell (specs/zokyo/kyukaku.md): bmeGas -> baseline ratio -> Aizu cue
+#include "KiatsuBand.h"  // Kiatsu barometric sense (specs/zokyo/kiatsu.md): bmePressure -> 3 h trend -> Aizu cue
 
 // BLE UUIDs
 #define SERVICE_UUID        "12345678-1234-1234-1234-123456789abc"
@@ -190,6 +191,17 @@ KyukakuState   kyukakuState        = {0.0f, 1.0f, 0.0f, 1.0f, KYUKAKU_BAND_CLEAN
 uint32_t       kyukakuSpikeUntilMs = 0;       // Spike cue held until this millis (0 = inactive)
 const uint32_t KYUKAKU_SPIKE_HOLD_MS = 3000;  // a Spike startles for ~3 s, then decays to the band
 const uint32_t KYUKAKU_MAX_AGE_MS    = 6000;  // ~4 BME cadences before Aizu drops a stale cue
+
+// Kiatsu (気圧) — barometric sense. Sub-samples bmePressure into a 3-hour ring buffer
+// (~45 s cadence) and posts the calmest cue in the system — a cyan weather-turn — when
+// the barometer falls (KiD-1, AZ-13). The floor-detection half is BASE-SIDE
+// (groundstation/kiatsu.py): its signal survives in the CSV untouched, so the firmware
+// only keeps the slow weather trend. POST, never paint; derives from the existing
+// bmePressure — no contract change, no telemetry disturbance. See KiatsuBand.h.
+KiatsuState    kiatsuState     = {{0}, 0, 0, KIATSU_WX_STEADY};
+KiatsuObs      kiatsuObs       = {false, 0.0f, KIATSU_WX_STEADY};  // last resolved trend (re-posted each loop)
+uint32_t       kiatsuLastPushMs = 0;          // last ring sub-sample (0 = none yet)
+const uint32_t KIATSU_MAX_AGE_MS = 6000;      // re-posted every loop, so a modest liveness backstop
 
 static inline float cToF(float c) { return c * 9.0 / 5.0 + 32.0; }
 
@@ -865,6 +877,27 @@ void loop() {
     Aizu.clearCue(AIZU_KYUKAKU);
   }
 
+  // ── Kiatsu (気圧): sub-sample pressure into the 3 h ring every ~45 s, recompute the
+  // weather tendency, and re-post the resolved cue every loop (so it stays live between
+  // the slow pushes). Falling -> cyan breathe, Falling-fast -> deeper/slower; Steady and
+  // a still-filling ring both post nothing (Aizu Idle). POST, never paint. Standalone-safe.
+  if (bmePresent && bmeHasData) {
+    uint32_t now = millis();
+    if (kiatsuLastPushMs == 0 || (uint32_t)(now - kiatsuLastPushMs) >= KIATSU_SUBSAMPLE_MS) {
+      kiatsuLastPushMs = now;
+      kiatsuObs = kiatsuPush(kiatsuState, bmePressure);
+    }
+    if (kiatsuObs.spanning) {
+      KiatsuCue c = kiatsuCueFor(kiatsuObs.state);
+      if (c.post) Aizu.postCue(AIZU_KIATSU, c.priority, c.colour, c.motion, KIATSU_MAX_AGE_MS);
+      else        Aizu.clearCue(AIZU_KIATSU);
+    } else {
+      Aizu.clearCue(AIZU_KIATSU);   // ring still filling toward 3 h — quiet
+    }
+  } else {
+    Aizu.clearCue(AIZU_KIATSU);
+  }
+
   // Air temp / humidity are shared semantic slots: BME688 when present (faster,
   // no photoacoustic self-heat offset), else SCD-40, else blank. See CONTRACT.md.
   bool  airHasData = bmeHasData || scdHasData;
@@ -923,6 +956,17 @@ void loop() {
                                                                               : "clean";
       Serial.println("NOSE     : r=" + String(kyukakuState.lastRatio, 2)
                    + " (base " + String(kyukakuState.baseline / 1000.0, 1) + " kΩ) " + nose);
+      // Kiatsu readout (on-wrist tuning): the 3 h tendency + resolved weather, or the
+      // fill state while the ring is still spanning up to WX_WINDOW_H.
+      if (kiatsuObs.spanning) {
+        const char* wx = kiatsuObs.state == KIATSU_WX_STORM   ? "FALLING FAST"
+                       : kiatsuObs.state == KIATSU_WX_FALLING  ? "falling"
+                                                               : "steady";
+        Serial.println("BARO     : Δ" + String(kiatsuObs.delta, 2) + " hPa/3h — " + wx);
+      } else {
+        float fillH = (KIATSU_RING_N - kiatsuState.count) * (KIATSU_SUBSAMPLE_MS / 1000.0) / 3600.0;
+        Serial.println("BARO     : trend filling (" + String(fillH, 1) + " h to go)");
+      }
     }
     Serial.println();
   }
