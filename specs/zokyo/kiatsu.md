@@ -2,7 +2,7 @@
 
 *Barometric sense: which floor you walked, and the storm the sky hasn't shown yet.*
 
-**Status:** spec (2026-07-03) · not yet built · **Zōkyō:** Kiatsu (sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) — **no change** · **Shares:** [Aizu](../platform/aizu.md) (weather cue), [Hokan](./hokan.md) (the Z-axis), the [ground-station](../../REGISTRY.md#parts-catalog) · **Date:** 2026-07-03
+**Status:** built (2026-07-04) · **Zōkyō:** Kiatsu (sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) — **no change** · **Shares:** [Aizu](../platform/aizu.md) (weather cue), [Hokan](./hokan.md) (the Z-axis), the [ground-station](../../REGISTRY.md#parts-catalog) · **Date:** 2026-07-03
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 
