@@ -32,6 +32,10 @@ object ShintaiGatt {
     val THERMAL: UUID = UUID.fromString("abcd6789-ab12-ab12-ab12-abcdef123456")
     val ENVIRONMENT: UUID = UUID.fromString("abcdc0de-ab12-ab12-ab12-abcdef123456")
 
+    /** Hokan's live PDR breadcrumb: "steps heading cadence" (string). Both apps
+     *  integrate it into a dead-reckoned mini-map. See CONTRACT.md. */
+    val HOKAN: UUID = UUID.fromString("abcdf007-ab12-ab12-ab12-abcdef123456")
+
     /** Metsuke's binary heat grid (68 packed bytes, not a string). See [BINARY]. */
     val THERMAL_GRID: UUID = UUID.fromString("abcd7890-ab12-ab12-ab12-abcdef123456")
 
@@ -49,5 +53,5 @@ object ShintaiGatt {
      *  out of the string set). Apps pass the subset they render to [ShintaiBleClient];
      *  nothing forces an app to take them all (the Glass HUD skips [ENVIRONMENT]). */
     val ALL: List<UUID> =
-        listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT)
+        listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT, HOKAN)
 }

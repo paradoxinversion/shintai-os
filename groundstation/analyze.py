@@ -21,6 +21,8 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import folium
 
+import hokan  # Hokan (歩勘) dead-reckoning — base-side PDR path from the `steps` column
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(HERE, "logs")
 OUT_DIR = os.path.join(HERE, "analysis")
@@ -116,6 +118,15 @@ def main():
         if len(s):
             print(f"  {col}: {s.min():.1f}–{s.max():.1f} {unit} (median {s.median():.1f})")
 
+    # ── Hokan: steps walked (summed per session so a reboot's counter reset doesn't
+    # bridge sessions), and the on-foot distance it implies. Degrades: sessions/logs
+    # with no `steps` column contribute nothing.
+    walked = sum(hokan.total_steps(pd.to_numeric(df["steps"], errors="coerce").tolist())
+                 for _, _, df in sessions if "steps" in df.columns)
+    if walked:
+        print(f"  Steps (Hokan): {walked:,} "
+              f"(~{walked * hokan.STEP_LEN_M / 1000:.2f} km on foot @ {hokan.STEP_LEN_M} m/step)")
+
     # ── Time-series figure ──
     panels = [
         ("speed_kmh", "Speed (km/h)"),
@@ -125,9 +136,15 @@ def main():
         ("humidity_pct", "Humidity (%RH)"),
         ("hotspot_delta", "Thermal hotspot Δ (°C)"),
     ]
+    # Hokan step count, only when logged (old logs predate the column) — the gait
+    # timeline beside the environment panels.
+    if "steps" in combined.columns and pd.to_numeric(combined["steps"], errors="coerce").notna().any():
+        panels.append(("steps", "Steps (cumulative)"))
     fig, axes = plt.subplots(len(panels), 1, figsize=(12, 13), sharex=True)
     for ax, (col, label) in zip(axes, panels):
         for _, _, df in sessions:
+            if col not in df.columns:      # e.g. `steps` in newer logs only — skip old sessions
+                continue
             y = pd.to_numeric(df[col], errors="coerce")
             ax.plot(df["time"], y, lw=0.9)
         ax.set_ylabel(label, fontsize=9)
@@ -151,8 +168,31 @@ def main():
         fig2.savefig(os.path.join(OUT_DIR, "route.png"), dpi=110)
         print(f"Wrote {os.path.join(OUT_DIR, 'route.png')}")
 
-        # ── Interactive map ──
-        center = [fix["lat"].mean(), fix["lon"].mean()]
+    # ── Hokan PDR: per-session dead-reckoned track (metres from steps + heading),
+    # anchored at the session's first GPS fix (AC-4) or the origin when GPS-denied.
+    def pdr_of(df):
+        if "steps" not in df.columns:
+            return None
+        steps = pd.to_numeric(df["steps"], errors="coerce").tolist()
+        if hokan.total_steps(steps) <= 0:
+            return None
+        hdg = pd.to_numeric(df["heading_deg"], errors="coerce").tolist()
+        g = df[df["gps_fix"] == 1]
+        lat0, lon0 = (g["lat"].iloc[0], g["lon"].iloc[0]) if len(g) else (0.0, 0.0)
+        xs, ys = hokan.integrate(steps, hdg)
+        return hokan.to_latlon(xs, ys, lat0, lon0)
+
+    pdr_tracks = [(df["session"].iloc[0], pdr_of(df)) for _, _, df in sessions]
+    pdr_tracks = [(name, t) for name, t in pdr_tracks if t]
+
+    # ── Interactive map ── drawn when there's a GPS route OR a dead-reckoned track,
+    # so a fully GPS-denied walk (the PDR use case) still renders.
+    if len(fix) or pdr_tracks:
+        if len(fix):
+            center = [fix["lat"].mean(), fix["lon"].mean()]
+        else:
+            first = pdr_tracks[0][1]
+            center = [first[0][0], first[1][0]]
         fmap = folium.Map(location=center, zoom_start=12, tiles="OpenStreetMap")
         colors = ["blue", "red", "green", "purple", "orange"]
         for i, (_, _, df) in enumerate(sessions):
@@ -165,6 +205,12 @@ def main():
                               icon=folium.Icon(color="green")).add_to(fmap)
                 folium.Marker(pts[-1], tooltip="end " + df["session"].iloc[0],
                               icon=folium.Icon(color="red")).add_to(fmap)
+        # Dead-reckoned tracks in a deliberately distinct style (black dashed) so
+        # they read apart from the solid coloured GPS routes.
+        for name, (lats, lons) in pdr_tracks:
+            folium.PolyLine(list(zip(lats, lons)), color="black", weight=2.5,
+                            opacity=0.75, dash_array="5,8",
+                            tooltip="Hokan PDR: " + name).add_to(fmap)
         fmap.save(os.path.join(OUT_DIR, "route_map.html"))
         print(f"Wrote {os.path.join(OUT_DIR, 'route_map.html')}")
 

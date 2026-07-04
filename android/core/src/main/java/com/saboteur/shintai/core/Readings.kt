@@ -1,6 +1,9 @@
 package com.saboteur.shintai.core
 
 import java.util.UUID
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 /** Proximity-alert threshold in mm, matching `NEAR_MM` in shintai-os.ino. */
 const val NEAR_MM = 200
@@ -20,6 +23,7 @@ data class ShintaiReadings(
     val thermal: String = "—",         // e.g. "Ctr:23.1 Min:22.6 Max:31.4C" (MLX90640)
     val environment: String = "—",     // e.g. "1007.2hPa 84200ohm 22.8C 39%RH" (BME688)
     val thermalGrid: ThermalGrid? = null,  // Metsuke's 8x8 heat grid, null until the first frame
+    val hokan: HokanPdr? = null,       // Hokan's dead-reckoned breadcrumb, null until the first notify
     val packets: Int = 0,              // total notifications received — a visible heartbeat
 )
 
@@ -94,6 +98,62 @@ fun ThermalGrid.argb(): IntArray = IntArray(cells.size) { i ->
     (0xFF shl 24) or (r shl 16) or (g shl 8) or b
 }
 
+/** One point on the dead-reckoned track, in METRES (East = +x, North = +y). Plain
+ *  floats so `:core` stays UI-free; each app maps it to its own canvas coordinates. */
+data class PdrPoint(val x: Float, val y: Float)
+
+/**
+ * Hokan's live pedestrian dead-reckoning (specs/zokyo/hokan.md), integrated from the
+ * "steps heading cadence" breadcrumb characteristic. [track] is the reconstructed
+ * walked path in metres starting at the origin; each notification advances it by
+ * Δsteps × [STEP_LEN_M] along the current heading — the SAME math as
+ * `groundstation/hokan.py`, run live so the glasses draw a breadcrumb mini-map that
+ * mirrors the base-side path. A held heading (missing field) reuses the last.
+ */
+data class HokanPdr(
+    val steps: Int = 0,
+    val headingDeg: Float = 0f,
+    val cadence: Int = 0,
+    val track: List<PdrPoint> = listOf(PdrPoint(0f, 0f)),
+    val lastSteps: Int? = null,   // previous cumulative count, for the Δ integration
+) {
+    /** Advance by the positive step delta along the (new or held) heading. */
+    fun advance(newSteps: Int?, newHeading: Float?, newCadence: Int?): HokanPdr {
+        val hdg = newHeading ?: headingDeg
+        var pts = track
+        if (lastSteps != null && newSteps != null && newSteps > lastSteps) {
+            val dist = (newSteps - lastSteps) * STEP_LEN_M
+            val rad = hdg * PI / 180.0                       // heading 0 = N -> +y, 90 = E -> +x
+            val last = track.lastOrNull() ?: PdrPoint(0f, 0f)
+            val next = PdrPoint(last.x + (dist * sin(rad)).toFloat(),
+                                last.y + (dist * cos(rad)).toFloat())
+            pts = (track + next).let { if (it.size > MAX_POINTS) it.takeLast(MAX_POINTS) else it }
+        }
+        return copy(
+            steps = newSteps ?: steps,
+            headingDeg = hdg,
+            cadence = newCadence ?: cadence,
+            track = pts,
+            lastSteps = newSteps ?: lastSteps,
+        )
+    }
+
+    companion object {
+        const val STEP_LEN_M = 0.7f    // HkD-3, mirrors groundstation/hokan.py
+        const val MAX_POINTS = 600     // bound the breadcrumb history
+
+        /** Fold a "1240 98.5 112" (steps · heading_deg · cadence) payload. */
+        fun fold(prev: HokanPdr?, value: String): HokanPdr {
+            val p = value.trim().split(Regex("""\s+"""))
+            return (prev ?: HokanPdr()).advance(
+                p.getOrNull(0)?.toIntOrNull(),
+                p.getOrNull(1)?.toFloatOrNull(),
+                p.getOrNull(2)?.toIntOrNull(),
+            )
+        }
+    }
+}
+
 /**
  * Fold one characteristic notification into a new snapshot. Parsing lives here,
  * not in the BLE layer, so [ShintaiBleClient] stays a dumb transport and BOTH
@@ -121,6 +181,7 @@ fun ShintaiReadings.fold(uuid: UUID, value: String): ShintaiReadings {
         ShintaiGatt.CLIMATE -> base.copy(climate = value)
         ShintaiGatt.THERMAL -> base.copy(thermal = value)
         ShintaiGatt.ENVIRONMENT -> base.copy(environment = value)
+        ShintaiGatt.HOKAN -> base.copy(hokan = HokanPdr.fold(base.hokan, value))
         else -> base
     }
 }

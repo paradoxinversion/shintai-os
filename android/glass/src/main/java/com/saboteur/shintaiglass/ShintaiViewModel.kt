@@ -103,12 +103,14 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
          */
         const val DEVICE_ADDRESS = "68:EE:8F:6E:77:BD"
 
-        /** The channels the HUD renders: seven string readouts plus Metsuke's
-         *  binary THERMAL_GRID (the heat panel). Skips only ENVIRONMENT (BME688
-         *  pressure + gas), which only the Operator shows. */
+        /** The channels the HUD renders: eight string readouts (Hokan's PDR
+         *  breadcrumb included) plus Metsuke's binary THERMAL_GRID (the heat panel).
+         *  Skips only ENVIRONMENT (BME688 pressure + gas), which only the Operator
+         *  shows. See CONTRACT.md "Consumer coverage". */
         private val GLASS_SUBSCRIPTIONS = listOf(
             ShintaiGatt.DISTANCE, ShintaiGatt.ALERT, ShintaiGatt.HEADING, ShintaiGatt.ACCEL,
-            ShintaiGatt.GPS, ShintaiGatt.CLIMATE, ShintaiGatt.THERMAL, ShintaiGatt.THERMAL_GRID,
+            ShintaiGatt.GPS, ShintaiGatt.CLIMATE, ShintaiGatt.THERMAL, ShintaiGatt.HOKAN,
+            ShintaiGatt.THERMAL_GRID,
         )
 
         private const val KEY_IPD = "ipd_nudge"

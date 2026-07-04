@@ -1,3 +1,7 @@
+// The Operator screen is a stack of panel @Composables (one per instrument cluster),
+// so the file-level function-count rule doesn't apply here — same call as ui/Components.kt.
+@file:Suppress("TooManyFunctions")
+
 package com.saboteur.shintaioperator
 
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.saboteur.shintai.core.ConnectionState
+import com.saboteur.shintai.core.HokanPdr
 import com.saboteur.shintai.core.NEAR_MM
 import com.saboteur.shintai.core.ShintaiReadings
 import com.saboteur.shintai.core.Units
@@ -36,6 +41,7 @@ import com.saboteur.shintai.core.formatThermal
 import com.saboteur.shintaioperator.ui.AlertBanner
 import com.saboteur.shintaioperator.ui.ConsoleButton
 import com.saboteur.shintaioperator.ui.HeatGrid
+import com.saboteur.shintaioperator.ui.HokanMap
 import com.saboteur.shintaioperator.ui.LogTerminal
 import com.saboteur.shintaioperator.ui.Panel
 import com.saboteur.shintaioperator.ui.ReadoutRow
@@ -43,6 +49,7 @@ import com.saboteur.shintaioperator.ui.SegmentBar
 import com.saboteur.shintaioperator.ui.Sparkline
 import com.saboteur.shintaioperator.ui.StatusLed
 import com.saboteur.shintaioperator.ui.TrackerGauge
+import kotlin.math.roundToInt
 
 /** The Operator's pocket mission-control surface. VOID ground, chamfered panels,
  *  the motion tracker as the hero, and the full sensor cluster the glasses skip. */
@@ -149,6 +156,11 @@ private fun Console(
         ReadoutRow("Thermal", formatThermal(r.thermal, units))
     }
 
+    // NAVIGATION — Hokan's pedometer + dead-reckoned path. Its own composable so
+    // Console stays within the method-length budget; present only while the IMU
+    // streams the Hokan channel.
+    r.hokan?.let { NavigationPanel(it) }
+
     // THERMAL GRID — Metsuke's live heat image (the one binary channel). Present
     // once the MLX90640 is attached + streaming; absent otherwise, so no empty box.
     r.thermalGrid?.let { grid ->
@@ -202,6 +214,21 @@ private fun Console(
             modifier = Modifier.weight(1f),
         )
         ConsoleButton("Unlink", vm::disconnect, modifier = Modifier.weight(1f))
+    }
+}
+
+/** Hokan's pedometer readout + dead-reckoned breadcrumb mini-map. Steps/cadence are
+ *  always shown; the mini-map appears once there's a walked path (track past origin). */
+@Composable
+private fun NavigationPanel(pdr: HokanPdr) {
+    Panel("Navigation") {
+        ReadoutRow("Steps", pdr.steps.toString())
+        ReadoutRow("Cadence", if (pdr.cadence > 0) "${pdr.cadence} /min" else "—")
+        ReadoutRow("Heading", "${pdr.headingDeg.roundToInt()}°")
+        if (pdr.track.size > 1) {
+            Spacer(Modifier.height(8.dp))
+            HokanMap(pdr)
+        }
     }
 }
 
