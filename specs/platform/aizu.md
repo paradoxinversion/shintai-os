@@ -2,7 +2,7 @@
 
 *The cue. One shared on-body output bus: sources post, the arbiter renders.*
 
-**Status:** built (2026-07-02) · **Kind:** shared host capability (not a Zōkyō) · **Seam:** [CONTRACT.md](../../CONTRACT.md) (no change) · **Used by:** [Kehai-Hikari](../zokyo/kehai-hikari.md), [Kanki](../zokyo/kanki.md), future remixes · **Date:** 2026-07-01
+**Status:** built (2026-07-02) · **Kind:** shared host capability (not a Zōkyō) · **Seam:** [CONTRACT.md](../../CONTRACT.md) (no change) · **Used by:** [Kehai-Hikari](../zokyo/kehai-hikari.md), [Kanki](../zokyo/kanki.md), [Nesshi](../zokyo/nesshi.md), [Hokan](../zokyo/hokan.md), [Kyūkaku](../zokyo/kyukaku.md), [Kiatsu](../zokyo/kiatsu.md), future remixes · **Date:** 2026-07-01
 
 > Specs live on `research-development-ichi`. Build from this file on a later branch.
 
@@ -95,20 +95,26 @@ numbers and filling the gap KD-1's ladder left — **where Kehai's *Approach* si
 |------|-----|-------|-----------------|-----------|
 | 1 (highest) | **Kehai Reflex** | ALERT | red, fast pulse / solid | imminent collision — milliseconds matter |
 | 2 | **Hokan Fall SOS** | ALERT | red, urgent pulse (latched) | a fall just happened — safety emergency ([AZ-11](#decisions)) |
-| 3 | **Nesshi** (while held) | INTERACTIVE | temp-band colour, steady | user is actively requesting a read — dominates ambient, yields to a safety alert ([AZ-10](#decisions)) |
-| 4 | **Kanki Bad** (≥2000 ppm) | ALERT | red, slow strong pulse | dangerous air — act now, but not collision-urgent |
-| 5 | **Kehai Approach** | AMBIENT⁺ | amber, ramping pulse | something physically approaching — more *immediate* than slow air |
-| 6 | **Kanki Poor** (1200–2000) | AMBIENT | orange, slow breathe | open a window |
-| 7 | **Kanki Stuffy** (800–1200) | AMBIENT | amber, slow breathe | ventilation slipping |
-| — | Kehai *Clear* / Kanki *Fresh* | quiescent | *(no cue)* | falls through to Idle |
+| 3 | **Kyūkaku Spike** | ALERT | violet→red, fast pulse (transient, non-latched) | something just entered the air — chemical onset; co-critical but decays as air clears ([AZ-12](#decisions)) |
+| 4 | **Nesshi** (while held) | INTERACTIVE | temp-band colour, steady | user is actively requesting a read — dominates ambient, yields to a safety alert ([AZ-10](#decisions)) |
+| 5 | **Kanki Bad** (≥2000 ppm) | ALERT | red, slow strong pulse | dangerous air — act now, but not collision-urgent |
+| 6 | **Kehai Approach** | AMBIENT⁺ | amber, ramping pulse | something physically approaching — more *immediate* than slow air |
+| 7 | **Kanki Poor** (1200–2000) | AMBIENT | orange, slow breathe | open a window |
+| 8 | **Kyūkaku Foul** (`r < 0.35`) | AMBIENT | violet, slow strong breathe | chemically loaded air — peer of stale air, told apart by hue ([AZ-12](#decisions)) |
+| 9 | **Kanki Stuffy** (800–1200) | AMBIENT | amber, slow breathe | ventilation slipping |
+| 10 | **Kyūkaku Taint** (`0.35 ≤ r < 0.60`) | AMBIENT | dim violet, slow breathe | a mild smell is present ([AZ-12](#decisions)) |
+| 11 (lowest ambient) | **Kiatsu Weather-turn** | AMBIENT | cyan, slow breathe | barometer falling — storm hours out; the calmest, longest-timescale cue ([AZ-13](#decisions)) |
+| — | Kehai *Clear* / Kanki *Fresh* / Kyūkaku *Clean* / Kiatsu *Steady* | quiescent | *(no cue)* | falls through to Idle |
 | bottom | **Idle** | system | green dim / dark+heartbeat | nothing to report ([Idle](#idle)) |
 
-So on a full rig: the two safety alerts (a collision Reflex and a Hokan fall SOS) top everything; a
-**deliberate Nesshi read** (button held) dominates the ambient wallpaper while active but still yields
-to a safety alert; the reds sit above the graduated warnings; a physical *approach* outranks
-*degrading* air; all-clear collapses to the
-green/dark idle. A Reflex always preempts, then **releases back** to whatever was underneath (a
-Nesshi read, a Kanki colour, or idle).
+So on a full rig: the three safety alerts (a collision Reflex, a Hokan fall SOS, a Kyūkaku chemical
+Spike) top everything; a **deliberate Nesshi read** (button held) dominates the ambient wallpaper
+while active but still yields to a safety alert; the reds sit above the graduated warnings; a physical
+*approach* outranks *degrading* air; the two **rival air-senses** (Kanki's stale-air ramp and
+Kyūkaku's chemical bands) interleave in the ambient tier and are told apart **by hue, not rank**
+(Kanki green→red, Kyūkaku violet — [AZ-12](#decisions)); all-clear collapses to the green/dark idle. A
+Reflex or Spike always preempts, then **releases back** to whatever was underneath (a Nesshi read, an
+air colour, or idle).
 
 **Anti-flicker.**
 - **Upward preempt is instant** for ALERT-class cues — you never debounce a collision warning.
@@ -248,6 +254,21 @@ would be a contract change and is out of scope — [Forward path](#forward-path)
 - **AZ-11 — Hokan fall SOS rung.** A **Hokan Fall SOS** ALERT cue joins Kehai Reflex at the top as a
   co-critical safety alert (rank 2, above the interactive/ambient cues); it **latches** until resolved
   or muted. The two safety alerts don't meaningfully co-occur. (Introduced by [Hokan](../zokyo/hokan.md).)
+- **AZ-12 — Kyūkaku rungs + colour is a source identity.** Two new source rungs: a **Kyūkaku Spike**
+  ALERT in the safety tier (rank 3, below Fall SOS) — a chemical onset that is co-critical but
+  **non-latching** (it decays as the air clears, unlike a fall); and **Kyūkaku Foul/Taint** AMBIENT
+  cues interleaved with Kanki's air bands. Kyūkaku is the first *same-category rival* source (a second
+  ambient air-sense beside Kanki), which forces a convention the ladder alone never stated: **hue is a
+  per-source identity, not a global severity scale.** Kanki keeps the green→amber→orange→red air ramp;
+  Kyūkaku owns violet (→ red only at a Spike peak). Aizu already lets sources name their own colour, so
+  arbitration and rendering are unchanged — this decision only makes the convention explicit and adds
+  table rows. (Introduced by [Kyūkaku](../zokyo/kyukaku.md).)
+- **AZ-13 — Kiatsu weather rung (the calm floor).** A **Kiatsu Weather-turn** AMBIENT cue joins as the
+  **lowest** ambient rung (rank 11, just above Idle) — cyan, slow breathe, for a falling barometer
+  (storm hours out). It is the opposite pole from a Kehai Reflex: the calmest, longest-timescale cue in
+  the system, and the one most readily preempted. Extends the source-hue palette to cyan (per the
+  [AZ-12](#decisions) identity convention: Kanki green→red, Kyūkaku violet, Kehai amber, Kiatsu cyan).
+  No arbiter/rendering change. (Introduced by [Kiatsu](../zokyo/kiatsu.md).)
 
 ## Cross-spec impact
 
@@ -257,6 +278,13 @@ would be a contract change and is out of scope — [Forward path](#forward-path)
   (AZ-10). Aizu now shares *both* seams: the cue bus (output) and the CLICK/HOLD bus (input).
 - **Hokan** — adds a top-tier **Fall SOS** ALERT rung (AZ-11), latching until resolved; the first
   cue source whose *other* output is base-side (the dead-reckoned path).
+- **Kyūkaku** — adds a **Spike** ALERT rung (safety tier, non-latching) and **Foul/Taint** AMBIENT
+  rungs (AZ-12); the first *same-category rival* source, which makes explicit that **colour is a
+  source-owned identity** (violet vs Kanki's green→red) so two air-senses stay legible on one pixel —
+  no arbiter/rendering change, only table rows and the convention.
+- **Kiatsu** — adds the **lowest** ambient rung, a cyan **Weather-turn** cue (AZ-13) — the calmest,
+  longest-timescale cue, opposite pole from a Reflex; extends the source-hue palette to cyan. No
+  arbiter/rendering change.
 - **Registry (build-time)** — Aizu wants an entry as a **shared host capability** (beside the
   ground-station's shared-tooling note, not in any one Zōkyō). Also: the **onboard NeoPixel is not
   yet in the [parts catalog](../../REGISTRY.md#parts-catalog)** — it should be added under
