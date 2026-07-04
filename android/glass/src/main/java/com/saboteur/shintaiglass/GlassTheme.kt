@@ -37,6 +37,7 @@ object G {
     val PhosphorDim = Color(0xFF2E7A45)
     val Amber = Color(0xFFF2A93B)    // caution (reserved)
     val Alert = Color(0xFFFF4438)    // alarm (reserved) — proximity inside NEAR_MM
+    val Violet = Color(0xFFB266FF)   // Kyūkaku smell spike — chemical heads-up (its own hue)
     val Bone = Color(0xFFC9CDBC)     // printed chrome: labels, units, titles
     val BoneDim = Color(0xFF6B6F62)
     val Grid = Color(0xFF2E7A45)     // strokes/leaders — dim phosphor (no grey mid-tones)

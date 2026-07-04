@@ -60,9 +60,10 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
     /** Called once the BLUETOOTH_CONNECT permission is in hand. Idempotent. */
     fun connect() {
         if (client != null) return
-        // The HUD renders seven string channels plus Metsuke's binary thermal
-        // grid, and deliberately skips ENVIRONMENT (pressure/gas). See CONTRACT.md
-        // "Consumer coverage".
+        // The HUD renders eight string channels plus Metsuke's binary thermal grid.
+        // It subscribes to ENVIRONMENT only to derive Kyūkaku's smell SPIKE badge —
+        // it does not render the raw pressure/gas readout (that stays on the Operator).
+        // See CONTRACT.md "Consumer coverage".
         client = ShintaiBleClient(getApplication(), DEVICE_ADDRESS, GLASS_SUBSCRIPTIONS, listener)
             .also { it.connect() }
     }
@@ -104,13 +105,14 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
         const val DEVICE_ADDRESS = "68:EE:8F:6E:77:BD"
 
         /** The channels the HUD renders: eight string readouts (Hokan's PDR
-         *  breadcrumb included) plus Metsuke's binary THERMAL_GRID (the heat panel).
-         *  Skips only ENVIRONMENT (BME688 pressure + gas), which only the Operator
-         *  shows. See CONTRACT.md "Consumer coverage". */
+         *  breadcrumb included) plus Metsuke's binary THERMAL_GRID (the heat panel),
+         *  and ENVIRONMENT — taken not for its raw readout (that's the Operator's) but
+         *  to derive Kyūkaku's smell SPIKE badge from its gas_ohms. See CONTRACT.md
+         *  "Consumer coverage". */
         private val GLASS_SUBSCRIPTIONS = listOf(
             ShintaiGatt.DISTANCE, ShintaiGatt.ALERT, ShintaiGatt.HEADING, ShintaiGatt.ACCEL,
             ShintaiGatt.GPS, ShintaiGatt.CLIMATE, ShintaiGatt.THERMAL, ShintaiGatt.HOKAN,
-            ShintaiGatt.THERMAL_GRID,
+            ShintaiGatt.ENVIRONMENT, ShintaiGatt.THERMAL_GRID,
         )
 
         private const val KEY_IPD = "ipd_nudge"

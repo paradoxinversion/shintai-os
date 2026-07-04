@@ -296,10 +296,14 @@ fun ConsoleButton(
 }
 
 /** Full-width caution/alarm strip — amber or red, blinking, imperative voice
- *  (style.md §5.7). */
+ *  (style.md §5.7). [color] overrides the amber/red default (e.g. Kyūkaku violet). */
 @Composable
-fun AlertBanner(text: String, alarm: Boolean, modifier: Modifier = Modifier) {
-    val color = if (alarm) T.Alert else T.Amber
+fun AlertBanner(
+    text: String,
+    alarm: Boolean,
+    modifier: Modifier = Modifier,
+    color: Color = if (alarm) T.Alert else T.Amber,
+) {
     val a = blinkAlpha()
     val shape = ChamferShape()
     Box(
