@@ -19,6 +19,9 @@ Zōkyō can draw from.
 | **[Nesshi (熱視)](specs/zokyo/nesshi.md)** | *"heat-sight"* | Point-and-read thermometer — hold the BOOT button and the MLX90640 surface temp reads out as a calm→alarm colour on the NeoPixel (via [Aizu](specs/platform/aizu.md)); a double-hold finds the scene's hottest point. "Is it safe to touch?" No contract change; shares Aizu's input (HOLD) and output. | active |
 | **[Hokan (歩勘)](specs/zokyo/hokan.md)** | *"step-reckoning"* | Pedometer + fall detector + GPS-denied dead-reckoner — live IMU DSP counts steps and catches falls (fall → latching [Aizu](specs/platform/aizu.md) SOS); the ground-station reconstructs the walked path from logged `steps` + heading. First **CSV-half** contract change, first on-device real-time DSP, first module spanning body + base. | active |
 | **[Kōei (後衛)](specs/zokyo/koei.md)** | *"rearguard"* | Rear dual-arc proximity — a left/right VL53L4CX pair behind a PCA9546 mux widens the rear radar from one beam to a spread arc; `alert` + [Kehai](#kehai-気配--sensed-presence) key off the nearer arc. First **multi-instance sensor**, first to **reshape** an existing contract field (split `distance_mm`, repack the `Distance` char). | active |
+| **[Kyūkaku (嗅覚)](specs/zokyo/kyukaku.md)** | *"olfaction"* | Electronic sense of smell — watches the BME688 `gas_ohms` against an adaptive clean-air baseline (no calibration) and fires a violet **Spike** the instant the air changes (smoke/gas/solvent), plus a calm **Foul** ambient for loaded air (via [Aizu](specs/platform/aizu.md)). Completes Rokkan's *"sixth sense"* as literal smell; first **same-category rival** on Aizu — proves colour is a source identity, not a severity scale. No contract change. | spec |
+| **[Kiatsu (気圧)](specs/zokyo/kiatsu.md)** | *"atmospheric pressure"* | Barometric sense from the BME688 `pressure_hpa` — base-side floor detection (a storey ≈ 0.4 hPa) tags [Hokan](specs/zokyo/hokan.md)'s dead-reckoned path with a **Z-axis** (3-D GPS-denied nav), while an on-device 3-h trend posts a calm cyan **weather-turn** cue via [Aizu](specs/platform/aizu.md). **Hokan inverted** — a multi-surface module whose signals are *slower* than the log, so it needs neither a contract change nor on-device DSP. | spec |
+| **[Kaori (香り)](specs/zokyo/kaori.md)** | *"scent"* | Scent *identification* — runs the BME688 gas-scanner through Bosch **BSEC2** to **name** a trained scent (`solvent`/`coffee`/`smoke`…) as a live Scent BLE label **and** a logged `scent_class` timeline; [Kyūkaku](specs/zokyo/kyukaku.md)'s reflex duty-cycles the classifier (reflex wakes cognition). The BME688's **Metsuke moment** — first BME688 contract change, first to change **both** contract halves (CSV + BLE), and the first **non-thrifty** build (closed-source BSEC2 + offline training + N4R2 headroom). | spec |
 
 Rokkan is the first Zōkyō built; Kanki is its small sibling — one sense, one cue,
 drawn from the same parts catalog. Metsuke rides the glasses (Shikai) and is the
@@ -34,7 +37,7 @@ one of them.
 **[Aizu (合図)](specs/platform/aizu.md)** is the on-body counterpart: a shared host
 capability (not a Zōkyō) that owns the onboard NeoPixel — sources post cues, Aizu
 arbitrates and renders the winner. Every Zōkyō with local feedback (Kehai-Hikari,
-Kanki, Nesshi, Hokan) draws on it rather than touching the pixel directly.
+Kanki, Nesshi, Hokan, Kyūkaku) draws on it rather than touching the pixel directly.
 
 ## Parts catalog
 
@@ -65,7 +68,7 @@ parts rather than re-describing them — see [Rokkan](#rokkan-六感--sixth-sens
 | **Adafruit PA1010D** — GPS (0x10) | Mini I²C GPS: fix, lat/lon, altitude, speed. | **Ultimate GPS breakout / PA1616S** (external antenna, better fix); u-blox **SAM-M8Q** / **NEO-M9N** (multi-constellation); **MAX-M10S** (low power) |
 | **MLX90640** — thermal camera (0x33) | 32×24 = 768-px IR camera, 55° FOV — the surface-temp scene. | **MLX90640 110°** (wide FOV); **MLX90641** (16×12, cheaper); **AMG8833 Grid-EYE** (8×8 starter); **FLIR Lepton 3.5** (160×120 — real thermal imaging, needs SPI + PSRAM) |
 | **SCD-40** — climate (0x62) | Photoacoustic CO₂ + air temp + humidity; updates ~every 5 s. Owns `co2_ppm`; cedes air temp / humidity to the BME688 when both are present (see [contract](CONTRACT.md)). | **SCD-41** (wider range, lower power — pin-compatible upgrade); **SCD-30** (NDIR); note CO₂-less boards drop the `co2_ppm` field |
-| **BME688** — environment (0x77) | Gas-sensor resistance (VOC proxy) + barometric pressure; also the authoritative air temp / humidity (precedence over SCD-40 — faster, no self-heat offset). Fills `air_temp_c` / `humidity_pct` / `pressure_hpa` / `gas_ohms`. | **BME680** (identical driver, no AI gas model); **BMP390** (pressure / altitude only); **ENS160 + AHT21** (dedicated air-quality + T/RH); Bosch **BSEC** library for on-chip IAQ classification |
+| **BME688** — environment (0x77) | Gas-sensor resistance (VOC proxy) + barometric pressure; also the authoritative air temp / humidity (precedence over SCD-40 — faster, no self-heat offset). Fills `air_temp_c` / `humidity_pct` / `pressure_hpa` / `gas_ohms`. | **BME680** (identical driver, no AI gas model); **BMP390** (pressure / altitude only); **ENS160 + AHT21** (dedicated air-quality + T/RH); Bosch **BSEC2** library + **BME AI-Studio** for on-chip IAQ + trained scent classification — realized as [Kaori](specs/zokyo/kaori.md) |
 
 ### Output & feedback
 
@@ -88,7 +91,9 @@ sensor rig. **Status: active.**
 
 Parts: [VL53L4CX](#sensors) ×2 (rear dual-arc distance, via mux), [LSM6DSOX](#sensors)
 (motion) + [LIS3MDL](#sensors) (heading), [PA1010D](#sensors) (GPS), [MLX90640](#sensors)
-(thermal), [SCD-40](#sensors) (climate), [BME688](#sensors) (env: gas/pressure) —
+(thermal), [SCD-40](#sensors) (climate), [BME688](#sensors) (env: gas/pressure — its gas
+field now expressed on-body as smell via [Kyūkaku](specs/zokyo/kyukaku.md), its pressure as
+altitude/weather via [Kiatsu](specs/zokyo/kiatsu.md)) —
 all wired to the [QT Py ESP32-S3 host](#host--infrastructure).
 
 **Rear dual-arc (ToF) — [Kōei (後衛)](specs/zokyo/koei.md).** The single rear VL53L4CX is
