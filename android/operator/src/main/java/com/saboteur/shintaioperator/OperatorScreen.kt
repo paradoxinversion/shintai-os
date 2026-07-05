@@ -67,6 +67,7 @@ fun OperatorScreen(vm: OperatorViewModel, onRequestPermissions: () -> Unit) {
     val logLines by vm.log.collectAsState()
     val distHist by vm.distanceHistory.collectAsState()
     val co2Hist by vm.co2History.collectAsState()
+    val pairingOpen by vm.pairingOpen.collectAsState()
     val units = vm.units
 
     Column(
@@ -80,9 +81,13 @@ fun OperatorScreen(vm: OperatorViewModel, onRequestPermissions: () -> Unit) {
     ) {
         TopBar(r, rec)
 
-        when (r.connection) {
-            ConnectionState.PermissionNeeded -> AccessPanel(onRequestPermissions)
-            ConnectionState.Idle -> PairPanel(scanning, devices, vm)
+        when {
+            r.connection == ConnectionState.PermissionNeeded -> AccessPanel(onRequestPermissions)
+            // First link, or re-opened to add the second pod over the live console.
+            r.connection == ConnectionState.Idle ->
+                PairPanel(scanning, devices, vm, r.perBoard.keys, onBack = null)
+            pairingOpen ->
+                PairPanel(scanning, devices, vm, r.perBoard.keys, onBack = vm::closePairing)
             else -> Console(r, units, distHist, co2Hist, rec.active, vm)
         }
 
@@ -248,6 +253,11 @@ private fun Console(
     // Bunshin: per-channel source precedence — appears only when two pods are linked.
     MultiPodSources(vm)
 
+    // Bunshin: return to the pair screen to link the OTHER pod — until both are in.
+    if (r.perBoard.size < 2) {
+        ConsoleButton("Link Another Unit", vm::openPairing, modifier = Modifier.fillMaxWidth())
+    }
+
     // Controls.
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ConsoleButton(
@@ -338,16 +348,33 @@ private fun NavigationPanel(pdr: HokanPdr) {
 }
 
 @Composable
-private fun PairPanel(scanning: Boolean, devices: List<DeviceEntry>, vm: OperatorViewModel) {
+private fun PairPanel(
+    scanning: Boolean,
+    devices: List<DeviceEntry>,
+    vm: OperatorViewModel,
+    linkedRoles: Set<Role>,
+    onBack: (() -> Unit)?,
+) {
     Panel("Pair", ledColor = if (scanning) T.Amber else T.PhosphorDim) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             ConsoleButton(
                 if (scanning) "Scanning…" else "Scan", vm::startScan,
                 modifier = Modifier.weight(1f), active = scanning,
             )
-            if (vm.hasLast) {
+            // Add-a-pod mode shows Back (to the console); the first-link screen shows Reconnect.
+            if (onBack != null) {
+                ConsoleButton("Back", onBack, modifier = Modifier.weight(1f))
+            } else if (vm.hasLast) {
                 ConsoleButton("Reconnect", vm::reconnectLast, modifier = Modifier.weight(1f))
             }
+        }
+        if (linkedRoles.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Linked: " + linkedRoles.sortedBy { it.name }.joinToString(" ") { it.name.uppercase() } +
+                    " — pick the other unit",
+                color = T.Phosphor, fontFamily = T.Mono, fontSize = 11.sp,
+            )
         }
         Spacer(Modifier.height(10.dp))
         if (devices.isEmpty()) {
@@ -356,13 +383,15 @@ private fun PairPanel(scanning: Boolean, devices: List<DeviceEntry>, vm: Operato
                 color = T.BoneDim, fontFamily = T.Mono, fontSize = 12.sp,
             )
         } else {
-            devices.forEach { d -> DeviceRow(d) { vm.connect(d) } }
+            devices.forEach { d ->
+                DeviceRow(d, linked = vm.roleOf(d.name) in linkedRoles) { vm.connect(d) }
+            }
         }
     }
 }
 
 @Composable
-private fun DeviceRow(d: DeviceEntry, onLink: () -> Unit) {
+private fun DeviceRow(d: DeviceEntry, linked: Boolean, onLink: () -> Unit) {
     val isBoard = d.name?.startsWith(ShintaiScanner.ADVERTISED_NAME) == true
     Row(
         Modifier.fillMaxWidth().padding(vertical = 5.dp),
@@ -376,7 +405,12 @@ private fun DeviceRow(d: DeviceEntry, onLink: () -> Unit) {
             )
             Text("${d.address}  ${d.rssi} dBm", color = T.BoneDim, fontFamily = T.Mono, fontSize = 11.sp)
         }
-        ConsoleButton("Link", onLink, active = isBoard)
+        // A pod already linked (its role is in) shows a disabled marker, not a Link button.
+        if (linked) {
+            ConsoleButton("Linked", {}, enabled = false)
+        } else {
+            ConsoleButton("Link", onLink, active = isBoard)
+        }
     }
 }
 

@@ -73,6 +73,12 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
     private val _podSupply = MutableStateFlow<Map<Role, Set<Channel>>>(emptyMap())
     val podSupply: StateFlow<Map<Role, Set<Channel>>> = _podSupply.asStateFlow()
 
+    // Bunshin: the pair screen is normally shown only while Idle, but with one pod
+    // already linked the user needs to return to it to link the SECOND. This re-opens
+    // it on demand (over the live console).
+    private val _pairingOpen = MutableStateFlow(false)
+    val pairingOpen: StateFlow<Boolean> = _pairingOpen.asStateFlow()
+
     /** Display unit system, persisted. Defaults to imperial (parity with Glass). */
     var units by mutableStateOf(
         if (prefs.getBoolean(KEY_IMPERIAL, true)) Units.IMPERIAL else Units.METRIC
@@ -129,6 +135,18 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
         _scanning.value = false
     }
 
+    /** Re-open the pair screen to link an ADDITIONAL pod while one is already linked. */
+    fun openPairing() {
+        _pairingOpen.value = true
+        startScan()
+    }
+
+    /** Leave the pair screen (back to the live console) without linking anything more. */
+    fun closePairing() {
+        stopScan()
+        _pairingOpen.value = false
+    }
+
     // --- connection --------------------------------------------------------
 
     /** Connect a discovered pod, deriving its role (fwd/aft) from the advertised name. */
@@ -152,6 +170,7 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
             getApplication(), address, ShintaiGatt.ALL + ShintaiGatt.THERMAL_GRID, listenerFor(role),
         ).also { it.connect() }
         podReadings[role] = ShintaiReadings(connection = ConnectionState.Connecting)
+        _pairingOpen.value = false       // linked → return to the console
         remerge()
     }
 
@@ -286,7 +305,7 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
     // --- Bunshin pod helpers ----------------------------------------------
 
     /** Derive a pod's role from its advertised name (`ShintaiOS-aft` → Aft, else Fwd). */
-    private fun roleOf(name: String?): Role =
+    fun roleOf(name: String?): Role =
         if (name?.endsWith("-aft", ignoreCase = true) == true) Role.Aft else Role.Fwd
 
     private fun roleAddrKey(role: Role): String = "last_addr_${role.name.lowercase()}"
