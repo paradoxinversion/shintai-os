@@ -66,7 +66,7 @@ story points (1/2/3/5/8). Check off `Done:` as each lands.
 **Depends on:** 2
 **Estimate:** 3
 **Notes:** Concurrency across two serial ports (threads or async). Host time is the key — the two pods' `millis()` share no clock (BU-4).
-**Done:** [ ]
+**Done:** [x] — `--port` repeatable (auto-detect *all* matching as fallback); one reader thread + one CSV per port (`shintai_log_<ts>_<label>.csv`, suffix only when >1); each row gets a trailing `host_ts` (epoch-ms host receipt time) — named to dodge the linter's `_ms` unit-suffix flag; `board` (firmware) tags the pod. Single-port keeps the rich ANSI panel + `board` in its title. py_compile + linter green; `--help`, port-resolution, labels, and file-naming exercised in the conda env.
 
 ### Task 8: Groundstation — host-time merge + authority rule in analysis
 **What:** `analyze.py` aligns the two captures on host time (not `millis()`) and applies the default authority table to produce one merged series.
