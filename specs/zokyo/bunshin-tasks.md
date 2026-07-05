@@ -75,7 +75,7 @@ story points (1/2/3/5/8). Check off `Done:` as each lands.
 **Depends on:** 7, 2
 **Estimate:** 3
 **Notes:** Implements the same authority table as `:core` (Task 3) — keep the default order in one documented place (the contract) so base and glasses agree.
-**Done:** [ ]
+**Done:** [x] — `load_sessions` groups files by embedded timestamp; a group with >1 file that all carry `board`+`host_ts` is a live two-pod capture → `build_merged_session` aligns on `host_ts` (hold-last onto the union timeline) and `coalesce`s each column per the `AUTHORITY` table (mirrors CONTRACT.md/`:core`), GPS fix-gated. Guard (`host_ts` required) keeps flash-pull batches that share a pull-timestamp as separate sessions. Synthetic authority test passes (fwd/aft split, fix-gating, hold-last); full pipeline clean on 176 real logs (exit 0, no merges spuriously triggered). Contract linter green.
 
 ## Summary
 - **Total tasks:** 8

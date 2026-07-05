@@ -4,6 +4,10 @@ Stitch Shintai-OS logs into one timeline and surface insights.
 - Loads every logs/shintai_log_*.csv with more than MIN_ROWS data rows (skips
   short test scraps), ordered by their wall-clock filename timestamp.
 - Reconstructs absolute time per row:  file_start + timestamp_ms.
+- Bunshin: logs that share a capture timestamp are the TWO pods (fwd/aft) of one
+  session; they are merged into a single series aligned on host_ts (the two boards
+  share no clock) using the contract-default authority table — so the base-side view
+  matches what the glasses and Operator show.
 - Reports the gaps between sessions (time + distance moved).
 - Writes analysis/combined.csv, analysis/timeseries.png, analysis/route_map.html.
 
@@ -29,6 +33,24 @@ LOG_DIR = os.path.join(HERE, "logs")
 OUT_DIR = os.path.join(HERE, "analysis")
 MIN_ROWS = 50  # skip test scraps
 
+# Bunshin authority table — MIRRORS CONTRACT.md "Multi-producer model" and :core
+# Merge.kt. When two pods log the same channel, the base-side merge picks the same
+# authoritative pod the glasses/Operator do, so all three agree. (column -> board order,
+# highest priority first; GPS is fix-gated — a pod with no fix supplies nothing.)
+AUTHORITY = [
+    (["distance_l_mm", "distance_r_mm", "alert"], ["aft", "fwd"]),
+    (["heading_deg", "cardinal"], ["fwd", "aft"]),
+    (["accel_x", "accel_y", "accel_z"], ["fwd", "aft"]),
+    (["thermal_min", "thermal_ctr", "thermal_max", "thermal_mean", "hotspot_delta"], ["fwd", "aft"]),
+    (["co2_ppm", "air_temp_c", "humidity_pct", "pressure_hpa", "gas_ohms"], ["aft", "fwd"]),
+    (["gps_fix", "lat", "lon", "alt_m", "speed_kmh", "sats"], ["fwd", "aft"]),
+    (["steps"], ["aft", "fwd"]),
+]
+COL_PRECEDENCE = {c: order for cols, order in AUTHORITY for c in cols}
+GPS_COLS = {"gps_fix", "lat", "lon", "alt_m", "speed_kmh", "sats"}
+# Columns the merge sets itself / that are per-board, so never coalesced as channels.
+META_COLS = {"host_ts", "board", "session", "time", "epoch_s", "timestamp_ms"}
+
 
 def haversine_m(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -39,29 +61,107 @@ def haversine_m(lat1, lon1, lat2, lon2):
     return 2 * R * math.asin(math.sqrt(a))
 
 
+def _embedded_ts(path):
+    m = re.search(r"(\d{8}_\d{6})", os.path.basename(path))
+    return m.group(1) if m else ""
+
+
+def coalesce(held, col, order, gps=False):
+    """Bunshin per-column merge: take [col] from the highest-precedence pod that has a
+    valid value at each instant, falling back down [order]. Invalid = NaN / blank; for a
+    GPS column, also requires that pod to have a fix (matches :core's skip-invalid rule)."""
+    out = None
+    for board in order:
+        d = held.get(board)
+        if d is None or col not in d.columns:
+            continue
+        s = d[col]
+        valid = s.notna()
+        if s.dtype == object:
+            valid = valid & (s.astype(str).str.strip() != "")
+        if gps and "gps_fix" in d.columns:
+            valid = valid & (pd.to_numeric(d["gps_fix"], errors="coerce") == 1)
+        s = s.where(valid)
+        out = s if out is None else out.combine_first(s)   # primary first → fills its NaNs from next
+    return out
+
+
+def build_merged_session(dfs, ts):
+    """Merge the two pods of one capture into a single series, aligned on host_ts (the
+    boards share no clock) and sourced per the authority table. Returns None if fewer
+    than two boards are identifiable."""
+    aligned = {}
+    for df in dfs:
+        boards = df["board"].dropna().astype(str).str.strip()
+        board = boards.iloc[0] if len(boards) else None
+        if not board:
+            continue
+        d = df.copy()
+        d["host_ts"] = pd.to_numeric(d["host_ts"], errors="coerce")
+        d = d.dropna(subset=["host_ts"]).sort_values("host_ts")
+        d.index = pd.to_datetime(d["host_ts"], unit="ms")
+        d = d[~d.index.duplicated(keep="last")]
+        aligned[board] = d
+    if len(aligned) < 2:
+        return None
+
+    # Hold-last each pod onto the union timeline: every instant carries each pod's most
+    # recent reading (the same "current value" the live apps merge).
+    idx = pd.DatetimeIndex(sorted(set().union(*[set(d.index) for d in aligned.values()])))
+    held = {b: d.reindex(idx).ffill() for b, d in aligned.items()}
+    channel_cols = {c for d in aligned.values() for c in d.columns} - META_COLS
+
+    merged = pd.DataFrame(index=idx)
+    for col in channel_cols:
+        order = COL_PRECEDENCE.get(col, list(held.keys()))
+        merged[col] = coalesce(held, col, order, gps=col in GPS_COLS)
+
+    host_ms = idx.asi8 // 10**6
+    merged["host_ts"] = host_ms
+    merged["timestamp_ms"] = host_ms - host_ms[0]   # host-relative, so the dur print reads right
+    merged["time"] = idx
+    merged["epoch_s"] = (merged["time"] - pd.Timestamp("1970-01-01")) / pd.Timedelta(seconds=1)
+    merged["board"] = "+".join(sorted(aligned))     # e.g. "aft+fwd"
+    merged["session"] = f"merged_{ts}"
+    return merged.reset_index(drop=True)
+
+
+def _single_session(f, ts, df):
+    start = pd.to_datetime(ts, format="%Y%m%d_%H%M%S")
+    df = df.copy()
+    df["time"] = start + pd.to_timedelta(df["timestamp_ms"], unit="ms")
+    df["epoch_s"] = (df["time"] - pd.Timestamp("1970-01-01")) / pd.Timedelta(seconds=1)
+    df["session"] = os.path.basename(f)
+    return f, start, df
+
+
 def load_sessions():
-    # Match new and pre-rename logs; order by the embedded timestamp (not the
-    # filename) so the two prefixes still interleave chronologically.
+    # Match new and pre-rename logs; group by the embedded timestamp so a Bunshin
+    # multi-pod capture (two files, same timestamp) is merged, while separate captures
+    # stay separate sessions.
     files = glob.glob(os.path.join(LOG_DIR, "shintai_log_*.csv")) + \
             glob.glob(os.path.join(LOG_DIR, "spidey_log_*.csv"))
-    def _embedded_ts(path):
-        m = re.search(r"(\d{8}_\d{6})", os.path.basename(path))
-        return m.group(1) if m else ""
-    files = sorted(files, key=_embedded_ts)
-    sessions = []
-    for f in files:
+    groups = {}
+    for f in sorted(files, key=_embedded_ts):
         try:
             df = pd.read_csv(f)
         except pd.errors.EmptyDataError:
             continue
         if len(df) < MIN_ROWS:
             continue
-        m = re.search(r"(\d{8}_\d{6})", os.path.basename(f))
-        start = pd.to_datetime(m.group(1), format="%Y%m%d_%H%M%S")
-        df["time"] = start + pd.to_timedelta(df["timestamp_ms"], unit="ms")
-        df["epoch_s"] = (df["time"] - pd.Timestamp("1970-01-01")) / pd.Timedelta(seconds=1)
-        df["session"] = os.path.basename(f)
-        sessions.append((f, start, df))
+        groups.setdefault(_embedded_ts(f), []).append((f, df))
+
+    sessions = []
+    for ts, items in sorted(groups.items()):
+        pod_capture = (len(items) > 1 and
+                       all("board" in df.columns and "host_ts" in df.columns for _, df in items))
+        if pod_capture:
+            merged = build_merged_session([df for _, df in items], ts)
+            if merged is not None:
+                sessions.append((f"merged_{ts}", merged["time"].iloc[0], merged))
+                continue
+        for f, df in items:      # single board (or un-mergeable) → one session each
+            sessions.append(_single_session(f, ts, df))
     return sessions
 
 
