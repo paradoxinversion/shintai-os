@@ -39,7 +39,7 @@ story points (1/2/3/5/8). Check off `Done:` as each lands.
 **Depends on:** 3
 **Estimate:** 5
 **Notes:** **Risk:** two simultaneous GATT connections on Android — connection management / MTU negotiation per pod, autoConnect behaviour. `ShintaiBleClient` is already per-device (`ShintaiBleClient.kt:36-38`), so it's instantiation + lifecycle, not a rewrite.
-**Done:** [ ]
+**Done:** [x] — VM holds `clients`/`podReadings` maps keyed by `Role`, one `listenerFor(role)` folding into per-pod snapshots + `remerge()`; scanner prefix-matches `ShintaiOS-`, role derived from the name suffix; `connect(DeviceEntry)`/`reconnectLast()` (per-role persisted addrs); header shows per-pod liveness from `perBoard`; recorder writes one `board`-tagged row per pod. Assemble + strict detekt + lint green. (Live two-pod BLE reliability still wants on-hardware validation.)
 
 ### Task 5: Operator — Sources precedence screen (live override, persisted)
 **What:** A settings screen listing currently-contested channels, letting the wearer flip which pod wins each, persisted in app prefs and re-merging live.

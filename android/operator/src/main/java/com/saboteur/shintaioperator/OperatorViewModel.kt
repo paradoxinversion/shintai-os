@@ -9,12 +9,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import com.saboteur.shintai.core.ConnectionState
+import com.saboteur.shintai.core.Role
 import com.saboteur.shintai.core.ShintaiBleClient
 import com.saboteur.shintai.core.ShintaiGatt
 import com.saboteur.shintai.core.ShintaiReadings
 import com.saboteur.shintai.core.Units
 import com.saboteur.shintai.core.fold
 import com.saboteur.shintai.core.foldBinary
+import com.saboteur.shintai.core.mergeReadings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,11 +64,15 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
     )
         private set
 
-    /** Last board we connected to — offered as a one-tap "reconnect" fast path. */
-    val lastAddress: String? get() = prefs.getString(KEY_LAST_ADDR, null)
+    /** Whether any pod is remembered — gates the one-tap "reconnect" fast path. */
+    val hasLast: Boolean get() = Role.values().any { prefs.getString(roleAddrKey(it), null) != null }
 
     private val scanner = ShintaiScanner(app)
-    private var client: ShintaiBleClient? = null
+
+    // Bunshin: one BLE client + one running snapshot PER pod (fwd/aft). The public
+    // `readings` flow is the MERGED view both the UI and the recorder consume.
+    private val clients = mutableMapOf<Role, ShintaiBleClient>()
+    private val podReadings = mutableMapOf<Role, ShintaiReadings>()
 
     private val main = Handler(Looper.getMainLooper())
     private val recorder = TelemetryRecorder(app.getExternalFilesDir(null) ?: app.filesDir)
@@ -87,7 +93,7 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
             _readings.update { it.copy(connection = ConnectionState.PermissionNeeded) }
             return
         }
-        if (hasScan) startScan() else lastAddress?.let { connect(it) }
+        if (hasScan) startScan() else reconnectLast()
     }
 
     // --- scanning ----------------------------------------------------------
@@ -110,22 +116,36 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- connection --------------------------------------------------------
 
-    fun connect(address: String) {
+    /** Connect a discovered pod, deriving its role (fwd/aft) from the advertised name. */
+    fun connect(entry: DeviceEntry) = connect(entry.address, roleOf(entry.name))
+
+    /** Reconnect every remembered pod — the one-tap path when scan is unavailable. */
+    fun reconnectLast() {
+        Role.values().forEach { role ->
+            prefs.getString(roleAddrKey(role), null)?.let { connect(it, role) }
+        }
+    }
+
+    fun connect(address: String, role: Role) {
         stopScan()
-        if (client != null) return
-        prefs.edit().putString(KEY_LAST_ADDR, address).apply()
-        log("CONNECT $address")
-        // Operator takes EVERY string channel (ENVIRONMENT included — the complete
-        // readout) plus Metsuke's binary thermal grid for its own heat panel.
-        client = ShintaiBleClient(getApplication(), address, ShintaiGatt.ALL + ShintaiGatt.THERMAL_GRID, listener)
-            .also { it.connect() }
+        if (clients.containsKey(role)) return          // this pod is already linked
+        prefs.edit().putString(roleAddrKey(role), address).apply()
+        log("CONNECT ${role.tag} $address")
+        // Operator takes EVERY string channel (ENVIRONMENT included) plus Metsuke's
+        // binary thermal grid, on BOTH pods; the merge decides what each channel shows.
+        clients[role] = ShintaiBleClient(
+            getApplication(), address, ShintaiGatt.ALL + ShintaiGatt.THERMAL_GRID, listenerFor(role),
+        ).also { it.connect() }
+        podReadings[role] = ShintaiReadings(connection = ConnectionState.Connecting)
+        remerge()
     }
 
     fun disconnect() {
         if (recorder.active) stopRecording()
-        client?.close()
-        client = null
-        _readings.update { ShintaiReadings(connection = ConnectionState.Idle) }
+        clients.values.forEach { it.close() }
+        clients.clear()
+        podReadings.clear()
+        _readings.value = ShintaiReadings(connection = ConnectionState.Idle)
         log("DISCONNECT")
     }
 
@@ -152,7 +172,11 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
     private val sampler = object : Runnable {
         override fun run() {
             if (!recorder.active) return
-            recorder.writeRow(_readings.value, System.currentTimeMillis())
+            val now = System.currentTimeMillis()
+            // One row PER pod, each tagged with its board — mirrors the firmware CSV so
+            // the base-side merge can align the two streams. Single-source → one blank-board row.
+            if (podReadings.isEmpty()) recorder.writeRow(_readings.value, null, now)
+            else podReadings.forEach { (role, r) -> recorder.writeRow(r, role, now) }
             _recording.update { it.copy(rows = recorder.rows) }
             main.postDelayed(this, RECORD_MS)
         }
@@ -160,15 +184,20 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- BLE stream --------------------------------------------------------
 
-    private val listener = object : ShintaiBleClient.Listener {
+    /** One listener per pod — folds that pod's notifications into its own snapshot,
+     *  then re-merges. Sparklines track the MERGED value so the trend follows whichever
+     *  pod currently wins the channel. */
+    private fun listenerFor(role: Role) = object : ShintaiBleClient.Listener {
         override fun onState(state: ConnectionState) {
-            _readings.update { it.copy(connection = state) }
-            if (state == ConnectionState.Live) log("LINK LIVE")
-            if (state == ConnectionState.Disconnected) log("LINK LOST")
+            podReadings[role] = pod(role).copy(connection = state)
+            remerge()
+            if (state == ConnectionState.Live) log("${role.tag} LIVE")
+            if (state == ConnectionState.Disconnected) log("${role.tag} LOST")
         }
 
         override fun onValue(uuid: UUID, value: String) {
-            _readings.update { it.fold(uuid, value) }
+            podReadings[role] = pod(role).fold(uuid, value)
+            remerge()
             val snap = _readings.value
             when (uuid) {
                 ShintaiGatt.DISTANCE -> snap.distanceMm?.let { push(distances, it.toFloat(), _distanceHistory) }
@@ -178,9 +207,15 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
 
         override fun onBinary(uuid: UUID, value: ByteArray) {
             // Metsuke's thermal grid — the one binary channel. Parsed in :core.
-            _readings.update { it.foldBinary(uuid, value) }
+            podReadings[role] = pod(role).foldBinary(uuid, value)
+            remerge()
         }
     }
+
+    private fun pod(role: Role): ShintaiReadings = podReadings[role] ?: ShintaiReadings()
+
+    /** Recompute the public merged snapshot from the per-pod snapshots (Bunshin). */
+    private fun remerge() { _readings.value = mergeReadings(podReadings.toMap()) }
 
     private fun push(buf: ArrayDeque<Float>, v: Float, flow: MutableStateFlow<List<Float>>) {
         buf.addLast(v)
@@ -196,13 +231,22 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
         main.removeCallbacks(sampler)
         recorder.stop()
         scanner.stop()
-        client?.close()
-        client = null
+        clients.values.forEach { it.close() }
+        clients.clear()
     }
+
+    // --- Bunshin pod helpers ----------------------------------------------
+
+    /** Derive a pod's role from its advertised name (`ShintaiOS-aft` → Aft, else Fwd). */
+    private fun roleOf(name: String?): Role =
+        if (name?.endsWith("-aft", ignoreCase = true) == true) Role.Aft else Role.Fwd
+
+    private fun roleAddrKey(role: Role): String = "last_addr_${role.name.lowercase()}"
+
+    private val Role.tag: String get() = name.uppercase()
 
     companion object {
         private const val KEY_IMPERIAL = "imperial"
-        private const val KEY_LAST_ADDR = "last_address"
         private const val SCAN_MS = 12_000L
         private const val RECORD_MS = 1_000L
         private const val LOG_LINES = 8

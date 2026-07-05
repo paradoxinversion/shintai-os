@@ -108,6 +108,16 @@ private fun TopBar(r: ShintaiReadings, rec: RecordingUi) {
             color = if (r.connection == ConnectionState.Live) T.Phosphor else T.BoneDim,
             fontFamily = T.Mono, fontSize = 12.sp,
         )
+        // Bunshin: per-pod liveness — a dropped pod shows here even while the other stays live.
+        r.perBoard.entries.sortedBy { it.key.name }.forEach { (role, st) ->
+            Spacer(Modifier.width(8.dp))
+            StatusLed(ledColor(st), blink = st == ConnectionState.Disconnected)
+            Text(
+                " ${role.name.uppercase()}",
+                color = if (st == ConnectionState.Live) T.Phosphor else T.BoneDim,
+                fontFamily = T.Mono, fontSize = 11.sp,
+            )
+        }
     }
 }
 
@@ -269,8 +279,8 @@ private fun PairPanel(scanning: Boolean, devices: List<DeviceEntry>, vm: Operato
                 if (scanning) "Scanning…" else "Scan", vm::startScan,
                 modifier = Modifier.weight(1f), active = scanning,
             )
-            vm.lastAddress?.let { addr ->
-                ConsoleButton("Reconnect", { vm.connect(addr) }, modifier = Modifier.weight(1f))
+            if (vm.hasLast) {
+                ConsoleButton("Reconnect", vm::reconnectLast, modifier = Modifier.weight(1f))
             }
         }
         Spacer(Modifier.height(10.dp))
@@ -280,14 +290,14 @@ private fun PairPanel(scanning: Boolean, devices: List<DeviceEntry>, vm: Operato
                 color = T.BoneDim, fontFamily = T.Mono, fontSize = 12.sp,
             )
         } else {
-            devices.forEach { d -> DeviceRow(d) { vm.connect(d.address) } }
+            devices.forEach { d -> DeviceRow(d) { vm.connect(d) } }
         }
     }
 }
 
 @Composable
 private fun DeviceRow(d: DeviceEntry, onLink: () -> Unit) {
-    val isBoard = d.name == ShintaiScanner.ADVERTISED_NAME
+    val isBoard = d.name?.startsWith(ShintaiScanner.ADVERTISED_NAME) == true
     Row(
         Modifier.fillMaxWidth().padding(vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,

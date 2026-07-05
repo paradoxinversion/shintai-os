@@ -37,9 +37,10 @@ class ShintaiScanner(private val context: Context) {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val dev = result.device
                 found[dev.address] = DeviceEntry(dev.address, dev.name, result.rssi)
-                // ShintaiOS boards first, then by signal strength.
+                // ShintaiOS pods first, then by signal strength. Bunshin names each pod
+                // ShintaiOS-<role> (fwd/aft), so match the prefix, not the exact name.
                 onResults(found.values.sortedWith(
-                    compareByDescending<DeviceEntry> { it.name == ADVERTISED_NAME }
+                    compareByDescending<DeviceEntry> { it.name?.startsWith(ADVERTISED_NAME) == true }
                         .thenByDescending { it.rssi }
                 ))
             }
@@ -65,7 +66,7 @@ class ShintaiScanner(private val context: Context) {
 
     companion object {
         private const val TAG = "ShintaiScan"
-        /** The name the firmware advertises (shintai-os.ino). */
+        /** The name PREFIX the firmware advertises — Bunshin pods are ShintaiOS-<role>. */
         const val ADVERTISED_NAME = "ShintaiOS"
     }
 }
