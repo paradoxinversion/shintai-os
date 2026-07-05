@@ -264,7 +264,7 @@ const char* CSV_HEADER =
   "accel_x,accel_y,accel_z,gps_fix,lat,lon,alt_m,speed_kmh,"
   "sats,thermal_min,thermal_ctr,thermal_max,thermal_mean,"
   "hotspot_delta,co2_ppm,air_temp_c,humidity_pct,pressure_hpa,gas_ohms,"
-  "steps";   // Hokan: cumulative pedometer count (appended — CSV-half contract change)
+  "steps,board";   // steps: Hokan pedometer · board: Bunshin pod role (fwd/aft) — both appended (CSV-half contract changes)
 
 // Onboard flash logging (FFat) — autonomous field capture, pulled over USB.
 // Each power-up writes a new sequential file (/shtNNNN.csv). Rows are logged
@@ -1249,6 +1249,7 @@ void loop() {
     row += ',';  row += (bmeHasData ? String(bmePressure, 1): String(""));
     row += ',';  row += (bmeHasData ? String(bmeGas, 0)     : String(""));
     row += ',';  row += (imuPresent ? String(hokanSteps)    : String(""));   // Hokan cumulative steps
+    row += ',';  row += podRole;   // Bunshin: which pod (fwd/aft) produced this row
 
     // Persist to onboard flash only while untethered (no USB host). close() on a
     // row cadence (and on host-connect, below) commits the directory entry so a

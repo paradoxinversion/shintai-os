@@ -34,6 +34,7 @@ Consumers key off `line.startswith("timestamp_ms")` (header) and `line[0].isdigi
 | `pressure_hpa` | hPa (blank = none) | BME688 barometric pressure |
 | `gas_ohms` | Ω (blank = none) | BME688 gas-sensor resistance (VOC proxy; lower = more VOC) |
 | `steps` | count (cumulative) | Hokan pedometer — cumulative step count since boot, detected live from the LSM6DSOX (0 when the IMU is absent) |
+| `board` | `fwd` / `aft` | **Bunshin** — which pod (role) produced this row; end-appended for two-host federation. Absent in pre-Bunshin logs |
 
 `thermal_*` are *surface* temps (the IR camera); `air_temp_c`/`humidity_pct`/`co2_ppm`
 are *air*. `air_temp_c` and `humidity_pct` are **shared semantic slots**: whichever
@@ -51,6 +52,14 @@ column *names* (and the `line[0].isdigit()` framing) are unaffected; old logs wi
 column still parse. It's the logged basis for the ground-station's GPS-denied
 dead-reckoned path (`Δsteps × step_length @ heading_deg`). CSV-only — there is no `steps`
 GATT characteristic in v1.
+
+`board` is added by **Bunshin** (`specs/zokyo/bunshin.md`) — the **first multi-host contract
+change**. When two pods run the identical firmware and split the sensor set, each row carries
+the role of the pod that produced it (`fwd`/`aft`). Like `steps` it is **appended at the end**
+of the schema, so consumers that key on column *names* are unaffected and pre-Bunshin logs
+(without the column) still parse. It is the CSV-half discriminator the ground-station uses to
+tag and merge the two streams; the full multi-producer model — identity, the per-channel
+authority table, and the merge rule — is in [Multi-producer model (Bunshin)](#multi-producer-model-bunshin).
 
 `distance_l_mm` / `distance_r_mm` are the **dual rear arc** — **Kōei (後衛)**
 (`specs/zokyo/koei.md`) — two VL53L4CX behind a PCA9546 I²C mux (both report at `0x29`;
@@ -148,3 +157,51 @@ appends it explicitly.
 
 Both apps share one mirror of this table — `ShintaiGatt` in the `:core` module — so the
 subset each subscribes to is a per-app choice, never a second source of truth.
+
+## Multi-producer model (Bunshin)
+
+Until **Bunshin** (`specs/zokyo/bunshin.md`) there was one board — "*the* board produces."
+Bunshin runs the **identical firmware on two hosts** that split the sensor set by what's
+physically plugged into each, and the consumers **federate the two streams into one**.
+Nothing above changes shape: both pods expose the *same* GATT service and the *same* CSV
+schema, and each only fills the channels its sensors supply (the presence-driven blanking
+already specified above). The additions are **identity** and a **merge rule**.
+
+### Pods & identity
+
+Two roles: **`fwd`** (forward / head-side) and **`aft`** (pack-side). Each pod stores its
+role in NVS and advertises as **`ShintaiOS-<role>`** (`ShintaiOS-fwd` / `ShintaiOS-aft`);
+the BLE **service UUID is identical** on both — a central tells the pods apart by the
+**name**, never by service. In the CSV / flash log each row carries its origin in the
+appended **`board`** column. A pod's role is set live over serial (`'R'`) and applied at
+its next boot.
+
+### Authority table (default precedence)
+
+When both pods supply the **same** channel, the consumer resolves it by a **per-channel
+precedence order**. This table is the **default**, shared by every consumer (the Android
+`:core` merge, the glasses, and the ground-station); Operator can **override** any row live
+(see below).
+
+| Channel(s) | Default precedence | Rationale |
+|---|---|---|
+| `distance_l_mm` / `distance_r_mm` / `alert` | **aft** → fwd | Rear arc (Kōei) lives on the pack |
+| `heading_deg` / `cardinal` | **fwd** → aft | HUD wants head orientation |
+| `accel_x` / `accel_y` / `accel_z` | **fwd** → aft | Head IMU |
+| `thermal_*` + Thermal Grid | **fwd** → aft | Forward-looking thermal |
+| `co2_ppm` / `air_temp_c` / `humidity_pct` / `pressure_hpa` / `gas_ohms` | **aft** → fwd | Air chem rides the pack |
+| `gps_fix` / `lat` / `lon` / `alt_m` / `speed_kmh` / `sats` | **fwd** → aft (fix-gated) | A pod with no fix supplies nothing |
+| `steps` (Hokan) | **aft** → fwd | Torso pedometer beats head-bob |
+
+**Merge rule (one sentence):** for each channel, filter to the pods currently supplying a
+**valid** value (non-blank / GPS fix / non-null), then take the highest in that channel's
+precedence order — so a preferred-but-absent pod never wins over a present one.
+
+**Runtime override (Operator).** The precedence order is a **default, not a fixed law**: the
+Operator app exposes a per-channel control to pick which pod wins each *contested* channel,
+persisted on the phone and applied live. The override is **Operator-local** in v1; the
+glasses and the ground-station use the defaults above.
+
+**Clocks.** `timestamp_ms` is each pod's own `millis()` since *its* boot — the two pods
+share no clock. Consumers align on arrival, not on `timestamp_ms`: the phones on notify
+receipt, the ground-station on **host wall-clock** at capture.

@@ -21,7 +21,7 @@ story points (1/2/3/5/8). Check off `Done:` as each lands.
 **Depends on:** 1
 **Estimate:** 3
 **Notes:** `board` is **end-appended** (Hokan precedent) so old logs still parse. The authority table here is the shared default all three consumers implement. Populating `board` needs the role from Task 1. Keep all four mirror sites atomic or the linter breaks mid-commit.
-**Done:** [ ]
+**Done:** [x] — CONTRACT.md Multi-producer section + authority table + `board` col; firmware `CSV_HEADER`+row emit; linter now guards the `ShintaiOS-<role>` scheme. Groundstation reads the header dynamically, so no code change there (its behaviour lands in Tasks 7–8). 27 cols, linter+compile green.
 
 ### Task 3: `:core` — Role enum, Precedence type, `mergeReadings` reducer, `perBoard`
 **What:** A pure reducer that folds `Map<Role, ShintaiReadings>` into one merged `ShintaiReadings` using a `Precedence` (defaulting to the authority table), skipping invalid sources.
