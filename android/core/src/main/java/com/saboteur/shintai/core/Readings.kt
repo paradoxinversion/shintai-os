@@ -28,6 +28,7 @@ data class ShintaiReadings(
     val thermalGrid: ThermalGrid? = null,  // Metsuke's 8x8 heat grid, null until the first frame
     val hokan: HokanPdr? = null,       // Hokan's dead-reckoned breadcrumb, null until the first notify
     val packets: Int = 0,              // total notifications received — a visible heartbeat
+    val perBoard: Map<Role, ConnectionState> = emptyMap(),  // Bunshin: per-pod connection (empty = single-producer)
 )
 
 enum class ConnectionState { Idle, PermissionNeeded, Connecting, Discovering, Live, Disconnected }

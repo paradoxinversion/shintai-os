@@ -25,6 +25,10 @@ android {
     }
 }
 
+dependencies {
+    testImplementation("junit:junit:4.13.2")   // pure-JVM unit tests for the :core merge/fold logic
+}
+
 detekt {
     config.setFrom(rootProject.file("detekt.yml"))
     buildUponDefaultConfig = true

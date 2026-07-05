@@ -30,7 +30,7 @@ story points (1/2/3/5/8). Check off `Done:` as each lands.
 **Depends on:** 2
 **Estimate:** 5
 **Notes:** Field-by-field pick across all channels incl. rich types (`hokan: HokanPdr?`, `thermalGrid`, `kyukaku`). `ShintaiReadings` gains `perBoard: Map<Role, ConnectionState>` — additive, existing fields untouched, so parsers/`ShintaiGatt`/CCCD are not modified. Hokan arbitrated whole (BU-5). **Highest-value correctness surface — test it hard.**
-**Done:** [ ]
+**Done:** [x] — `Merge.kt` (`Role`/`Channel`/`Precedence`/`DEFAULT_PRECEDENCE`/`mergeReadings`), `perBoard` added to `ShintaiReadings`, 8 unit tests (precedence, skip-invalid, override, fix-gated GPS, single-pod, packets/perBoard, empty). Strict detekt + `:core:test` (8/0/0) + assemble all green. First test source set in `:core` (added `testImplementation(junit)`).
 
 ### Task 4: Operator — connect both pods (scan + prefix-match, two clients → merger)
 **What:** Operator scans, prefix-matches `ShintaiOS-`, pairs both pods, runs two `ShintaiBleClient`s, and renders one merged readout (default precedence) with per-pod liveness; its BLE recording tags rows with `board`.
