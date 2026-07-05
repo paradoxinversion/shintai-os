@@ -57,7 +57,7 @@ story points (1/2/3/5/8). Check off `Done:` as each lands.
 **Depends on:** 3
 **Estimate:** 3
 **Notes:** Simpler than Operator — no scan (the glasses' radio can't), no override UI. Same two-simultaneous-connection BLE risk as Task 4. UI consumes one merged `ShintaiReadings` as before; only the wiring (one client → two + merge) changes.
-**Done:** [ ]
+**Done:** [x] — VM holds `clients`/`podReadings` maps keyed by `Role`, `listenerFor(role)` + `remerge()` with DEFAULT precedence; `connect()` brings up both from `POD_ADDRESSES` (FWD_ADDRESS + AFT_ADDRESS hardcoded MACs, aft placeholder to fill); a missing MAC fails gracefully so single-pod still works. HUD unchanged — consumes one merged `ShintaiReadings`. Assemble + strict detekt + lint green.
 
 ### Task 7: Groundstation — dual-port capture, host-time stamping, `board` tagging
 **What:** `shintai-logger.py` reads both serial ports concurrently, tags each stream's rows with `board`, and stamps host receipt time.
