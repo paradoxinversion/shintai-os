@@ -8,7 +8,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
+import com.saboteur.shintai.core.Channel
 import com.saboteur.shintai.core.ConnectionState
+import com.saboteur.shintai.core.DEFAULT_PRECEDENCE
+import com.saboteur.shintai.core.Precedence
 import com.saboteur.shintai.core.Role
 import com.saboteur.shintai.core.ShintaiBleClient
 import com.saboteur.shintai.core.ShintaiGatt
@@ -17,6 +20,7 @@ import com.saboteur.shintai.core.Units
 import com.saboteur.shintai.core.fold
 import com.saboteur.shintai.core.foldBinary
 import com.saboteur.shintai.core.mergeReadings
+import com.saboteur.shintai.core.suppliedChannels
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,11 +32,14 @@ import java.util.UUID
 data class RecordingUi(val active: Boolean = false, val rows: Int = 0, val fileName: String? = null)
 
 /**
- * The Operator's brain. Beyond the shared fold ([ShintaiReadings.fold]), it owns
- * the four phone-only capabilities the glasses can't hold: scan & pairing, CSV
- * recording, the full channel set (subscribes to [ShintaiGatt.ALL], including
- * ENVIRONMENT), and rolling history for the trend sparklines.
+ * The Operator's brain. Beyond the shared fold ([ShintaiReadings.fold]), it owns the
+ * phone-only capabilities the glasses can't hold: scan & pairing, CSV recording, the
+ * full channel set (subscribes to [ShintaiGatt.ALL], including ENVIRONMENT), rolling
+ * history for the trend sparklines, and — for Bunshin — running two pods at once and
+ * the live per-channel source precedence. That breadth of orchestration is why the
+ * function count runs past detekt's default (same call as OperatorScreen's panel stack).
  */
+@Suppress("TooManyFunctions")
 class OperatorViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _readings = MutableStateFlow(ShintaiReadings())
@@ -57,6 +64,14 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
     val co2History: StateFlow<List<Float>> = _co2History.asStateFlow()
 
     private val prefs = app.getSharedPreferences("shintai_operator", Context.MODE_PRIVATE)
+
+    // Bunshin: the live per-channel precedence (contract defaults + the user's overrides)
+    // and which channels each connected pod currently supplies (drives the Sources screen).
+    private val _precedence = MutableStateFlow(loadPrecedence())
+    val precedence: StateFlow<Precedence> = _precedence.asStateFlow()
+
+    private val _podSupply = MutableStateFlow<Map<Role, Set<Channel>>>(emptyMap())
+    val podSupply: StateFlow<Map<Role, Set<Channel>>> = _podSupply.asStateFlow()
 
     /** Display unit system, persisted. Defaults to imperial (parity with Glass). */
     var units by mutableStateOf(
@@ -214,8 +229,41 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun pod(role: Role): ShintaiReadings = podReadings[role] ?: ShintaiReadings()
 
-    /** Recompute the public merged snapshot from the per-pod snapshots (Bunshin). */
-    private fun remerge() { _readings.value = mergeReadings(podReadings.toMap()) }
+    /** Recompute the public merged snapshot + per-pod supply from the per-pod snapshots. */
+    private fun remerge() {
+        val pods = podReadings.toMap()
+        _readings.value = mergeReadings(pods, _precedence.value)
+        _podSupply.value = pods.mapValues { it.value.suppliedChannels() }
+    }
+
+    // --- Bunshin precedence (Sources screen) ------------------------------
+
+    /** Make [role] the preferred (winning) pod for [channel] — persisted + applied live. */
+    fun setPreferred(channel: Channel, role: Role) {
+        prefs.edit().putString(precKey(channel), role.name).apply()
+        _precedence.value = _precedence.value + (channel to orderPreferring(role))
+        remerge()
+    }
+
+    /** Drop every override — back to the contract-default authority table. */
+    fun resetPrecedence() {
+        prefs.edit().apply { Channel.values().forEach { remove(precKey(it)) } }.apply()
+        _precedence.value = DEFAULT_PRECEDENCE
+        remerge()
+    }
+
+    private fun loadPrecedence(): Precedence = Channel.values().associateWith { ch ->
+        prefs.getString(precKey(ch), null)
+            ?.let { runCatching { Role.valueOf(it) }.getOrNull() }
+            ?.let { orderPreferring(it) }
+            ?: DEFAULT_PRECEDENCE.getValue(ch)
+    }
+
+    /** Ordered pod list with [role] first, the rest in enum order (forward-compatible for >2 pods). */
+    private fun orderPreferring(role: Role): List<Role> =
+        listOf(role) + Role.values().filter { it != role }
+
+    private fun precKey(channel: Channel): String = "prec_${channel.name}"
 
     private fun push(buf: ArrayDeque<Float>, v: Float, flow: MutableStateFlow<List<Float>>) {
         buf.addLast(v)

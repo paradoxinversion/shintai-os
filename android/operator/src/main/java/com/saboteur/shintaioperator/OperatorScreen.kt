@@ -27,8 +27,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.saboteur.shintai.core.Channel
 import com.saboteur.shintai.core.ConnectionState
 import com.saboteur.shintai.core.HokanPdr
+import com.saboteur.shintai.core.Precedence
+import com.saboteur.shintai.core.Role
 import com.saboteur.shintai.core.NEAR_MM
 import com.saboteur.shintai.core.ShintaiReadings
 import com.saboteur.shintai.core.Smell
@@ -242,6 +245,9 @@ private fun Console(
         Sparkline(co2Hist, T.Amber)
     }
 
+    // Bunshin: per-channel source precedence — appears only when two pods are linked.
+    MultiPodSources(vm)
+
     // Controls.
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ConsoleButton(
@@ -254,6 +260,66 @@ private fun Console(
         )
         ConsoleButton("Unlink", vm::disconnect, modifier = Modifier.weight(1f))
     }
+}
+
+/** Bunshin: the Sources precedence control. When two pods are linked it lists every
+ *  channel both supply (contested → a pod toggle) and those only one supplies (info),
+ *  letting the wearer pick which pod wins each. Collects its own state so Console stays
+ *  one line lighter, and self-hides with a single pod. */
+@Composable
+private fun MultiPodSources(vm: OperatorViewModel) {
+    val podSupply by vm.podSupply.collectAsState()
+    val precedence by vm.precedence.collectAsState()
+    if (podSupply.size < 2) return
+    Panel("Sources") {
+        Text(
+            "Which pod wins each shared channel",
+            color = T.BoneDim, fontFamily = T.Mono, fontSize = 11.sp,
+        )
+        Spacer(Modifier.height(8.dp))
+        Channel.values().forEach { ch ->
+            val suppliers = podSupply.filterValues { ch in it }.keys.sortedBy { it.name }
+            when {
+                suppliers.size >= 2 -> ContestedRow(ch, suppliers, precedence[ch]?.firstOrNull(), vm)
+                suppliers.size == 1 -> SingleSourceRow(ch, suppliers.first())
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        ConsoleButton("Reset defaults", vm::resetPrecedence, modifier = Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun ContestedRow(ch: Channel, suppliers: List<Role>, preferred: Role?, vm: OperatorViewModel) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(channelLabel(ch), color = T.Bone, fontFamily = T.Mono, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        suppliers.forEach { role ->
+            ConsoleButton(role.name.uppercase(), { vm.setPreferred(ch, role) }, active = role == preferred)
+        }
+    }
+}
+
+@Composable
+private fun SingleSourceRow(ch: Channel, role: Role) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text(channelLabel(ch), color = T.BoneDim, fontFamily = T.Mono, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Text("${role.name.uppercase()} only", color = T.BoneDim, fontFamily = T.Mono, fontSize = 12.sp)
+    }
+}
+
+private fun channelLabel(ch: Channel): String = when (ch) {
+    Channel.Distance -> "Proximity"
+    Channel.Heading -> "Heading"
+    Channel.Accel -> "Accel"
+    Channel.Thermal -> "Thermal"
+    Channel.Climate -> "Climate"
+    Channel.Environment -> "Environment"
+    Channel.Gps -> "GPS"
+    Channel.Hokan -> "Steps"
 }
 
 /** Hokan's pedometer readout + dead-reckoned breadcrumb mini-map. Steps/cadence are

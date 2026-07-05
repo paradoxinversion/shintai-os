@@ -48,7 +48,7 @@ story points (1/2/3/5/8). Check off `Done:` as each lands.
 **Depends on:** 4, 3
 **Estimate:** 5
 **Notes:** Contested-channel detection keys off live per-pod presence (`perBoard` + which fields each pod fills). Override is Operator-local (BU-6). Model precedence as an ordered list, not a bool, so a third pod needs no rework.
-**Done:** [ ]
+**Done:** [x] — `:core` gains `suppliedChannels()` (+test, 9/0/0); VM holds a persisted `Precedence` flow + `podSupply` flow, `setPreferred`/`resetPrecedence` re-merge live; `MultiPodSources` panel self-hides <2 pods, shows contested channels as pod toggles and single-source as "X only", with reset-to-defaults. Precedence stored as preferred-pod-per-channel (ordered-list model kept for >2 pods). Assemble + strict detekt + lint green.
 
 ### Task 6: Glass — connect both pods (two hardcoded MACs → two clients → merger)
 **What:** Glass holds two hardcoded MACs, runs two clients, and renders one merged readout with default precedence.

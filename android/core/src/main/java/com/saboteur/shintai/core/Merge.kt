@@ -59,6 +59,12 @@ private fun ShintaiReadings.supplies(ch: Channel): Boolean = when (ch) {
     Channel.Hokan -> hokan != null
 }
 
+/** The channels this pod currently supplies a valid value for. The Operator uses this
+ *  to tell which channels are *contested* (supplied by more than one pod) and so worth a
+ *  precedence control. */
+fun ShintaiReadings.suppliedChannels(): Set<Channel> =
+    Channel.values().filterTo(mutableSetOf()) { supplies(it) }
+
 /** Rank for merging connection state: the most-connected pod wins (any Live → Live). */
 private fun ConnectionState.rank(): Int = when (this) {
     ConnectionState.Idle -> 0

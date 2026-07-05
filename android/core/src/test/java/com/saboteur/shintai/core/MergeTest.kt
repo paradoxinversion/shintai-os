@@ -100,6 +100,13 @@ class MergeTest {
     }
 
     @Test
+    fun suppliedChannelsReflectsPresence() {
+        val pod = withHeading("10.0° N").copy(gps = "37.1,-122.1 12m 3km/h")
+        assertEquals(setOf(Channel.Heading, Channel.Gps), pod.suppliedChannels())
+        assertTrue(ShintaiReadings().suppliedChannels().isEmpty())
+    }
+
+    @Test
     fun emptyMapYieldsDefaults() {
         val merged = mergeReadings(emptyMap())
         assertEquals("—", merged.heading)
