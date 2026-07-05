@@ -194,6 +194,24 @@ def check_groundstation(valid_cols: set[str]):
 
 
 # ---------------------------------------------------------------------------
+# 4. Bunshin multi-host identity (ShintaiOS-<role> device name)
+# ---------------------------------------------------------------------------
+def check_identity(contract_text: str):
+    # Bunshin makes the BLE device name load-bearing: two pods are told apart ONLY by
+    # the `ShintaiOS-<role>` suffix. Regressing the firmware to a bare "ShintaiOS"
+    # silently collapses the two pods into one indistinguishable name.
+    if "ShintaiOS-<role>" not in contract_text:
+        fail("CONTRACT.md no longer documents the `ShintaiOS-<role>` identity scheme "
+             "(Multi-producer model / Bunshin)")
+    ino = read(INO)
+    if ino and '"ShintaiOS-"' not in ino:
+        fail('firmware no longer builds the BLE name from a role suffix ("ShintaiOS-") — '
+             "the two pods would advertise an identical name and be indistinguishable")
+    if not errors or all("ShintaiOS" not in e for e in errors):
+        notes.append("identity: firmware advertises ShintaiOS-<role> (Bunshin pods distinguishable)")
+
+
+# ---------------------------------------------------------------------------
 def main() -> int:
     contract_text = read(CONTRACT)
     if not contract_text:
@@ -203,6 +221,7 @@ def main() -> int:
     valid = check_csv(cols)
     check_gatt(ble, service)
     check_groundstation(valid)
+    check_identity(contract_text)
 
     for n in notes:
         print(f"  ok  {n}")

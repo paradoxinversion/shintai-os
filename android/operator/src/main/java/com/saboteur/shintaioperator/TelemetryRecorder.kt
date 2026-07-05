@@ -1,6 +1,7 @@
 package com.saboteur.shintaioperator
 
 import android.util.Log
+import com.saboteur.shintai.core.Role
 import com.saboteur.shintai.core.ShintaiReadings
 import java.io.BufferedWriter
 import java.io.File
@@ -54,14 +55,18 @@ class TelemetryRecorder(private val dir: File) {
         }
     }
 
-    /** Append one snapshot row, stamped with the phone wall clock. */
-    fun writeRow(r: ShintaiReadings, wallMs: Long) {
+    /** Append one snapshot row, stamped with the phone wall clock and its source pod.
+     *  [role] is the Bunshin pod this snapshot came from (fwd/aft); null = single-source
+     *  capture, leaving `board` blank. Rows are written per-pod, mirroring the firmware
+     *  CSV `board` column so the base-side merge can align the two streams. */
+    fun writeRow(r: ShintaiReadings, role: Role?, wallMs: Long) {
         val w = writer ?: return
         val cells = listOf(
             wallMs.toString(),
             r.distanceLMm?.toString().orEmpty(), r.distanceRMm?.toString().orEmpty(),
             if (r.alertActive) "1" else "0", r.heading, r.accel,
             r.gps, r.climate, r.thermal, r.environment,
+            role?.name?.lowercase().orEmpty(),   // board: fwd / aft
         )
         try {
             w.write(cells.joinToString(",") { quote(it) })
@@ -91,6 +96,6 @@ class TelemetryRecorder(private val dir: File) {
     companion object {
         private const val TAG = "ShintaiRec"
         const val HEADER =
-            "wall_ms,distance_l,distance_r,alert,heading,accel,gps,climate,thermal,environment"
+            "wall_ms,distance_l,distance_r,alert,heading,accel,gps,climate,thermal,environment,board"
     }
 }

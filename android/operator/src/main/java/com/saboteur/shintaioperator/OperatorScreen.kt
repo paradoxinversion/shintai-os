@@ -27,8 +27,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.saboteur.shintai.core.Channel
 import com.saboteur.shintai.core.ConnectionState
 import com.saboteur.shintai.core.HokanPdr
+import com.saboteur.shintai.core.Precedence
+import com.saboteur.shintai.core.Role
 import com.saboteur.shintai.core.NEAR_MM
 import com.saboteur.shintai.core.ShintaiReadings
 import com.saboteur.shintai.core.Smell
@@ -64,6 +67,7 @@ fun OperatorScreen(vm: OperatorViewModel, onRequestPermissions: () -> Unit) {
     val logLines by vm.log.collectAsState()
     val distHist by vm.distanceHistory.collectAsState()
     val co2Hist by vm.co2History.collectAsState()
+    val pairingOpen by vm.pairingOpen.collectAsState()
     val units = vm.units
 
     Column(
@@ -77,9 +81,13 @@ fun OperatorScreen(vm: OperatorViewModel, onRequestPermissions: () -> Unit) {
     ) {
         TopBar(r, rec)
 
-        when (r.connection) {
-            ConnectionState.PermissionNeeded -> AccessPanel(onRequestPermissions)
-            ConnectionState.Idle -> PairPanel(scanning, devices, vm)
+        when {
+            r.connection == ConnectionState.PermissionNeeded -> AccessPanel(onRequestPermissions)
+            // First link, or re-opened to add the second pod over the live console.
+            r.connection == ConnectionState.Idle ->
+                PairPanel(scanning, devices, vm, r.perBoard.keys, onBack = null)
+            pairingOpen ->
+                PairPanel(scanning, devices, vm, r.perBoard.keys, onBack = vm::closePairing)
             else -> Console(r, units, distHist, co2Hist, rec.active, vm)
         }
 
@@ -108,6 +116,16 @@ private fun TopBar(r: ShintaiReadings, rec: RecordingUi) {
             color = if (r.connection == ConnectionState.Live) T.Phosphor else T.BoneDim,
             fontFamily = T.Mono, fontSize = 12.sp,
         )
+        // Bunshin: per-pod liveness — a dropped pod shows here even while the other stays live.
+        r.perBoard.entries.sortedBy { it.key.name }.forEach { (role, st) ->
+            Spacer(Modifier.width(8.dp))
+            StatusLed(ledColor(st), blink = st == ConnectionState.Disconnected)
+            Text(
+                " ${role.name.uppercase()}",
+                color = if (st == ConnectionState.Live) T.Phosphor else T.BoneDim,
+                fontFamily = T.Mono, fontSize = 11.sp,
+            )
+        }
     }
 }
 
@@ -232,6 +250,14 @@ private fun Console(
         Sparkline(co2Hist, T.Amber)
     }
 
+    // Bunshin: per-channel source precedence — appears only when two pods are linked.
+    MultiPodSources(vm)
+
+    // Bunshin: return to the pair screen to link the OTHER pod — until both are in.
+    if (r.perBoard.size < 2) {
+        ConsoleButton("Link Another Unit", vm::openPairing, modifier = Modifier.fillMaxWidth())
+    }
+
     // Controls.
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ConsoleButton(
@@ -244,6 +270,66 @@ private fun Console(
         )
         ConsoleButton("Unlink", vm::disconnect, modifier = Modifier.weight(1f))
     }
+}
+
+/** Bunshin: the Sources precedence control. When two pods are linked it lists every
+ *  channel both supply (contested → a pod toggle) and those only one supplies (info),
+ *  letting the wearer pick which pod wins each. Collects its own state so Console stays
+ *  one line lighter, and self-hides with a single pod. */
+@Composable
+private fun MultiPodSources(vm: OperatorViewModel) {
+    val podSupply by vm.podSupply.collectAsState()
+    val precedence by vm.precedence.collectAsState()
+    if (podSupply.size < 2) return
+    Panel("Sources") {
+        Text(
+            "Which pod wins each shared channel",
+            color = T.BoneDim, fontFamily = T.Mono, fontSize = 11.sp,
+        )
+        Spacer(Modifier.height(8.dp))
+        Channel.values().forEach { ch ->
+            val suppliers = podSupply.filterValues { ch in it }.keys.sortedBy { it.name }
+            when {
+                suppliers.size >= 2 -> ContestedRow(ch, suppliers, precedence[ch]?.firstOrNull(), vm)
+                suppliers.size == 1 -> SingleSourceRow(ch, suppliers.first())
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        ConsoleButton("Reset defaults", vm::resetPrecedence, modifier = Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun ContestedRow(ch: Channel, suppliers: List<Role>, preferred: Role?, vm: OperatorViewModel) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(channelLabel(ch), color = T.Bone, fontFamily = T.Mono, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        suppliers.forEach { role ->
+            ConsoleButton(role.name.uppercase(), { vm.setPreferred(ch, role) }, active = role == preferred)
+        }
+    }
+}
+
+@Composable
+private fun SingleSourceRow(ch: Channel, role: Role) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text(channelLabel(ch), color = T.BoneDim, fontFamily = T.Mono, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Text("${role.name.uppercase()} only", color = T.BoneDim, fontFamily = T.Mono, fontSize = 12.sp)
+    }
+}
+
+private fun channelLabel(ch: Channel): String = when (ch) {
+    Channel.Distance -> "Proximity"
+    Channel.Heading -> "Heading"
+    Channel.Accel -> "Accel"
+    Channel.Thermal -> "Thermal"
+    Channel.Climate -> "Climate"
+    Channel.Environment -> "Environment"
+    Channel.Gps -> "GPS"
+    Channel.Hokan -> "Steps"
 }
 
 /** Hokan's pedometer readout + dead-reckoned breadcrumb mini-map. Steps/cadence are
@@ -262,16 +348,33 @@ private fun NavigationPanel(pdr: HokanPdr) {
 }
 
 @Composable
-private fun PairPanel(scanning: Boolean, devices: List<DeviceEntry>, vm: OperatorViewModel) {
+private fun PairPanel(
+    scanning: Boolean,
+    devices: List<DeviceEntry>,
+    vm: OperatorViewModel,
+    linkedRoles: Set<Role>,
+    onBack: (() -> Unit)?,
+) {
     Panel("Pair", ledColor = if (scanning) T.Amber else T.PhosphorDim) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             ConsoleButton(
                 if (scanning) "Scanning…" else "Scan", vm::startScan,
                 modifier = Modifier.weight(1f), active = scanning,
             )
-            vm.lastAddress?.let { addr ->
-                ConsoleButton("Reconnect", { vm.connect(addr) }, modifier = Modifier.weight(1f))
+            // Add-a-pod mode shows Back (to the console); the first-link screen shows Reconnect.
+            if (onBack != null) {
+                ConsoleButton("Back", onBack, modifier = Modifier.weight(1f))
+            } else if (vm.hasLast) {
+                ConsoleButton("Reconnect", vm::reconnectLast, modifier = Modifier.weight(1f))
             }
+        }
+        if (linkedRoles.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Linked: " + linkedRoles.sortedBy { it.name }.joinToString(" ") { it.name.uppercase() } +
+                    " — pick the other unit",
+                color = T.Phosphor, fontFamily = T.Mono, fontSize = 11.sp,
+            )
         }
         Spacer(Modifier.height(10.dp))
         if (devices.isEmpty()) {
@@ -280,14 +383,16 @@ private fun PairPanel(scanning: Boolean, devices: List<DeviceEntry>, vm: Operato
                 color = T.BoneDim, fontFamily = T.Mono, fontSize = 12.sp,
             )
         } else {
-            devices.forEach { d -> DeviceRow(d) { vm.connect(d.address) } }
+            devices.forEach { d ->
+                DeviceRow(d, linked = vm.roleOf(d.name) in linkedRoles) { vm.connect(d) }
+            }
         }
     }
 }
 
 @Composable
-private fun DeviceRow(d: DeviceEntry, onLink: () -> Unit) {
-    val isBoard = d.name == ShintaiScanner.ADVERTISED_NAME
+private fun DeviceRow(d: DeviceEntry, linked: Boolean, onLink: () -> Unit) {
+    val isBoard = d.name?.startsWith(ShintaiScanner.ADVERTISED_NAME) == true
     Row(
         Modifier.fillMaxWidth().padding(vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -300,7 +405,12 @@ private fun DeviceRow(d: DeviceEntry, onLink: () -> Unit) {
             )
             Text("${d.address}  ${d.rssi} dBm", color = T.BoneDim, fontFamily = T.Mono, fontSize = 11.sp)
         }
-        ConsoleButton("Link", onLink, active = isBoard)
+        // A pod already linked (its role is in) shows a disabled marker, not a Link button.
+        if (linked) {
+            ConsoleButton("Linked", {}, enabled = false)
+        } else {
+            ConsoleButton("Link", onLink, active = isBoard)
+        }
     }
 }
 
