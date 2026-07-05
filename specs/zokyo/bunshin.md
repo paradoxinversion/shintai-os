@@ -2,7 +2,7 @@
 
 *Divided body: a second Shintai-OS host clipped elsewhere on you — two bodies sensing in parallel, folded back into one perception at the glasses and the phone.*
 
-**Status:** built (2026-07-04) — code-complete across all three modules + contract. **Both boards provisioned (2026-07-05):** fwd (`68:EE:8F:6E:77:BD`) + aft (`10:20:BA:0C:D3:51`, role set via `'R'`) flashed, roled, and MAC-verified via the `'M'` serial command; both `:glass` hardcoded MACs confirmed against hardware. **Remaining:** the live two-pod app test — two simultaneous GATT connections from Operator/Glass. · **Zōkyō:** Bunshin (sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) — **changes it** (adds a multi-producer model + a CSV column) · **Shares:** every existing channel (federates them) · **Date:** 2026-07-04
+**Status:** built (2026-07-05) — code-complete across all three modules + contract, and **validated end-to-end on hardware**: both boards flashed + roled (fwd `68:EE:8F:6E:77:BD`, aft `10:20:BA:0C:D3:51`, MACs read via the `'M'` command), and **both consumers hold two simultaneous GATT connections and render both pods merged** — Operator scans/links both (with the "Link Another Unit" flow), Glass connects both hardcoded MACs. · **Zōkyō:** Bunshin (sibling to [Rokkan](../../REGISTRY.md#rokkan-六感--sixth-sense)) · **Seam:** [CONTRACT.md](../../CONTRACT.md) — **changes it** (adds a multi-producer model + a CSV column) · **Shares:** every existing channel (federates them) · **Date:** 2026-07-04
 
 > Needs a **second QT Py ESP32-S3**. All solderless — each pod is its own Qwiic chain; the two never share a bus, only the contract. Benched on two USB banks (or two LiPos) — the pods are physically independent.
 

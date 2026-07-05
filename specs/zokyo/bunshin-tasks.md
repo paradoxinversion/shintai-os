@@ -3,6 +3,10 @@
 Task breakdown for [`bunshin.md`](bunshin.md). Ordered by dependency; estimates in
 story points (1/2/3/5/8). Check off `Done:` as each lands.
 
+**All 8 tasks complete** + hardware-provisioned (both boards flashed/roled/MAC-verified)
+and validated end-to-end on the Pixel (Operator) and RayNeo X3 Pro (Glass): both
+consumers hold two simultaneous GATT connections and render both pods merged.
+
 ---
 
 ### Task 1: Firmware — role identity (NVS role, `ShintaiOS-<role>` name, `'R'` setter)
