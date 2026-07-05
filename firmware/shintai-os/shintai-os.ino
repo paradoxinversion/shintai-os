@@ -270,6 +270,14 @@ const char* CSV_HEADER =
 // Each power-up writes a new sequential file (/shtNNNN.csv). Rows are logged
 // only while UNtethered (no USB host), so tethered live sessions are unaffected.
 Preferences prefs;
+
+// Bunshin (分身): this pod's role — "fwd" (forward / head-side) or "aft" (pack-side).
+// The SAME binary runs on both pods; role is data (NVS key "role"), not a build flag.
+// It names the BLE device ShintaiOS-<role> so a central can tell the two pods apart.
+// Set/cycled live with the 'R' serial command; applied at boot (the BLE name is fixed
+// at init), so a change takes effect on the next reset. Defaults to "fwd" until set.
+String podRole = "fwd";
+
 File logFile;
 bool fsReady = false;
 char logPath[24];
@@ -442,6 +450,12 @@ void setup() {
 
   // ── Onboard flash logging (FFat) ──
   prefs.begin("shintai", false);
+
+  // Bunshin: load this pod's role (NVS) before BLE init names the device from it.
+  // (This boot line is uncatchable after a reset — native-USB re-enum outruns the
+  //  serial wait; verify role via the 'R' echo and the advertised ShintaiOS-<role>.)
+  podRole = prefs.getString("role", "fwd");
+  Serial.println("[OK] Bunshin pod role: '" + podRole + "' — advertises as 'ShintaiOS-" + podRole + "'");
   if (FFat.begin(true)) {          // format on first use
     openNewLog();
     fsReady = (bool)logFile;
@@ -532,7 +546,10 @@ void setup() {
   }
 
   // BLE
-  BLEDevice::init("ShintaiOS");
+  // Bunshin: name carries the pod's identity — ShintaiOS-fwd / ShintaiOS-aft. The
+  // service UUID is identical on both pods; a central tells them apart by this name.
+  String bleName = "ShintaiOS-" + podRole;
+  BLEDevice::init(bleName.c_str());
   // Metsuke's 68-byte grid exceeds the default 20-byte ATT payload, so allow a
   // larger MTU; the central drives the actual negotiation (the apps request 247).
   BLEDevice::setMTU(247);
@@ -577,7 +594,7 @@ void setup() {
 
   service->start();
   server->getAdvertising()->start();
-  Serial.println("[OK] BLE advertising as 'ShintaiOS'");
+  Serial.println("[OK] BLE advertising as '" + bleName + "'");
 
   // Aizu — shared feedback arbiter: brings up the onboard NeoPixel (+ power pin)
   // and the BOOT-button gesture layer. Sole writer of the pixel; sources post
@@ -924,6 +941,13 @@ void loop() {
     else if (cmd == 'I' || cmd == 'i') { scanI2C();   lastUpdate = millis(); }
     else if (cmd == 'T' || cmd == 't') { probeTof();  lastUpdate = millis(); }
     else if (cmd == 'G' || cmd == 'g') { probeGrid(); lastUpdate = millis(); }
+    else if (cmd == 'R' || cmd == 'r') {   // Bunshin: cycle this pod's role fwd<->aft
+      podRole = (podRole == "fwd") ? "aft" : "fwd";
+      prefs.putString("role", podRole);
+      Serial.println("[role] set to '" + podRole +
+                     "' — reboot to re-advertise as 'ShintaiOS-" + podRole + "'");
+      lastUpdate = millis();
+    }
   }
 
   // Kehai reflex (ToF -> Aizu cue) + Aizu render, both on their own fast clocks —
