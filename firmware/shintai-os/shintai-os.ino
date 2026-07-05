@@ -109,7 +109,10 @@ uint8_t  oledPage     = PANE_HOME;
 bool     oledDirty    = true;    // force a redraw (set on a page change)
 bool     paneReady    = false;   // first telemetry snapshot captured (live pages have data)
 uint32_t oledLastDraw = 0;
-const uint32_t OLED_REFRESH_MS = 750;   // live-page redraw cadence (HOME is static)
+const uint32_t OLED_REFRESH_MS = 750;   // live-page redraw cadence
+const uint32_t OLED_ANIM_MS    = 33;    // HOME redraw cadence (~30 fps) — spins the splash cube
+                                        // (a full SSD1306 display() is ~25 ms over I2C, so this
+                                        // is near the bus ceiling; the loop blocks in it while on HOME)
 
 // APDS9960 gesture / proximity / light sensor (STEMMA QT, 0x39) — the pane's swipe
 // input. Only the gesture engine is used here (proximity must be on to feed it); the
@@ -791,6 +794,30 @@ void probeGrid() {
 // Each page draws from the `pane` snapshot (+ the already-global env state), so it can
 // repaint from the fast loop section the instant a swipe changes the page.
 
+// A little spinning wireframe cube, centred at (cx, cy) with half-size `s` px. Pure
+// GFX lines — the display is mono, but the tumble reads as 3D on its own. The 8 unit
+// corners are rotated by two millis()-driven angles (different rates -> a lazy tumble),
+// orthographically projected, and joined by the 12 edges. Angle comes from millis(),
+// so it advances every HOME redraw (OLED_ANIM_MS) with no extra state.
+static void drawCube(int16_t cx, int16_t cy, float s) {
+  float a = millis() * 0.0011f, b = millis() * 0.0008f;   // yaw / pitch — a slow, calm tumble
+  float ca = cosf(a), sa = sinf(a), cb = cosf(b), sb = sinf(b);
+  int16_t px[8], py[8];
+  for (int i = 0; i < 8; i++) {
+    float x = (i & 1) ? 1.f : -1.f, y = (i & 2) ? 1.f : -1.f, z = (i & 4) ? 1.f : -1.f;
+    float x1 =  x * ca + z * sa,  z1 = -x * sa + z * ca;    // rotate about Y (yaw)
+    float y2 =  y * cb - z1 * sb;                           // rotate about X (pitch)
+    px[i] = cx + (int16_t)(s * x1);
+    py[i] = cy - (int16_t)(s * y2);
+  }
+  // 12 edges: corner pairs differing in exactly one axis bit (x, then y, then z).
+  static const uint8_t E[12][2] = {
+    {0,1},{2,3},{4,5},{6,7}, {0,2},{1,3},{4,6},{5,7}, {0,4},{1,5},{2,6},{3,7}
+  };
+  for (int e = 0; e < 12; e++)
+    oled.drawLine(px[E[e][0]], py[E[e][0]], px[E[e][1]], py[E[e][1]], SSD1306_WHITE);
+}
+
 // Centre a string on the 128 px width via GFX text metrics.
 static void oledCenter(const char* s, uint8_t size, int16_t y) {
   oled.setTextSize(size);
@@ -822,9 +849,10 @@ void renderPane(uint8_t page) {
   switch (page) {
     case PANE_HOME:                             // identity splash (also the boot screen)
       oled.drawRect(0, 0, OLED_W, OLED_H, SSD1306_WHITE);
-      oledCenter("SHINTAI-OS", 2, 15);
-      oled.drawLine(16, 39, OLED_W - 16, 39, SSD1306_WHITE);
-      oledCenter("field system", 1, 47);
+      oledCenter("SHINTAI-OS", 2, 3);
+      oled.drawLine(14, 22, OLED_W - 14, 22, SSD1306_WHITE);
+      drawCube(OLED_W / 2, 39, 7.0f);           // spinning cube in the lower splash zone
+      oledCenter("field system", 1, 54);
       break;
 
     case PANE_NAV:
@@ -922,8 +950,10 @@ void loop() {
     // APDS9960_UP / _DOWN reserved.
   }
   if (oledPresent) {
-    bool livePage = (oledPage != PANE_HOME);
-    bool refresh  = livePage && paneReady && (uint32_t)(millis() - oledLastDraw) >= OLED_REFRESH_MS;
+    uint32_t sinceDraw = (uint32_t)(millis() - oledLastDraw);
+    // HOME animates the cube at ~20 fps; live pages refresh their data at 750 ms.
+    bool refresh = (oledPage == PANE_HOME) ? (sinceDraw >= OLED_ANIM_MS)
+                                           : (paneReady && sinceDraw >= OLED_REFRESH_MS);
     if (oledDirty || refresh) { renderPane(oledPage); oledLastDraw = millis(); oledDirty = false; }
   }
 
