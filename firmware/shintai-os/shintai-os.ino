@@ -948,6 +948,10 @@ void loop() {
                      "' — reboot to re-advertise as 'ShintaiOS-" + podRole + "'");
       lastUpdate = millis();
     }
+    else if (cmd == 'M' || cmd == 'm') {   // print this board's BLE MAC (for :glass's hardcoded address)
+      Serial.println("[ble] ShintaiOS-" + podRole + " MAC " + String(BLEDevice::getAddress().toString().c_str()));
+      lastUpdate = millis();
+    }
   }
 
   // Kehai reflex (ToF -> Aizu cue) + Aizu render, both on their own fast clocks —

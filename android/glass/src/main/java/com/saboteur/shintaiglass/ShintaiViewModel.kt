@@ -128,7 +128,7 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
          * present just fails gracefully to Disconnected, so a single-pod rig works too.
          */
         const val FWD_ADDRESS = "68:EE:8F:6E:77:BD"
-        const val AFT_ADDRESS = "68:EE:8F:00:00:00"   // ← set to your aft pod's MAC
+        const val AFT_ADDRESS = "10:20:BA:0C:D3:51"   // read from the aft board via the 'M' serial command
 
         /** Bunshin: the two pods the HUD federates, by role. */
         private val POD_ADDRESSES = mapOf(Role.Fwd to FWD_ADDRESS, Role.Aft to AFT_ADDRESS)
