@@ -56,7 +56,9 @@ import com.saboteur.shintai.core.Smell
 import com.saboteur.shintai.core.Units
 import com.saboteur.shintai.core.distanceParts
 import com.saboteur.shintai.core.formatClimate
+import com.saboteur.shintai.core.formatFuda
 import com.saboteur.shintai.core.formatGps
+import com.saboteur.shintai.core.formatPm25
 import com.saboteur.shintai.core.formatThermal
 
 /** Width:height above which we treat the surface as a side-by-side stereo display.
@@ -281,6 +283,12 @@ private fun EyePane(
                 ReadoutRow("ACCEL", r.accel)
                 ReadoutRow("GPS", formatGps(r.gps, units))
                 ReadoutRow("CLIMATE", formatClimate(r.climate, units))
+                // Enmu: the health-relevant PM2.5 fraction only — the lean HUD's air-quality
+                // heads-up; the full PM1.0/2.5/10 triad stays on the Operator console.
+                ReadoutRow("AIR PM2.5", formatPm25(r.particulate))
+                // Fuda: the scanned tag's UID alone — the identity heads-up; the RF type
+                // stays on the Operator console.
+                ReadoutRow("NFC TAG", formatFuda(r.fuda).first)
                 ReadoutRow("THERMAL", formatThermal(r.thermal, units))
                 // Hokan: cumulative steps + cadence (the pedometer readout). Always
                 // shown so the row layout is stable; the PDR mini-map below appears

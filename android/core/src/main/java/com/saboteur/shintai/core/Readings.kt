@@ -24,6 +24,8 @@ data class ShintaiReadings(
     val climate: String = "—",         // e.g. "23.0C 41%RH 750ppm" (SCD-40, warms up ~5s)
     val thermal: String = "—",         // e.g. "Ctr:23.1 Min:22.6 Max:31.4C" (MLX90640)
     val environment: String = "—",     // e.g. "1007.2hPa 84200ohm 22.8C 39%RH" (BME688)
+    val particulate: String = "—",     // e.g. "PM1.0:12 PM2.5:34 PM10:56 ug/m3" (Enmu, PMSA003I)
+    val fuda: String = "—",            // e.g. "UID:04A1B2C3 ISO14443A" (Fuda, PN532); event-driven, last tag read
     val kyukaku: KyukakuState = KyukakuState(),  // Kyūkaku's smell state, derived from environment's gas_ohms
     val thermalGrid: ThermalGrid? = null,  // Metsuke's 8x8 heat grid, null until the first frame
     val hokan: HokanPdr? = null,       // Hokan's dead-reckoned breadcrumb, null until the first notify
@@ -197,6 +199,11 @@ fun ShintaiReadings.fold(uuid: UUID, value: String): ShintaiReadings {
         // smell state (no BLE channel of its own — see Kyukaku.kt). Both apps get it.
         ShintaiGatt.ENVIRONMENT -> base.copy(environment = value, kyukaku = base.kyukaku.fold(value))
         ShintaiGatt.HOKAN -> base.copy(hokan = HokanPdr.fold(base.hokan, value))
+        // Enmu: particulate readout, stored raw for display (µg/m³ needs no unit conversion).
+        ShintaiGatt.PARTICULATE -> base.copy(particulate = value)
+        // Fuda: NFC tag readout, stored raw ("UID:<hex> <type>"). Event-driven — only
+        // arrives on a scan; the last tag persists until the next notify.
+        ShintaiGatt.FUDA -> base.copy(fuda = value)
         else -> base
     }
 }

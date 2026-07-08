@@ -28,6 +28,8 @@ profiles:
       - Adafruit NeoPixel (1.15.5)   # Aizu's onboard-pixel output sink (specs/platform/aizu.md)
       - Adafruit SSD1306 (2.5.17)    # 1.3" 128x64 mono OLED (Adafruit #938) — tertiary info pane. This unit is SSD1306, not SH1106 (confirmed on hardware: SH110X left it dark = no charge-pump enable)
       - Adafruit APDS9960 Library (1.3.1)   # gesture/proximity sensor — swipe input for the OLED pane
+      - Adafruit PM25 AQI Sensor (1.1.0)    # PMSA003I particulate (Enmu) — PM1.0/2.5/10 over I2C 0x12
+      - Adafruit PN532 (1.3.4)              # PN532 NFC/RFID (Fuda) — ISO14443A tag UID over I2C 0x24
       # transitive deps (profiles use an isolated lib set — must be explicit)
       - Sensirion Core (0.7.3)
       - Adafruit BusIO (1.17.4)

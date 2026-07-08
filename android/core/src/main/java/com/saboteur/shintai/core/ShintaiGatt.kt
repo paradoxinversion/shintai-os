@@ -36,6 +36,15 @@ object ShintaiGatt {
      *  integrate it into a dead-reckoned mini-map. See CONTRACT.md. */
     val HOKAN: UUID = UUID.fromString("abcdf007-ab12-ab12-ab12-abcdef123456")
 
+    /** Enmu's particulate readout: "PM1.0:.. PM2.5:.. PM10:.. ug/m3" (string).
+     *  The BLE-live twin of the pm*_ugm3 CSV columns. See CONTRACT.md. */
+    val PARTICULATE: UUID = UUID.fromString("abcdd057-ab12-ab12-ab12-abcdef123456")
+
+    /** Fuda's NFC tag readout: "UID:<hex> <type>" (string). Event-driven — the board
+     *  notifies only when the PN532 reads an ISO14443A tag. The BLE-live twin of the
+     *  nfc_uid / nfc_type CSV columns. See CONTRACT.md. */
+    val FUDA: UUID = UUID.fromString("abcdfada-ab12-ab12-ab12-abcdef123456")
+
     /** Metsuke's binary heat grid (68 packed bytes, not a string). See [BINARY]. */
     val THERMAL_GRID: UUID = UUID.fromString("abcd7890-ab12-ab12-ab12-abcdef123456")
 
@@ -53,5 +62,5 @@ object ShintaiGatt {
      *  out of the string set). Apps pass the subset they render to [ShintaiBleClient];
      *  nothing forces an app to take them all (the Glass HUD skips [ENVIRONMENT]). */
     val ALL: List<UUID> =
-        listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT, HOKAN)
+        listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT, HOKAN, PARTICULATE, FUDA)
 }

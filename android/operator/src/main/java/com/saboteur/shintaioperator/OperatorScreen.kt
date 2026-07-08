@@ -40,6 +40,7 @@ import com.saboteur.shintai.core.distanceParts
 import com.saboteur.shintai.core.label
 import com.saboteur.shintai.core.formatClimate
 import com.saboteur.shintai.core.formatEnvironment
+import com.saboteur.shintai.core.formatFuda
 import com.saboteur.shintai.core.formatGps
 import com.saboteur.shintai.core.formatTemp
 import com.saboteur.shintai.core.formatThermal
@@ -148,6 +149,9 @@ private fun AirPanel(r: ShintaiReadings, units: Units) {
         Spacer(Modifier.height(8.dp))
         ReadoutRow("Climate", formatClimate(r.climate, units))
         ReadoutRow("Environment", formatEnvironment(r.environment, units))
+        // Enmu: particulate (µg/m³ — unit-agnostic, rendered raw). The full PM1.0/2.5/10
+        // triad on the console; the glasses show only the health-relevant PM2.5.
+        ReadoutRow("Particulate", r.particulate)
         ReadoutRow(
             "Nose", r.kyukaku.smell.label.uppercase(), "r ${"%.2f".format(r.kyukaku.ratio)}",
             valueColor = when (r.kyukaku.smell) {
@@ -166,6 +170,19 @@ private fun AirPanel(r: ShintaiReadings, units: Units) {
             if (smell == Smell.Spike) "Nose — the air just changed" else "Nose — air is foul",
             alarm = false, color = T.Violet,
         )
+    }
+}
+
+/** IDENTITY — Fuda's NFC/RFID tag read. Its own section, NOT an air sense: the
+ *  platform's first *identity* channel — who/what (a discrete tag), not a physical
+ *  scalar. Event-driven, so like Navigation/Thermal Grid it renders only once a tag has
+ *  been read, then persists the last one (UID + RF type). */
+@Composable
+private fun IdentityPanel(r: ShintaiReadings) {
+    val (uid, type) = formatFuda(r.fuda)
+    Panel("Identity") {
+        ReadoutRow("Tag UID", uid)
+        ReadoutRow("Type", type)
     }
 }
 
@@ -240,6 +257,10 @@ private fun Console(
     // AIR — climate + environment + Kyūkaku's derived smell. Its own composable so
     // Console stays within the method-length/complexity budget (same as NavigationPanel).
     AirPanel(r, units)
+
+    // IDENTITY — Fuda's NFC tag. Its own category (not air); event-driven, so present
+    // only once a tag has been read (then it persists the last one).
+    if (r.fuda != "—") IdentityPanel(r)
 
     // TREND — rolling history the glasses don't keep.
     Panel("Trend") {
@@ -330,6 +351,8 @@ private fun channelLabel(ch: Channel): String = when (ch) {
     Channel.Environment -> "Environment"
     Channel.Gps -> "GPS"
     Channel.Hokan -> "Steps"
+    Channel.Particulate -> "Particulate"
+    Channel.Fuda -> "NFC Tag"
 }
 
 /** Hokan's pedometer readout + dead-reckoned breadcrumb mini-map. Steps/cadence are

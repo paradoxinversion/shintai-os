@@ -90,6 +90,15 @@ def dashboard(vals, samples, csv_name):
     if press or gas:
         out.append(f"ENV        {press or '—'} hPa  {f'{float(gas)/1000:.1f} kΩ' if gas else '—'} gas")
 
+    pm25 = _num(g("pm2_5_ugm3"), 0)      # Enmu particulate — PM2.5 the headline, PM1.0/PM10 alongside
+    if pm25:
+        out.append(f"AQI        PM2.5 {pm25}  PM10 {_num(g('pm10_ugm3'), 0)}  "
+                   f"PM1.0 {_num(g('pm1_0_ugm3'), 0)} µg/m³")
+
+    uid = g("nfc_uid")                   # Fuda NFC — last tag read (string UID + type); blank = no tag
+    if uid:
+        out.append(f"NFC        {uid}  {g('nfc_type')}")
+
     if g("gps_fix") == "1":
         out.append(f"GPS        {_num(g('lat'), 5)},{_num(g('lon'), 5)}  "
                    f"{_num(g('speed_kmh'))}km/h  {g('sats')} sats")
