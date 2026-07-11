@@ -190,7 +190,7 @@ fun SegmentBar(
     }
 }
 
-/** Metsuke's 16×12 thermal grid as a false-colour heat panel (ironbow, shared with
+/** Metsuke's 32×24 thermal grid as a false-colour heat panel (ironbow, shared with
  *  Glass via `:core`), bilinear-upscaled so the coarse grid reads as a smooth heat
  *  image. A phone screen can carry a full fill, so hot cells are bright, cool dark.
  *  The 4:3 box matches the grid's native aspect (no geometric distortion). */

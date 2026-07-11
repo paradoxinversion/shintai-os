@@ -25,7 +25,7 @@ data class ShintaiReadings(
     val thermal: String = "—",         // e.g. "Ctr:23.1 Min:22.6 Max:31.4C" (MLX90640)
     val environment: String = "—",     // e.g. "1007.2hPa 84200ohm 22.8C 39%RH" (BME688)
     val kyukaku: KyukakuState = KyukakuState(),  // Kyūkaku's smell state, derived from environment's gas_ohms
-    val thermalGrid: ThermalGrid? = null,  // Metsuke's 8x8 heat grid, null until the first frame
+    val thermalGrid: ThermalGrid? = null,  // Metsuke's 32×24 heat grid, null until the first frame
     val hokan: HokanPdr? = null,       // Hokan's dead-reckoned breadcrumb, null until the first notify
     val packets: Int = 0,              // total notifications received — a visible heartbeat
     val perBoard: Map<Role, ConnectionState> = emptyMap(),  // Bunshin: per-pod connection (empty = single-producer)
@@ -35,7 +35,7 @@ enum class ConnectionState { Idle, PermissionNeeded, Connecting, Discovering, Li
 
 /**
  * Metsuke's decoded thermal grid (the contract's one binary characteristic).
- * [cells] is a row-major 16×12 of 0..255 normalised levels; [minC]/[maxC] are the
+ * [cells] is a row-major 32×24 of 0..255 normalised levels; [minC]/[maxC] are the
  * scene's temperature range in °C, so the renderer auto-ranges the palette across
  * exactly the span these cells were normalised over. Uses `List<Int>` (not IntArray)
  * so the enclosing data class keeps value equality.
@@ -46,18 +46,68 @@ data class ThermalGrid(
     val cells: List<Int>,
 ) {
     companion object {
-        const val W = 16
-        const val H = 12
-        const val BYTES = 196
+        const val W = 32
+        const val H = 24
+        const val CELLS = W * H          // 768 (full native MLX90640 resolution)
+        const val BYTES = 4 + CELLS      // 772 — the reassembled canonical grid
+        const val CHUNKS = 4             // chunks per frame on the wire
+        const val CHUNK_HEADER = 7       // frame_seq + chunk_index + chunk_count + min_dC + max_dC
 
-        /** Parse a 68-byte little-endian packet (see CONTRACT.md "Thermal Grid"); null if short. */
+        /**
+         * Parse the reassembled **772-byte canonical grid** (int16 min/max + 768 cells); null if
+         * short. The wire delivers each frame as [CHUNKS] chunks — [ThermalGridAssembler]
+         * reassembles them before this runs. See CONTRACT.md "Thermal Grid".
+         */
         fun parse(b: ByteArray): ThermalGrid? {
             if (b.size < BYTES) return null
             // Little-endian signed int16: combine bytes then narrow to Short for the sign.
             fun le16(i: Int): Int =
                 ((((b[i + 1].toInt() and 0xFF) shl 8) or (b[i].toInt() and 0xFF)).toShort()).toInt()
-            val cells = List(W * H) { b[4 + it].toInt() and 0xFF }
+            val cells = List(CELLS) { b[4 + it].toInt() and 0xFF }
             return ThermalGrid(minC = le16(0) / 10f, maxC = le16(2) / 10f, cells = cells)
+        }
+    }
+}
+
+/**
+ * Reassembles the chunked Thermal Grid (CONTRACT.md "Thermal Grid"): the wire delivers each
+ * 32×24 frame as [ThermalGrid.CHUNKS] chunks, and this buffers them by `frame_seq`, emitting
+ * the full 772-byte canonical grid the instant every chunk of one frame has arrived. Stateful —
+ * one per connection; an incomplete frame (a dropped chunk) is discarded when the next
+ * `frame_seq` begins. Kept in `:core` so both apps reassemble identically.
+ */
+class ThermalGridAssembler {
+    private var frameSeq = -1
+    private var received = 0                        // bitmask of chunk indices seen this frame
+    private var count = 0
+    private val header = ByteArray(4)               // frame-global min/max (int16 LE ×2)
+    private val cells = ByteArray(ThermalGrid.CELLS)
+
+    /** Feed one wire chunk; returns the 772-byte canonical grid when a frame completes, else null. */
+    fun feed(chunk: ByteArray): ByteArray? {
+        if (chunk.size < ThermalGrid.CHUNK_HEADER) return null
+        val seq = chunk[0].toInt() and 0xFF
+        val idx = chunk[1].toInt() and 0xFF
+        val cnt = chunk[2].toInt() and 0xFF
+        // One combined guard (detekt caps returns at 5): a valid chunk_count (≤32 for the
+        // Int bitmask, dividing the grid evenly), an in-range index, and enough bytes.
+        val per = if (cnt in 1..32 && ThermalGrid.CELLS % cnt == 0) ThermalGrid.CELLS / cnt else 0
+        if (per == 0 || idx >= cnt || chunk.size < ThermalGrid.CHUNK_HEADER + per) return null
+
+        if (seq != frameSeq) {                                   // a new frame — reset accumulation
+            frameSeq = seq
+            count = cnt
+            received = 0
+            System.arraycopy(chunk, 3, header, 0, 4)             // min/max (repeated in every chunk)
+        }
+        System.arraycopy(chunk, ThermalGrid.CHUNK_HEADER, cells, idx * per, per)
+        received = received or (1 shl idx)
+
+        if (received != (1 shl count) - 1) return null           // frame not yet complete
+        received = 0                                             // consumed; await the next frame
+        return ByteArray(ThermalGrid.BYTES).also {
+            System.arraycopy(header, 0, it, 0, 4)
+            System.arraycopy(cells, 0, it, 4, ThermalGrid.CELLS)
         }
     }
 }

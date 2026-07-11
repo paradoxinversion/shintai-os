@@ -176,11 +176,31 @@ All five opening questions are resolved; recorded here as the build contract.
 - **Registry (build-time)** — Metsuke earns a Zōkyō row beside Rokkan/Kanki/Nesshi, noting it depends
   on Shikai and is the first contract-touching module.
 
+## Perceived-clarity pass (built)
+
+A **no-contract-change** clarity pass sits on the emit path (`ThermalGrid.h`
+`metsukePackGridFiltered`, `serviceThermal`): the SAME 16×12 / 196-byte grid is run
+through two one-pole EMAs before packing —
+
+- **per-cell temporal denoise** (`METSUKE_CELL_ALPHA`, default 0.5) smooths each cell
+  over time, killing the MLX90640's 8 Hz per-frame speckle; and
+- **steadied palette range** (`METSUKE_RANGE_ALPHA`, default 0.3) EMAs the min/max
+  bounds so the consumer's palette stops "gain-pumping" as hot/cold cells flicker.
+
+Both seed verbatim on the first frame (a fresh subscriber sees the true scene at once)
+and the filter is reset on each new subscribe. The wire format, min/max semantics, and
+consumer are untouched — only the numbers are cleaner/steadier. Host-tested in
+`tools/thermal-grid-test.cpp` (seed-verbatim, transient attenuation + convergence,
+NaN-frame safety). Set either alpha to 1.0 to disable that stage.
+
 ## Forward path
 
 - **Registered overlay:** boresight the MLX90640 to the eyeline, calibrate FOV, and warp the grid to
   a world-locked see-through thermal overlay — true heat-vision.
-- **Higher resolution:** 16×12 on a negotiated MTU, or the **PSRAM QT Py** / **FLIR Lepton** for real
-  imaging — the registry's documented upgrade path.
-- **Interpolation + logging option:** bilinear upscaling of the coarse grid in the glasses for a
-  smoother panel; an opt-in "record thermal" mode if a session ever needs the grid on disk.
+- **Higher resolution:** 16×12 is shipped; the real remaining jump is the sensor's full **32×24**
+  (768 px, 4×) — too big for one notification (772 B > the 244 B payload / 514 B even at Android's
+  517 MTU cap), so it needs a **chunked/fragmented grid** or compression, and is a **contract change**.
+  Beyond 768 px is a sensor swap: **PSRAM QT Py** + **FLIR Lepton** for real imaging (registry's path).
+- **Interpolation:** bicubic/Lanczos upscaling in the consumers (currently bilinear) for a smoother
+  panel — zero BLE cost, a per-app render change. Plus an opt-in "record thermal" mode if a session
+  ever needs the grid on disk.
