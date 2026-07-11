@@ -23,6 +23,7 @@
 #include "HokanDsp.h"    // Hokan step-reckoning (specs/zokyo/hokan.md): fast IMU -> steps + fall SOS
 #include "KyukakuBand.h" // Kyūkaku sense of smell (specs/zokyo/kyukaku.md): bmeGas -> baseline ratio -> Aizu cue
 #include "KiatsuBand.h"  // Kiatsu barometric sense (specs/zokyo/kiatsu.md): bmePressure -> 3 h trend -> Aizu cue
+#include "AndonPanel.h"  // Andon LED-matrix lantern (specs/zokyo/andon.md): raw-Wire 8x12 mono panel, raindrop flair
 
 // BLE UUIDs
 #define SERVICE_UUID        "12345678-1234-1234-1234-123456789abc"
@@ -371,7 +372,7 @@ void scanI2C() {
     Wire.beginTransmission(a);
     if (Wire.endTransmission() == 0) { Serial.printf("  0x%02X\n", a); n++; }
   }
-  Serial.printf("  %d device(s) (expect ToF mux=0x70 [gates 0x29x2], IMU=0x6a, mag=0x1c/0x1e, GPS=0x10, thermal=0x33, SCD=0x62, BME=0x77)\n", n);
+  Serial.printf("  %d device(s) (expect ToF mux=0x70 [gates 0x29x2], IMU=0x6a, mag=0x1c/0x1e, GPS=0x10, thermal=0x33, SCD=0x62, BME=0x77, APDS=0x39, Andon matrix=0x3f)\n", n);
 }
 
 // Probe the VL53L4CX directly: report the boot presence flag, then poll for a
@@ -626,6 +627,12 @@ void setup() {
   } else {
     Serial.println("[WARN] APDS9960 not found @ 0x39 — pane swipe paging disabled");
   }
+
+  // Andon — the LED-matrix lantern (output surface, no telemetry). Presence-gated
+  // like every device: absent -> the panel stays dark, nothing else changes. The
+  // Modulino matrix ships at 0x39 (which the APDS9960 above already owns), so it is
+  // readdressed once to 0x3F on the bench before it goes on the shared bus.
+  andonBegin();
 
   // Nesshi — subscribe to Aizu's BOOT HOLD gesture (AZ-9): hold to read the surface
   // temp at the centre of the thermal FOV as a colour; a double-hold reads the
@@ -984,6 +991,10 @@ void loop() {
                                            : (paneReady && sinceDraw >= OLED_REFRESH_MS);
     if (oledDirty || refresh) { renderPane(oledPage); oledLastDraw = millis(); oledDirty = false; }
   }
+
+  // Andon LED-matrix flair — self-paced (~11 fps), before the telemetry gate so the
+  // raindrops animate smoothly off the 1500 ms cycle. No-op when the panel is absent.
+  andonService(millis());
 
   if (millis() - lastUpdate < UPDATE_MS) return;
   lastUpdate = millis();
