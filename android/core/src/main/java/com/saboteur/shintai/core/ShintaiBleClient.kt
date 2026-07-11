@@ -214,11 +214,19 @@ class ShintaiBleClient(
         }
     }
 
+    private val thermalAssembler = ThermalGridAssembler()
+
     private fun deliver(uuid: UUID, bytes: ByteArray) {
         // Binary characteristics (the thermal grid) go out as raw bytes; everything
         // else is a UTF-8 string. Decoding the packed grid as text would corrupt it.
         if (uuid in ShintaiGatt.BINARY) {
-            listener.onBinary(uuid, bytes)
+            if (uuid == ShintaiGatt.THERMAL_GRID) {
+                // The 32×24 grid arrives as chunks; only surface a full frame once the
+                // assembler has reassembled all of them (CONTRACT.md "Thermal Grid").
+                thermalAssembler.feed(bytes)?.let { listener.onBinary(uuid, it) }
+            } else {
+                listener.onBinary(uuid, bytes)
+            }
         } else {
             listener.onValue(uuid, bytes.decodeToString())
         }

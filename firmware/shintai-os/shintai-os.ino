@@ -18,11 +18,12 @@
 #include "Aizu.h"        // shared on-body output bus (specs/platform/aizu.md): sole NeoPixel writer
 #include "KehaiBand.h"   // Kehai-Hikari proximity reflex (specs/zokyo/kehai-hikari.md): distance -> Aizu cue
 #include "KankiBand.h"   // Kanki air-quality sense (specs/zokyo/kanki.md): co2_ppm -> Aizu ambient cue
-#include "ThermalGrid.h" // Metsuke thermal sight (specs/zokyo/metsuke.md): MLX frame -> packed 8x8 heat grid
+#include "ThermalGrid.h" // Metsuke thermal sight (specs/zokyo/metsuke.md): MLX frame -> denoised 16x12 heat grid
 #include "NesshiBand.h"  // Nesshi heat-sight (specs/zokyo/nesshi.md): hold BOOT -> surface temp -> Aizu cue
 #include "HokanDsp.h"    // Hokan step-reckoning (specs/zokyo/hokan.md): fast IMU -> steps + fall SOS
 #include "KyukakuBand.h" // Kyūkaku sense of smell (specs/zokyo/kyukaku.md): bmeGas -> baseline ratio -> Aizu cue
 #include "KiatsuBand.h"  // Kiatsu barometric sense (specs/zokyo/kiatsu.md): bmePressure -> 3 h trend -> Aizu cue
+#include "AndonPanel.h"  // Andon LED-matrix lantern (specs/zokyo/andon.md): raw-Wire 8x12 mono panel, raindrop flair
 
 // BLE UUIDs
 #define SERVICE_UUID        "12345678-1234-1234-1234-123456789abc"
@@ -134,13 +135,24 @@ struct PaneSnapshot {
 } pane = {};
 
 float thermalFrame[32 * 24];
+MetsukeFilter metsukeFilter;   // temporal denoise + steadied palette range (ThermalGrid.h)
+
+// Metsuke chunked-grid TX pacer. A 32x24 frame is METSUKE_CHUNKS notifications; firing
+// them back-to-back overruns the BLE tx path so chunks drop/tear (garbage header +
+// scrambled panel). Stage the built grid here and let serviceThermalTx() emit one chunk
+// per ~connection interval instead.
+uint8_t  metsukeGrid[METSUKE_GRID_BYTES];   // staged canonical grid awaiting chunked TX
+uint8_t  metsukeFrameSeq   = 0;             // ++ per built frame (the chunk frame_seq)
+int      metsukeChunksLeft = 0;             // chunks staged but unsent (0 = idle)
+uint32_t metsukeLastChunkMs = 0;
+const uint32_t METSUKE_CHUNK_TX_MS = 30;    // one chunk per ~30 ms (>= a BLE conn interval)
 
 // Metsuke (目付) — live thermal grid over BLE. The MLX90640 frame is now serviced
 // on its own ~2 Hz tick (serviceThermal), the single read site; the 1500 ms
 // telemetry block consumes the cached frame for its summary temps, so the two
 // never fight over getFrame (same pattern Kehai uses for the ToF). On each fresh
-// frame Metsuke downsamples 32x24 -> 8x8, packs 68 bytes, and notifies the grid
-// characteristic — gated on a subscribed central. NOTE: getFrame() blocks while
+// frame Metsuke downsamples 32x24 -> 16x12, denoises + packs 196 bytes, and notifies
+// the grid characteristic — gated on a subscribed central. NOTE: getFrame() blocks while
 // reading; validate on-wrist that this 2 Hz cadence doesn't hitch the Kehai
 // reflex (see specs/platform/follow-up-work.md).
 const int     THERMAL_MS     = 500;      // ~2 Hz camera cadence (MD-5)
@@ -155,7 +167,7 @@ BLECharacteristic *gpsChar;
 BLECharacteristic *thermalChar;
 BLECharacteristic *climateChar;
 BLECharacteristic *environmentChar;
-BLECharacteristic *thermalGridChar;   // Metsuke: binary 8x8 heat grid
+BLECharacteristic *thermalGridChar;   // Metsuke: binary 16x12 heat grid
 BLECharacteristic *hokanChar;         // Hokan: "steps heading cadence" string (live PDR breadcrumb)
 BLE2902           *thermalGridCccd = nullptr;   // its CCCD — emit only while subscribed
 uint32_t           gridNotifyCount = 0;         // grid notifies sent (for the 'G' probe)
@@ -371,7 +383,7 @@ void scanI2C() {
     Wire.beginTransmission(a);
     if (Wire.endTransmission() == 0) { Serial.printf("  0x%02X\n", a); n++; }
   }
-  Serial.printf("  %d device(s) (expect ToF mux=0x70 [gates 0x29x2], IMU=0x6a, mag=0x1c/0x1e, GPS=0x10, thermal=0x33, SCD=0x62, BME=0x77)\n", n);
+  Serial.printf("  %d device(s) (expect ToF mux=0x70 [gates 0x29x2], IMU=0x6a, mag=0x1c/0x1e, GPS=0x10, thermal=0x33, SCD=0x62, BME=0x77, APDS=0x39, Andon matrix=0x3f)\n", n);
 }
 
 // Probe the VL53L4CX directly: report the boot presence flag, then poll for a
@@ -627,6 +639,12 @@ void setup() {
     Serial.println("[WARN] APDS9960 not found @ 0x39 — pane swipe paging disabled");
   }
 
+  // Andon — the LED-matrix lantern (output surface, no telemetry). Presence-gated
+  // like every device: absent -> the panel stays dark, nothing else changes. The
+  // Modulino matrix ships at 0x39 (which the APDS9960 above already owns), so it is
+  // readdressed once to 0x3F on the bench before it goes on the shared bus.
+  andonBegin();
+
   // Nesshi — subscribe to Aizu's BOOT HOLD gesture (AZ-9): hold to read the surface
   // temp at the centre of the thermal FOV as a colour; a double-hold reads the
   // scene's hottest point. A short CLICK still toggles Aizu's mute (no collision).
@@ -691,14 +709,42 @@ void serviceThermal() {
   if (!thermalFrameOk) return;
 
   // Emit only while the grid CCCD is subscribed (AC-4) — no central, no airtime.
-  if (!deviceConnected || thermalGridCccd == nullptr || !thermalGridCccd->getNotifications())
-    return;
+  // On a fresh (re)subscribe, reset the denoise filter so a new viewer doesn't see the
+  // previous scene bleed in through the EMA (the filter only advances while streaming).
+  static bool gridWasSubscribed = false;
+  bool gridSubscribed = deviceConnected && thermalGridCccd != nullptr &&
+                        thermalGridCccd->getNotifications();
+  if (!gridSubscribed) { gridWasSubscribed = false; return; }
+  if (!gridWasSubscribed) { metsukeFilterReset(&metsukeFilter); gridWasSubscribed = true; }
 
-  uint8_t packed[METSUKE_GRID_BYTES];
-  if (!metsukePackGrid(thermalFrame, packed)) return;   // all-NaN frame -> skip
-  thermalGridChar->setValue(packed, METSUKE_GRID_BYTES);
-  thermalGridChar->notify();
+  // Build the 32x24 grid, then STAGE it for paced chunked TX (serviceThermalTx) rather
+  // than bursting all METSUKE_CHUNKS notifications here — the burst overruns the BLE tx
+  // path (dropped/torn chunks -> a glitchy panel with a garbage min/max header). A new
+  // frame supersedes any still-unsent chunks (the consumer drops the partial by frame_seq).
+  if (!metsukePackGridFiltered(thermalFrame, &metsukeFilter, metsukeGrid)) return;  // all-NaN -> skip
+  metsukeFrameSeq++;
+  metsukeChunksLeft = METSUKE_CHUNKS;
   gridNotifyCount++;
+}
+
+// Paced thermal-grid chunk sender: emits ONE staged chunk per METSUKE_CHUNK_TX_MS so a
+// frame's chunks don't burst (which the BLE stack drops/tears into a glitchy panel).
+// Called every loop() iteration; a no-op unless serviceThermal has staged a frame.
+void serviceThermalTx() {
+  if (metsukeChunksLeft <= 0) return;
+  if (!deviceConnected || thermalGridCccd == nullptr || !thermalGridCccd->getNotifications()) {
+    metsukeChunksLeft = 0;   // central gone mid-frame — abandon the rest
+    return;
+  }
+  if ((uint32_t)(millis() - metsukeLastChunkMs) < METSUKE_CHUNK_TX_MS) return;
+  metsukeLastChunkMs = millis();
+
+  int idx = METSUKE_CHUNKS - metsukeChunksLeft;   // send 0,1,2,3 in order
+  uint8_t chunk[METSUKE_CHUNK_BYTES];
+  metsukeChunk(metsukeGrid, metsukeFrameSeq, idx, chunk);
+  thermalGridChar->setValue(chunk, METSUKE_CHUNK_BYTES);
+  thermalGridChar->notify();
+  metsukeChunksLeft--;
 }
 
 // Nesshi's HOLD subscriber (registered with Aizu.onHold in setup). Aizu owns the
@@ -959,7 +1005,8 @@ void loop() {
   // Each self-rate-limits and never touches lastUpdate, the telemetry stream, BLE,
   // or the flash-logging gate.
   serviceReflex();
-  serviceThermal();   // Metsuke: ~2 Hz MLX read + grid notify (sole thermal read site)
+  serviceThermal();   // Metsuke: ~2 Hz MLX read + stage 32x24 grid (sole thermal read site)
+  serviceThermalTx(); // Metsuke: paced chunk TX — one chunk per ~30 ms, no burst
   serviceNesshi();    // Nesshi: while BOOT held, cached-frame surface temp -> Aizu cue
   serviceHokan();     // Hokan: fast IMU DSP -> cumulative steps + latching fall SOS
   Aizu.tick();
@@ -984,6 +1031,10 @@ void loop() {
                                            : (paneReady && sinceDraw >= OLED_REFRESH_MS);
     if (oledDirty || refresh) { renderPane(oledPage); oledLastDraw = millis(); oledDirty = false; }
   }
+
+  // Andon LED-matrix flair — self-paced (~11 fps), before the telemetry gate so the
+  // raindrops animate smoothly off the 1500 ms cycle. No-op when the panel is absent.
+  andonService(millis());
 
   if (millis() - lastUpdate < UPDATE_MS) return;
   lastUpdate = millis();

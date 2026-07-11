@@ -27,7 +27,7 @@ import kotlin.math.roundToInt
 
 /**
  * Metsuke's live thermal grid — the HUD's one *image* surface (Shikai as a sense,
- * not a readout). A 16×12 false-colour heat panel, auto-ranged to the frame's
+ * not a readout). A 32×24 false-colour heat panel, auto-ranged to the frame's
  * min/max (shown as the label) and **bilinear-upscaled** so the coarse grid reads
  * as a smooth heat cloud rather than blocks. Ironbow-on-black suits the waveguide:
  * cold cells are black (emit no light → see-through), hot cells emit — so the panel
@@ -55,7 +55,7 @@ fun ThermalPanel(grid: ThermalGrid, units: Units) {
             )
         }
         Spacer(Modifier.height(6.dp))
-        // 4:3 panel matches the 16×12 grid's native aspect — no geometric distortion.
+        // 4:3 panel matches the 32×24 grid's native aspect — no geometric distortion.
         Canvas(Modifier.width(160.dp).height(120.dp).border(2.dp, G.Grid)) {
             drawImage(
                 image = heat,

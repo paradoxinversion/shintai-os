@@ -91,36 +91,46 @@ payload (see [Thermal Grid](#thermal-grid-binary) below).
 | Climate | `abcdba98-ab12-ab12-ab12-abcdef123456` | `23.0C 41%RH 750ppm` |
 | Environment | `abcdc0de-ab12-ab12-ab12-abcdef123456` | `1007.2hPa 84200ohm 22.8C 39%RH` |
 | Hokan | `abcdf007-ab12-ab12-ab12-abcdef123456` | `1240 98.5 112` (cumulative `steps` · `heading_deg` · `cadence` steps/min) |
-| Thermal Grid | `abcd7890-ab12-ab12-ab12-abcdef123456` | 196-byte **binary** heat grid (see below) |
+| Thermal Grid | `abcd7890-ab12-ab12-ab12-abcdef123456` | chunked **binary** 32×24 heat grid (see below) |
 
 To receive notifications a central must write `ENABLE_NOTIFICATION` to each
 characteristic's CCCD. **The CCCD UUID is the Bluetooth Base UUID
 `00002902-0000-1000-8000-00805f9b34fb`** — note the `8000`, not `0000`; the one-char
 typo makes `getDescriptor()` return null and silently kills every subscription.
 
-### Thermal Grid (binary)
+### Thermal Grid (binary, chunked)
 
 Added by **Metsuke** (`specs/zokyo/metsuke.md`) — the **first binary characteristic**
 and the first field to touch this contract (every other characteristic is a UTF-8
-string). It streams a downsampled MLX90640 heat image for the glasses to render as a
+string). It streams the MLX90640 heat image for the glasses/phone to render as a
 false-colour panel, at the camera's **~2 Hz**, **only while a central is subscribed**.
 
-Payload — **196 bytes, little-endian**:
+The image is the sensor's **full native 32×24 (768 cells)**. 768 bytes + a header
+exceeds a single notification even at the largest negotiable MTU, so each frame is sent
+as **4 chunks** the consumer reassembles. (This superseded the original single-packet
+**16×12** grid — 4× the resolution; the three mirror sites moved together.)
+
+Each notification is one **chunk — 199 bytes, little-endian**:
 
 | Offset | Type | Field | Meaning |
 |--------|------|-------|---------|
-| 0 | `int16` | `min_dC` | min cell temperature ×10 (°C·10, signed) |
-| 2 | `int16` | `max_dC` | max cell temperature ×10 (°C·10, signed) |
-| 4 | `192 × uint8` | `cells` | row-major 16×12 grid, `cell = round((t − min)/(max − min) × 255)` |
+| 0 | `uint8` | `frame_seq` | frame counter (wraps 0–255); increments once per full 32×24 frame |
+| 1 | `uint8` | `chunk_index` | 0 … `chunk_count`−1 |
+| 2 | `uint8` | `chunk_count` | chunks per frame (**4**) |
+| 3 | `int16` | `min_dC` | frame min cell temperature ×10 (°C·10, signed) — repeated in every chunk |
+| 5 | `int16` | `max_dC` | frame max cell temperature ×10 (°C·10, signed) — repeated in every chunk |
+| 7 | `192 × uint8` | `cells` | this chunk's slice: rows `[chunk_index·6, +6)` of the row-major 32×24 grid, `cell = round((t − min)/(max − min) × 255)` |
 
-- The 32×24 frame is block-averaged on-device to **16×12** (each cell = mean of its
-  2×2 source block, NaN pixels skipped) — the sensor's native 4:3 aspect. `min`/`max`
-  are the **grid's** range, so the cells span the full palette; the consumer auto-ranges
-  the palette to `min_dC`/`max_dC` and **bilinear-upscales** the grid for a smooth panel.
-- **196 bytes far exceeds the default 20-byte ATT payload**, so the central must
-  negotiate a larger **MTU** — it needs at least ~199, and the apps request **247**
-  (payload = MTU − 3 = 244, so the whole grid lands in one notification). The string
-  characteristics never needed this; Thermal Grid does.
+- **Reassembly.** The consumer buffers chunks by `frame_seq`: a chunk whose `frame_seq`
+  differs from the buffer starts a fresh frame; when all `chunk_count` chunks of one
+  `frame_seq` have arrived, the **32×24** grid is complete (chunk `i` fills rows
+  `[i·6, i·6+6)`). An incomplete frame (a dropped chunk) is discarded when the next
+  `frame_seq` begins — at ~2 Hz a missed frame is invisible. `min`/`max` are the
+  **frame's** range, so the cells span the full palette; the consumer auto-ranges the
+  palette to `min_dC`/`max_dC` and **bilinear-upscales** the 32×24 grid for a smooth panel.
+- **MTU.** Each 199-byte chunk fits the apps' negotiated **MTU 247** (payload = MTU − 3
+  = 244) — the *same* MTU the single-packet grid used. Chunking, not a bigger MTU, is
+  what makes full resolution fit.
 - **Not logged** — this grid is BLE-live-only; it is **not** in the CSV schema or the
   flash log. The summary `thermal_*` columns remain the logged thermal representation.
 - CCCD gotcha still applies (the `8000` above).
