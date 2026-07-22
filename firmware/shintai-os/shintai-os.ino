@@ -1,5 +1,5 @@
 #include <Wire.h>
-#include <vl53l4cx_class.h>
+#include <vl53l5cx_class.h>
 #include <Adafruit_LSM6DSOX.h>
 #include <Adafruit_LIS3MDL.h>
 #include <Adafruit_GPS.h>
@@ -24,6 +24,7 @@
 #include "KyukakuBand.h" // Kyūkaku sense of smell (specs/zokyo/kyukaku.md): bmeGas -> baseline ratio -> Aizu cue
 #include "KiatsuBand.h"  // Kiatsu barometric sense (specs/zokyo/kiatsu.md): bmePressure -> 3 h trend -> Aizu cue
 #include "AndonPanel.h"  // Andon LED-matrix lantern (specs/zokyo/andon.md): raw-Wire 8x12 mono panel, raindrop flair
+#include "ZanshinGrid.h" // Zanshin rear depth field (specs/zokyo/zanshin.md): VL53L5CX 8x8 -> L/R derive + depth grid
 
 // BLE UUIDs
 #define SERVICE_UUID        "12345678-1234-1234-1234-123456789abc"
@@ -37,6 +38,7 @@
 #define ENVIRONMENT_UUID    "abcdc0de-ab12-ab12-ab12-abcdef123456"
 #define THERMAL_GRID_UUID   "abcd7890-ab12-ab12-ab12-abcdef123456"  // Metsuke: binary heat grid
 #define HOKAN_UUID          "abcdf007-ab12-ab12-ab12-abcdef123456"  // Hokan: steps/heading/cadence ("f007" = foot)
+#define ZANSHIN_GRID_UUID   "abcd5c88-ab12-ab12-ab12-abcdef123456"  // Zanshin: binary rear depth grid ("5c88" = 53L5CX 8x8)
 
 const int NEAR_MM  = 200;
 const int FAR_MM   = 2000;   // Kehai-Hikari Approach/Clear boundary (was reserved)
@@ -47,31 +49,37 @@ const int UPDATE_MS = 1500;  // telemetry (CSV/BLE) update interval
 // distance band as an Aizu cue. The telemetry block consumes the cached range so
 // the two never fight over the sensor's dataReady (Kehai-Hikari note 2).
 const int      REFLEX_MS               = 120;    // reflex tick (spec: ~100-150 ms)
-const uint32_t REFLEX_TIMING_BUDGET_US = 50000;  // lower ToF budget -> fresher range (D-4)
 const uint32_t KEHAI_MAX_AGE_MS        = 500;    // Aizu drops the cue if we stop posting
-// Kōei (後衛) — rear dual arc (specs/zokyo/koei.md): two VL53L4CX behind a PCA9546
-// I2C mux. Both report at 0x29 and would collide on the plain bus; the mux isolates
-// them onto separate channels (ch0 = LEFT arc, ch1 = RIGHT arc — mapping in REGISTRY.md).
-int16_t       cachedMmL    = -1;                 // latest LEFT-arc range;  -1 = no target
-int16_t       cachedMmR    = -1;                 // latest RIGHT-arc range; -1 = no target
+// Zanshin (残心) — rear depth field (specs/zokyo/zanshin.md): one VL53L5CX 8x8 multizone
+// ToF (superseding Kōei's two VL53L4CX arcs) behind the PCA9546 mux. Reports at 0x29 like
+// the old arcs, so it rides mux ch0 with the same select-before-touch discipline. Its
+// left/right halves derive the LEFT/RIGHT nearest ranges below — so distance_l/r_mm + alert
+// are unchanged, only the source moved from two point beams to one field (ZanshinGrid.h).
+int16_t       cachedMmL    = -1;   // nearest valid range in the field's LEFT half;  -1 = none
+int16_t       cachedMmR    = -1;   // nearest valid range in the field's RIGHT half; -1 = none
 unsigned long lastReflexMs = 0;
 
-VL53L4CX sensorL(&Wire, -1);   // rear-left  arc, mux ch0
-VL53L4CX sensorR(&Wire, -1);   // rear-right arc, mux ch1
+VL53L5CX             zanshinTof(&Wire, -1);   // rear 8x8 depth field, mux ch0
+VL53L5CX_ResultsData zanshinResults;          // last field frame (64 zones: distance_mm + status)
+bool                 zanshinFresh = false;    // a new field frame was read this reflex tick
 
 // PCA9546 4-channel I2C mux (0x70) — select a channel by writing a one-hot bitmask
-// BEFORE every bus operation on that channel's sensor (the VL53L4CX library hits
-// I2C on init AND every read; the wrong channel = wrong sensor or errors).
+// BEFORE every bus operation on that channel's sensor (the VL53L5CX hits I2C on init
+// AND every read; the wrong channel = wrong sensor or errors).
 const uint8_t TOF_MUX_ADDR = 0x70;
-const uint8_t TOF_CH_L     = 0;   // rear-left  arc
-const uint8_t TOF_CH_R     = 1;   // rear-right arc
+const uint8_t ZANSHIN_CH   = 0;   // the VL53L5CX rear field's mux channel
 bool tofMuxPresent = false;       // PCA9546 acked at boot
+bool zanshinDirect = false;       // field wired straight on the main bus (no mux) — bench fallback
 
 void muxSelect(uint8_t ch) {
   Wire.beginTransmission(TOF_MUX_ADDR);
   Wire.write((uint8_t)(1 << ch));   // one-hot: 0x01 = ch0, 0x02 = ch1
   Wire.endTransmission();
 }
+
+// Select the rear field's mux channel before touching it — a no-op when the field is
+// wired directly on the main bus (auto-detect bench fallback: no PCA9546 to gate on).
+static inline void zanshinSelect() { if (!zanshinDirect) muxSelect(ZANSHIN_CH); }
 
 // Nearest valid arc: the closer of two ranges, ignoring -1/no-target (-1 if neither
 // has a target). The proximity reflex and the single `alert` bit key off this, so
@@ -170,6 +178,8 @@ BLECharacteristic *environmentChar;
 BLECharacteristic *thermalGridChar;   // Metsuke: binary 16x12 heat grid
 BLECharacteristic *hokanChar;         // Hokan: "steps heading cadence" string (live PDR breadcrumb)
 BLE2902           *thermalGridCccd = nullptr;   // its CCCD — emit only while subscribed
+BLECharacteristic *zanshinGridChar;             // Zanshin: binary 8x8 rear depth grid
+BLE2902           *zanshinGridCccd = nullptr;   // its CCCD — emit only while subscribed
 uint32_t           gridNotifyCount = 0;         // grid notifies sent (for the 'G' probe)
 
 bool deviceConnected = false;
@@ -179,8 +189,7 @@ unsigned long lastUpdate = 0;
 // Per-module presence — set at boot. Any sensor may be physically absent for a
 // config test; we warn and continue rather than hang, then gate its reads and
 // output below. (SCD-40 has its own scdPresent flag further down.)
-bool hasTofL        = false;   // rear-left  VL53L4CX inited (mux ch0)
-bool hasTofR        = false;   // rear-right VL53L4CX inited (mux ch1)
+bool hasZanshin     = false;   // VL53L5CX rear depth field inited (mux ch0)
 bool imuPresent     = false;
 bool magPresent     = false;
 bool thermalPresent = false;
@@ -371,11 +380,11 @@ void eraseLogs() {
 // ── Diagnostics (serial commands 'I' / 'T') ── the boot banner is uncatchable on
 // native-USB, so these let us probe the I2C bus and the ToF live after boot.
 
-// Scan the I2C bus and print every responding address. NOTE: the two VL53L4CX ToFs
-// (both 0x29) sit BEHIND the PCA9546 mux (0x70), which gates them off a naive scan —
-// so 0x29 is EXPECTED to be absent here (the mux, 0x70, should show). And even when a
-// ToF is reachable it does NOT ACK a bare address-only scan while continuously
-// ranging. Use 'T' (probeTof) as the authoritative per-arc check, not this scan.
+// Scan the I2C bus and print every responding address. NOTE: the VL53L5CX rear field
+// (0x29) sits BEHIND the PCA9546 mux (0x70), which gates it off a naive scan — so 0x29 is
+// EXPECTED to be absent here (the mux, 0x70, should show). And even when reachable it does
+// NOT ACK a bare address-only scan while continuously ranging. Use 'T' (probeTof) as the
+// authoritative field check, not this scan.
 void scanI2C() {
   Serial.println("<<<I2C scan>>>");
   int n = 0;
@@ -383,65 +392,54 @@ void scanI2C() {
     Wire.beginTransmission(a);
     if (Wire.endTransmission() == 0) { Serial.printf("  0x%02X\n", a); n++; }
   }
-  Serial.printf("  %d device(s) (expect ToF mux=0x70 [gates 0x29x2], IMU=0x6a, mag=0x1c/0x1e, GPS=0x10, thermal=0x33, SCD=0x62, BME=0x77, APDS=0x39, Andon matrix=0x3f)\n", n);
+  Serial.printf("  %d device(s) (expect ToF mux=0x70 [gates 0x29 field], IMU=0x6a, mag=0x1c/0x1e, GPS=0x10, thermal=0x33, SCD=0x62, BME=0x77, APDS=0x39, Andon matrix=0x3f)\n", n);
 }
 
-// Probe the VL53L4CX directly: report the boot presence flag, then poll for a
-// fresh measurement and dump each object's RangeStatus + range. Distinguishes
-// not-present (InitSensor failed) from not-ranging (dataReady never fires) from
-// ranging-but-filtered (objects come back with RangeStatus != 0).
-void probeTofArc(VL53L4CX &s, bool present, uint8_t ch, const char *label) {
-  Serial.printf("  [%s arc / mux ch%u] present=%d\n", label, ch, present ? 1 : 0);
-  if (!present) {
-    Serial.println("    not initialized at boot — InitSensor(0x29) failed (mux missing or arc absent)");
+// Probe the VL53L5CX rear field ('T'): report the boot presence flag, then poll for a
+// fresh frame and print the nearest zone per half (the L/R the reflex derives).
+// Distinguishes not-present (init failed) from not-ranging (data never ready).
+void probeTof() {
+  Serial.printf("<<<TOF field=%d mux=%d direct=%d>>>\n",
+                hasZanshin ? 1 : 0, tofMuxPresent ? 1 : 0, zanshinDirect ? 1 : 0);
+  if (!hasZanshin) {
+    Serial.println("  VL53L5CX not initialized at boot — mux missing and no field on the bus");
     return;
   }
-  muxSelect(ch);                       // select-before-touch: the probe read hits I2C
+  zanshinSelect();                      // select-before-touch (no-op if direct): probe hits I2C
   for (int attempt = 0; attempt < 25; attempt++) {   // ~500 ms window
-    uint8_t dr = 0;
-    s.VL53L4CX_GetMeasurementDataReady(&dr);
-    if (dr) {
-      VL53L4CX_MultiRangingData_t d;
-      s.VL53L4CX_GetMultiRangingData(&d);
-      Serial.printf("    dataReady after %d ms: objects=%d\n", attempt * 20, d.NumberOfObjectsFound);
-      for (int i = 0; i < d.NumberOfObjectsFound; i++) {
-        Serial.printf("      [%d] status=%d range=%d mm\n",
-                      i, d.RangeData[i].RangeStatus, d.RangeData[i].RangeMilliMeter);
-      }
-      s.VL53L4CX_ClearInterruptAndStartMeasurement();
+    uint8_t ready = 0;
+    zanshinTof.vl53l5cx_check_data_ready(&ready);
+    if (ready) {
+      zanshinTof.vl53l5cx_get_ranging_data(&zanshinResults);
+      int16_t l, r;
+      zanshinDeriveLR(zanshinResults.distance_mm, zanshinResults.target_status, &l, &r);
+      Serial.printf("  frame after %d ms: L=%d mm  R=%d mm  (nearest=%d)\n",
+                    attempt * 20, l, r, nearerMm(l, r));
       return;
     }
     delay(20);
   }
-  Serial.println("    dataReady never asserted over ~500 ms — arc present but not measuring");
+  Serial.println("  data never ready over ~500 ms — field present but not measuring");
 }
 
-void probeTof() {
-  Serial.printf("<<<TOF mux=%d budget=%lu us>>>\n",
-                tofMuxPresent ? 1 : 0, (unsigned long)REFLEX_TIMING_BUDGET_US);
-  probeTofArc(sensorL, hasTofL, TOF_CH_L, "left");
-  probeTofArc(sensorR, hasTofR, TOF_CH_R, "right");
-}
-
-// Bring up one rear-arc VL53L4CX on its mux channel. Selects the channel FIRST
-// (InitSensor hits I2C), then inits + reflex-tunes + starts ranging. Non-fatal: a
-// missing arc returns false and must not stall the other arc or block advertising.
-bool initTof(VL53L4CX &s, uint8_t ch, const char *label) {
-  muxSelect(ch);
-  s.begin();
-  s.VL53L4CX_Off();
-  bool ok = (s.InitSensor(0x29) == VL53L4CX_ERROR_NONE);
-  if (ok) {
-    // Favour reflex latency over the old slow cadence (Kehai-Hikari D-4); non-fatal
-    // if the device rejects the budget.
-    if (s.VL53L4CX_SetMeasurementTimingBudgetMicroSeconds(REFLEX_TIMING_BUDGET_US) != VL53L4CX_ERROR_NONE)
-      Serial.printf("[WARN] ToF %s arc timing-budget set failed — using default cadence\n", label);
-    s.VL53L4CX_StartMeasurement();
-    Serial.printf("[OK] VL53L4CX ToF %s arc (mux ch%u, reflex-tuned)\n", label, ch);
-  } else {
-    Serial.printf("[WARN] VL53L4CX %s arc not found on mux ch%u — that arc disabled\n", label, ch);
+// Bring up the VL53L5CX rear depth field. When viaMux, selects ch0 FIRST (init hits I2C —
+// it uploads the sensor firmware, ~hundreds of ms); otherwise talks to it straight on the
+// main bus at 0x29 (bench fallback, no PCA9546). Sets 8x8 @ 15 Hz and starts ranging.
+// Non-fatal: a missing field returns false and must not block advertising.
+bool initZanshin(bool viaMux) {
+  if (viaMux) muxSelect(ZANSHIN_CH);
+  zanshinTof.begin();
+  if (zanshinTof.init_sensor() != 0) {   // default addr 0x52 (8-bit) == 0x29 7-bit
+    Serial.printf("[WARN] VL53L5CX rear field not found %s — Zanshin disabled\n",
+                  viaMux ? "on mux ch0" : "on the main bus (0x29)");
+    return false;
   }
-  return ok;
+  zanshinTof.vl53l5cx_set_resolution(VL53L5CX_RESOLUTION_8X8);
+  zanshinTof.vl53l5cx_set_ranging_frequency_hz(15);
+  zanshinTof.vl53l5cx_start_ranging();
+  Serial.printf("[OK] VL53L5CX rear depth field (Zanshin, 8x8 @ 15 Hz, %s)\n",
+                viaMux ? "mux ch0" : "direct 0x29");
+  return true;
 }
 
 class ServerCallbacks : public BLEServerCallbacks {
@@ -486,17 +484,20 @@ void setup() {
   Wire.setClock(400000);
   delay(100);
 
-  // Rear ToF — dual left/right arc behind the PCA9546 mux (0x70). Non-fatal at every
-  // level: a missing mux or a single missing arc warns and continues so BLE still
-  // advertises. Each arc inits only while its channel is selected (InitSensor hits I2C).
+  // Rear depth field (Zanshin) — one VL53L5CX behind the PCA9546 mux (0x70). Non-fatal: a
+  // missing mux or field warns and continues so BLE still advertises. The field inits only
+  // while its channel is selected (init hits I2C — it uploads the sensor firmware).
   Wire.beginTransmission(TOF_MUX_ADDR);
   tofMuxPresent = (Wire.endTransmission() == 0);
   if (tofMuxPresent) {
     Serial.println("[OK] PCA9546 ToF mux @ 0x70");
-    hasTofL = initTof(sensorL, TOF_CH_L, "left");
-    hasTofR = initTof(sensorR, TOF_CH_R, "right");
+    hasZanshin = initZanshin(true);            // production: field behind mux ch0
   } else {
-    Serial.println("[WARN] PCA9546 mux not found @ 0x70 — both rear arcs disabled");
+    // Auto-detect fallback: no mux, but the VL53L5CX may be wired straight on the main
+    // bus (bench bring-up). Try it at its default 0x29 with no channel gating.
+    Serial.println("[WARN] PCA9546 mux not found @ 0x70 — trying rear field direct on bus");
+    hasZanshin = initZanshin(false);
+    zanshinDirect = hasZanshin;
   }
 
   // IMU — non-fatal: warn and continue if absent
@@ -604,6 +605,18 @@ void setup() {
     thermalGridChar->addDescriptor(d);
   }
 
+  // Zanshin: the SECOND binary characteristic (128-byte rear depth grid). Same pattern as
+  // the thermal grid — keep the BLE2902 pointer so emission is gated on a subscribed central.
+  zanshinGridChar = service->createCharacteristic(ZANSHIN_GRID_UUID,
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+  zanshinGridCccd = new BLE2902();
+  zanshinGridChar->addDescriptor(zanshinGridCccd);
+  {
+    BLEDescriptor *d = new BLEDescriptor(BLEUUID((uint16_t)0x2901));
+    d->setValue("Rear Depth Grid (8x8)");
+    zanshinGridChar->addDescriptor(d);
+  }
+
   service->start();
   server->getAdvertising()->start();
   Serial.println("[OK] BLE advertising as '" + bleName + "'");
@@ -656,43 +669,45 @@ void setup() {
   Serial.println("=============================\n");
 }
 
-// Service one rear arc into its cache. select-before-touch: the read hits I2C, so we
-// muxSelect the arc's channel first. Holds the last range between fresh samples.
-void serviceTofArc(VL53L4CX &s, bool present, uint8_t ch, int16_t &cached) {
-  if (!present) return;
-  muxSelect(ch);
-  uint8_t dataReady = 0;
-  s.VL53L4CX_GetMeasurementDataReady(&dataReady);
-  if (dataReady) {
-    VL53L4CX_MultiRangingData_t data;
-    s.VL53L4CX_GetMultiRangingData(&data);
-    int16_t newMm = -1;
-    for (int i = 0; i < data.NumberOfObjectsFound; i++) {
-      if (data.RangeData[i].RangeStatus == 0) {
-        newMm = data.RangeData[i].RangeMilliMeter;
-        break;
-      }
-    }
-    cached = newMm;
-    s.VL53L4CX_ClearInterruptAndStartMeasurement();
-  }
+// Zanshin rear-field read — the sole VL53L5CX read site (replaces the two arc reads).
+// select-before-touch: zanshinSelect (ch0, or no-op if direct), pull a fresh 8x8 frame and derive the
+// nearer target in each half into cachedMmL/cachedMmR (so alert/Distance/CSV are unchanged).
+// Holds the last L/R between frames; flags zanshinFresh so the reflex can notify the grid.
+void serviceZanshinField() {
+  if (!hasZanshin) return;
+  zanshinSelect();
+  uint8_t ready = 0;
+  if (zanshinTof.vl53l5cx_check_data_ready(&ready) != 0 || !ready) return;
+  zanshinTof.vl53l5cx_get_ranging_data(&zanshinResults);
+  zanshinDeriveLR(zanshinResults.distance_mm, zanshinResults.target_status, &cachedMmL, &cachedMmR);
+  zanshinFresh = true;
 }
 
-// Kehai-Hikari reflex tick — the sole ToF read site. Self-rate-limits to REFLEX_MS.
-// Services BOTH rear arcs (each behind its mux channel) into cachedMmL/cachedMmR, then
-// posts the distance band for the NEARER arc as an Aizu cue (or clears it when both are
-// quiescent). Never prints to the telemetry stream, never touches lastUpdate or the flash gate.
+// Kehai-Hikari reflex tick — the sole rear-ToF read site. Self-rate-limits to REFLEX_MS.
+// Reads the VL53L5CX field into cachedMmL/cachedMmR, posts the distance band for the NEARER
+// half as an Aizu cue (or clears it), and — while a central is subscribed — notifies the
+// depth grid. Never prints to the telemetry stream, never touches lastUpdate or the flash gate.
 void serviceReflex() {
   if (millis() - lastReflexMs < REFLEX_MS) return;
   lastReflexMs = millis();
 
-  serviceTofArc(sensorL, hasTofL, TOF_CH_L, cachedMmL);
-  serviceTofArc(sensorR, hasTofR, TOF_CH_R, cachedMmR);
+  zanshinFresh = false;
+  serviceZanshinField();
 
-  // Post the band (Approach/Reflex) for the nearer arc, or withdraw (-> Aizu Idle).
+  // Post the band (Approach/Reflex) for the nearer half, or withdraw (-> Aizu Idle).
   KehaiCue kc = kehaiCueFor(nearerMm(cachedMmL, cachedMmR), NEAR_MM, FAR_MM);
   if (kc.post) Aizu.postCue(AIZU_KEHAI, kc.priority, kc.colour, kc.motion, KEHAI_MAX_AGE_MS);
   else         Aizu.clearCue(AIZU_KEHAI);
+
+  // Zanshin depth grid over BLE — only on a fresh frame while a central is subscribed.
+  if (zanshinFresh && deviceConnected && zanshinGridCccd != nullptr &&
+      zanshinGridCccd->getNotifications()) {
+    uint8_t grid[ZANSHIN_GRID_BYTES];
+    zanshinPackGrid(zanshinResults.distance_mm, zanshinResults.target_status, grid);
+    zanshinGridChar->setValue(grid, ZANSHIN_GRID_BYTES);
+    zanshinGridChar->notify();
+    gridNotifyCount++;
+  }
 }
 
 // Metsuke thermal tick — the sole MLX90640 read site. Self-rate-limits to

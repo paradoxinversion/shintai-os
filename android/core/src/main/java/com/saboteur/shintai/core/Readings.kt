@@ -26,6 +26,7 @@ data class ShintaiReadings(
     val environment: String = "—",     // e.g. "1007.2hPa 84200ohm 22.8C 39%RH" (BME688)
     val kyukaku: KyukakuState = KyukakuState(),  // Kyūkaku's smell state, derived from environment's gas_ohms
     val thermalGrid: ThermalGrid? = null,  // Metsuke's 32×24 heat grid, null until the first frame
+    val rearDepthGrid: DepthGrid? = null,  // Zanshin's 8×8 rear depth field, null until the first notify
     val hokan: HokanPdr? = null,       // Hokan's dead-reckoned breadcrumb, null until the first notify
     val packets: Int = 0,              // total notifications received — a visible heartbeat
     val perBoard: Map<Role, ConnectionState> = emptyMap(),  // Bunshin: per-pod connection (empty = single-producer)
@@ -152,6 +153,61 @@ fun ThermalGrid.argb(): IntArray = IntArray(cells.size) { i ->
     (0xFF shl 24) or (r shl 16) or (g shl 8) or b
 }
 
+/**
+ * Zanshin's decoded rear depth field (the contract's second binary characteristic).
+ * [zonesMm] is a row-major 8×8 of per-zone distances in mm; **0 = no valid target**. The
+ * renderer maps near→alarming, far→cool, 0→dark. `List<Int>` keeps the data class's value
+ * equality. See CONTRACT.md "Rear Depth Grid".
+ */
+data class DepthGrid(val zonesMm: List<Int>) {
+    companion object {
+        const val W = 8
+        const val H = 8
+        const val ZONES = W * H       // 64
+        const val BYTES = ZONES * 2   // 128 (uint16 LE per zone)
+
+        /** Parse the 128-byte little-endian depth grid; null if short. */
+        fun parse(b: ByteArray): DepthGrid? {
+            if (b.size < BYTES) return null
+            val zones = List(ZONES) {
+                (b[it * 2].toInt() and 0xFF) or ((b[it * 2 + 1].toInt() and 0xFF) shl 8)
+            }
+            return DepthGrid(zones)
+        }
+    }
+}
+
+/**
+ * Rear-depth ramp: a zone's distance (mm) → (r, g, b). NEAR reads as alarming red, through
+ * amber and green, to a cool far blue; a zone with no target (0 mm) is black. Shared so Glass
+ * and Operator render the same rear panel. Plain ints so `:core` stays UI-free.
+ */
+fun depthColor(mm: Int): Triple<Int, Int, Int> {
+    if (mm <= 0) return Triple(0, 0, 0)                              // no target → dark
+    val t = ((mm - NEAR_MM) / (3000f - NEAR_MM)).coerceIn(0f, 1f)   // 0 = closest … 1 = far
+    val stops = arrayOf(
+        floatArrayOf(0.00f, 255f, 40f, 0f),    // near: red — something's on you
+        floatArrayOf(0.30f, 255f, 170f, 0f),   // amber
+        floatArrayOf(0.65f, 40f, 200f, 70f),   // green
+        floatArrayOf(1.00f, 0f, 60f, 130f),    // far: cool blue
+    )
+    var i = 0
+    while (i < stops.size - 1 && t > stops[i + 1][0]) i++
+    val lo = stops[i]
+    val hi = stops[minOf(i + 1, stops.size - 1)]
+    val span = hi[0] - lo[0]
+    val f = if (span > 0f) (t - lo[0]) / span else 0f
+    fun mix(c: Int) = (lo[c] + (hi[c] - lo[c]) * f).toInt().coerceIn(0, 255)
+    return Triple(mix(1), mix(2), mix(3))
+}
+
+/** The depth field as a row-major `W*H` array of opaque ARGB pixels (near→warm, far→cool,
+ *  no-target→dark), ready to wrap in a Bitmap/ImageBitmap and upscale. UI-free. */
+fun DepthGrid.argb(): IntArray = IntArray(zonesMm.size) { i ->
+    val (r, g, b) = depthColor(zonesMm[i])
+    (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+}
+
 /** One point on the dead-reckoned track, in METRES (East = +x, North = +y). Plain
  *  floats so `:core` stays UI-free; each app maps it to its own canvas coordinates. */
 data class PdrPoint(val x: Float, val y: Float)
@@ -261,6 +317,7 @@ fun ShintaiReadings.foldBinary(uuid: UUID, value: ByteArray): ShintaiReadings {
     val base = copy(packets = packets + 1)
     return when (uuid) {
         ShintaiGatt.THERMAL_GRID -> base.copy(thermalGrid = ThermalGrid.parse(value) ?: thermalGrid)
+        ShintaiGatt.REAR_DEPTH_GRID -> base.copy(rearDepthGrid = DepthGrid.parse(value) ?: rearDepthGrid)
         else -> base
     }
 }

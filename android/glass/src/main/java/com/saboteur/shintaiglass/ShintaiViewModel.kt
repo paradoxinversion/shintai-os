@@ -141,7 +141,7 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
         private val GLASS_SUBSCRIPTIONS = listOf(
             ShintaiGatt.DISTANCE, ShintaiGatt.ALERT, ShintaiGatt.HEADING, ShintaiGatt.ACCEL,
             ShintaiGatt.GPS, ShintaiGatt.CLIMATE, ShintaiGatt.THERMAL, ShintaiGatt.HOKAN,
-            ShintaiGatt.ENVIRONMENT, ShintaiGatt.THERMAL_GRID,
+            ShintaiGatt.ENVIRONMENT, ShintaiGatt.THERMAL_GRID, ShintaiGatt.REAR_DEPTH_GRID,
         )
 
         private const val KEY_IPD = "ipd_nudge"

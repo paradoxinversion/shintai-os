@@ -36,15 +36,19 @@ object ShintaiGatt {
      *  integrate it into a dead-reckoned mini-map. See CONTRACT.md. */
     val HOKAN: UUID = UUID.fromString("abcdf007-ab12-ab12-ab12-abcdef123456")
 
-    /** Metsuke's binary heat grid (68 packed bytes, not a string). See [BINARY]. */
+    /** Metsuke's binary heat grid (packed bytes, not a string). See [BINARY]. */
     val THERMAL_GRID: UUID = UUID.fromString("abcd7890-ab12-ab12-ab12-abcdef123456")
+
+    /** Zanshin's binary rear depth grid (128 bytes = 8×8 × uint16 mm, not a string).
+     *  See [BINARY] and CONTRACT.md "Rear Depth Grid". */
+    val REAR_DEPTH_GRID: UUID = UUID.fromString("abcd5c88-ab12-ab12-ab12-abcdef123456")
 
     /** Standard CCCD UUID (Bluetooth Base UUID: note the `8000`, not `0000`). */
     val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
     /** Characteristics whose payload is raw binary, not UTF-8. [ShintaiBleClient]
      *  routes these to `onBinary` instead of decoding them to a string. */
-    val BINARY: Set<UUID> = setOf(THERMAL_GRID)
+    val BINARY: Set<UUID> = setOf(THERMAL_GRID, REAR_DEPTH_GRID)
 
     /** Every STRING characteristic the board exposes, in a sensible subscribe
      *  order — the complete numeric readout the Operator takes. It does NOT include

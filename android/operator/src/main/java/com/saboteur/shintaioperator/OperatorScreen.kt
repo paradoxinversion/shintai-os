@@ -45,6 +45,7 @@ import com.saboteur.shintai.core.formatTemp
 import com.saboteur.shintai.core.formatThermal
 import com.saboteur.shintaioperator.ui.AlertBanner
 import com.saboteur.shintaioperator.ui.ConsoleButton
+import com.saboteur.shintaioperator.ui.DepthField
 import com.saboteur.shintaioperator.ui.HeatGrid
 import com.saboteur.shintaioperator.ui.HokanMap
 import com.saboteur.shintaioperator.ui.LogTerminal
@@ -234,6 +235,14 @@ private fun Console(
             ReadoutRow("Range", "${formatTemp(grid.minC, units)} – ${formatTemp(grid.maxC, units)}")
             Spacer(Modifier.height(8.dp))
             HeatGrid(grid)
+        }
+    }
+
+    // REAR FIELD — Zanshin's live 8×8 rear depth panel (the second binary channel).
+    // Present once the VL53L5CX is attached + streaming; absent otherwise (no empty box).
+    r.rearDepthGrid?.let { grid ->
+        Panel("Rear Field", ledColor = T.Amber) {
+            DepthField(grid)
         }
     }
 
