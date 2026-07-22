@@ -19,7 +19,8 @@ def _rgb(h):
     return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
 
 PHOSPHOR, PHOSPHOR_DIM = _rgb("58F07A"), _rgb("2E7A45")
-AMBER, ALERT = _rgb("F2A93B"), _rgb("FF4438")
+AMBER, AMBER_DIM = _rgb("F2A93B"), _rgb("7A5620")
+ALERT, ALERT_DIM = _rgb("FF4438"), _rgb("8A2820")
 BONE, BONE_DIM, GRID = _rgb("C9CDBC"), _rgb("6B6F62"), _rgb("1C4028")
 
 def c(rgb, s):
@@ -67,6 +68,28 @@ def _row(left, right, right_rgb):
     """A dotted-leader row (§3): BONE label · GRID dots · colored right value, to WIDTH."""
     dots = "·" * max(3, WIDTH - len(left) - len(right) - 2)
     return "  " + c(BONE, left) + " " + c(GRID, dots) + " " + c(right_rgb, right)
+
+
+BANDS = {"far": PHOSPHOR, "mid": AMBER, "near": ALERT, "nominal": PHOSPHOR}
+BANDS_DIM = {"far": PHOSPHOR_DIM, "mid": AMBER_DIM, "near": ALERT_DIM, "nominal": PHOSPHOR_DIM}
+
+def seg_bar(frac, band="nominal", width=14):
+    """Pulse-rifle segmented bar (§5.4): `width` discrete blocks, `frac` (0..1) filled in the
+    band color (far/mid/near → phosphor/amber/alert); spent segments drop to that band's DIM."""
+    frac = 0.0 if frac is None else max(0.0, min(1.0, frac))
+    on = int(round(frac * width))
+    return c(BANDS.get(band, PHOSPHOR), "█" * on) + c(BANDS_DIM.get(band, PHOSPHOR_DIM), "█" * (width - on))
+
+
+def meter(label, frac, value, band="nominal", lwidth=8):
+    """A labeled meter line: BONE label · segmented bar · colored value."""
+    return "  " + c(BONE, label.ljust(lwidth)) + " " + seg_bar(frac, band) \
+        + "  " + c(BANDS.get(band, PHOSPHOR), value)
+
+
+def banner(text, band="near"):
+    """Full-width alert strip (§5.7): a stencil mark + imperative, in the band color."""
+    return "  " + c(BANDS.get(band, ALERT), ("◆ " + text).ljust(WIDTH))
 
 
 def _rollcall_line(tag, name, status):

@@ -8,6 +8,8 @@ import datetime
 import argparse
 import threading
 
+import bootroll  # shared cassette-futurism style (docs/style.md): palette + meters + boot ritual
+
 # ── Config ──────────────────────────────────────────────
 BAUD = 115200
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
@@ -51,52 +53,79 @@ def _num(v, dec=1):
 
 
 def dashboard(vals, samples, csv_name):
-    """Build the live status panel (list of lines) from the latest CSV row."""
+    """Build the live cassette-futurism console (docs/style.md): a header, alert banners on
+    breach, pulse-rifle segmented meters for the thresholded channels (range / CO₂ / thermal /
+    lightning), then dotted-leader readout rows — one list of ANSI lines, redrawn in place."""
+    b = bootroll
     g = vals.get
-    W = 38
-    pod = g("board")                          # Bunshin: which pod this stream is
-    title = "SHINTAI-OS — live" + (f" [{pod}]" if pod else "")
-    out = [title.ljust(W - 8) + f"[#{samples}]", "─" * W]
+    W = b.WIDTH
 
-    dl = f"{g('distance_l_mm')} mm" if g("distance_l_mm") else "no reading"
-    dr = f"{g('distance_r_mm')} mm" if g("distance_r_mm") else "no reading"
-    dist = f"L {dl}  R {dr}"        # rear dual-arc: left (ch0) / right (ch1)
+    pod = g("board")                                   # Bunshin: which pod this stream is
+    title = "SHINTAI-OS — LIVE" + (f" [{pod}]" if pod else "")
+    out = ["  " + b.c(b.PHOSPHOR, title.ljust(W - 9)) + b.c(b.BONE_DIM, f"[#{samples}]"),
+           "  " + b.c(b.GRID, "─" * W)]
+
+    # ── banners: only when a channel is actually breached (§5.7) ──
+    co2 = _num(g("co2_ppm"), 0)
     if g("alert") == "1":
-        dist += "   ⚠ TOO CLOSE"
-    out.append(f"DISTANCE   {dist}")
+        out.append(b.banner("OBJECT INSIDE 0.2 M — HOLD", "near"))
+    if co2 and float(co2) >= 1500:
+        out.append(b.banner(f"CO2 {int(float(co2))} PPM — VENTILATE", "mid"))
 
-    hd = _num(g("heading_deg"), 0)
-    out.append(f"HEADING    {hd}° {g('cardinal')}" if hd else "HEADING    —")
-
-    ax, ay, az = _num(g("accel_x")), _num(g("accel_y")), _num(g("accel_z"))
-    if ax:
-        out.append(f"ACCEL      X {ax}  Y {ay}  Z {az} m/s²")
-
-    ctr, tmin, tmax = _num(g("thermal_ctr")), _num(g("thermal_min")), _num(g("thermal_max"))
-    if ctr:
-        line = f"THERMAL    ctr {ctr}°C  scene {tmin}–{tmax}°C"
-        hs = _num(g("hotspot_delta"))
-        if hs and float(hs) >= 5:
-            line += f"  (+{hs}°C hot)"
-        out.append(line)
-
-    air = _num(g("air_temp_c"))
-    if air:
-        out.append(f"CLIMATE    {air}°C  {_num(g('humidity_pct'), 0)}%RH  {g('co2_ppm')}ppm")
+    # ── segmented meters (fuller / redder = more urgent) ──
+    near, far = 200.0, 3000.0
+    dists = [float(x) for x in (_num(g("distance_l_mm"), 0), _num(g("distance_r_mm"), 0)) if x]
+    if dists:
+        d = min(dists)
+        frac = (far - d) / (far - near)                 # closer -> fuller
+        band = "near" if d <= near else ("mid" if d <= 1000 else "far")
+        out.append(b.meter("RANGE", frac, f"{d/1000:.2f} M", band))
     else:
-        out.append("CLIMATE    warming up…")
+        out.append(b.meter("RANGE", 0, "no reading", "far"))
 
+    if co2:
+        v = float(co2)
+        band = "near" if v >= 1500 else ("mid" if v >= 1000 else "far")
+        out.append(b.meter("CO2", (v - 400) / 1600.0, f"{int(v)} PPM", band))
+
+    hs = _num(g("hotspot_delta"))
+    if hs is not None and g("thermal_ctr"):
+        v = float(hs)
+        band = "near" if v >= 10 else ("mid" if v >= 5 else "far")
+        out.append(b.meter("THERMAL", v / 20.0, f"{'+' if v >= 0 else ''}{v:.1f}°C", band))
+
+    ls = g("lightning_strikes")                          # Enrai: present only with the AS3935
+    if ls not in (None, ""):
+        n = int(ls) if ls.isdigit() else 0
+        km = g("lightning_km") or "0"
+        near_txt, band = {"1": ("⚡ OVERHEAD", "near"), "0": ("— clear", "far"),
+                          "": ("— clear", "far"), "63": ("out of range", "far")}.get(
+                              km, (f"⚡ {km} KM", "mid"))
+        out.append(b.meter("STORM", min(1.0, n / 50.0), f"{near_txt} ×{n}", band))
+
+    out.append("")
+
+    # ── dotted-leader readout rows (§5.3) ──
+    hd = _num(g("heading_deg"), 0)
+    out.append(b._row("HEADING", f"{hd}° {g('cardinal')}" if hd else "—", b.PHOSPHOR))
+    ax = _num(g("accel_x"), 2)
+    if ax:
+        out.append(b._row("ACCEL", f"X{ax} Y{_num(g('accel_y'), 2)} Z{_num(g('accel_z'), 2)}", b.PHOSPHOR))
+    air = _num(g("air_temp_c"))
+    out.append(b._row("CLIMATE", f"{air}°C  {_num(g('humidity_pct'), 0)}%RH" if air else "warming up…",
+                      b.PHOSPHOR if air else b.AMBER))
     press, gas = _num(g("pressure_hpa")), _num(g("gas_ohms"), 0)
     if press or gas:
-        out.append(f"ENV        {press or '—'} hPa  {f'{float(gas)/1000:.1f} kΩ' if gas else '—'} gas")
-
+        out.append(b._row("ENV", f"{press or '—'}hPa  {f'{float(gas)/1000:.0f}kΩ' if gas else '—'}", b.PHOSPHOR))
     if g("gps_fix") == "1":
-        out.append(f"GPS        {_num(g('lat'), 5)},{_num(g('lon'), 5)}  "
-                   f"{_num(g('speed_kmh'))}km/h  {g('sats')} sats")
+        out.append(b._row("GPS", f"{_num(g('lat'), 4)},{_num(g('lon'), 4)} {_num(g('speed_kmh'))}km/h", b.PHOSPHOR))
     else:
-        out.append("GPS        no fix")
+        out.append(b._row("GPS", "no fix", b.AMBER))
+    steps = g("steps")
+    if steps not in (None, ""):
+        out.append(b._row("STEPS", steps, b.PHOSPHOR))
 
-    out += ["─" * W, f"logging → {csv_name}   Ctrl+C to stop"]
+    out += ["  " + b.c(b.GRID, "─" * W), "  " + b.c(b.BONE_DIM, f"logging → {csv_name}   Ctrl+C to stop")]
     return out
 
 
@@ -127,7 +156,6 @@ def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status):
         # skips the ritual (the two-pod path stays a plain log).
         if live_panel:
             try:
-                import bootroll
                 bootroll.play(bootroll.states_from_addresses(bootroll.probe_addresses(ser)))
             except Exception:  # noqa: BLE001 — never block capture on the flourish
                 pass
