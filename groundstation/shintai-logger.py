@@ -121,6 +121,16 @@ def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status):
 
     with ser, open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
+        # Boot roll-call ritual (docs/style.md §5.8) — single-pod TTY only. Probe the
+        # board's live 'I' scan and type out each module's presence before the capture
+        # dashboard takes over. Non-fatal: a missing module or an unresponsive scan just
+        # skips the ritual (the two-pod path stays a plain log).
+        if live_panel:
+            try:
+                import bootroll
+                bootroll.play(bootroll.states_from_addresses(bootroll.probe_addresses(ser)))
+            except Exception:  # noqa: BLE001 — never block capture on the flourish
+                pass
         # Ask the sketch for both human + CSV output and a fresh CSV header, so we
         # capture data even when connecting mid-stream (no board reset).
         ser.write(b"b\n")
