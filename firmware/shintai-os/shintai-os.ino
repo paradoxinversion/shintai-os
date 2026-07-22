@@ -214,6 +214,14 @@ uint32_t lightningStrikes = 0;       // cumulative validated strikes since boot
 uint8_t  enraiWatchdog    = 1;       // AS3935 watchdog threshold (1-10): lower = more
                                      // sensitive → catches distant strikes; higher rejects
                                      // more man-made disturbers. Live-tunable via 'w'/'W'.
+uint32_t enraiDisturbers  = 0;       // man-made disturbers seen (diagnostic, 'K')
+uint32_t enraiNoise       = 0;       // noise-floor-high events seen (diagnostic, 'K')
+unsigned long lastEnraiMs = 0;       // poll timer — throttles the AS3935 read (see serviceEnrai)
+const unsigned long ENRAI_POLL_MS = 10;   // ≥10 ms between polls. The AS3935's interrupt register
+                                          // needs ~2 ms to settle after an event; polling every loop
+                                          // iteration (sub-ms bursts) read-and-clears it inside that
+                                          // window and LOSES strikes. The bench's delay(10) never hit
+                                          // this and caught strikes reliably — so we match it.
 
 // SCD-40 state. Present is set at boot; it updates every ~5s (slower than our
 // loop), so we cache the last good reading between fresh samples.
@@ -1035,13 +1043,18 @@ void renderPane(uint8_t page) {
 }
 
 // Enrai lightning poll — the sole AS3935 read site. No IRQ pin is wired, so we poll the
-// interrupt-source register every loop iteration (reading it clears the latch). A validated
-// strike updates the last-strike snapshot (km + energy), bumps the cumulative count, and
-// notifies the Lightning characteristic immediately; disturbers/noise are ignored here (the
-// watchdog=3 config already thins them). CSV logging reads the snapshot at its own cadence.
+// interrupt-source register, but THROTTLED to ENRAI_POLL_MS: polling every loop iteration
+// read-and-clears the register inside its ~2 ms post-event settle window and loses strikes
+// (see ENRAI_POLL_MS). Disturbers/noise are tallied for the 'K' diagnostic but drive nothing;
+// only a validated strike updates the snapshot + notifies. CSV logging reads it at its cadence.
 void serviceEnrai() {
   if (!hasEnrai) return;
-  if (enrai.readInterruptReg() != ENRAI_LIGHTNING) return;   // 0 = nothing; disturber/noise ignored
+  if (millis() - lastEnraiMs < ENRAI_POLL_MS) return;
+  lastEnraiMs = millis();
+  uint8_t intVal = enrai.readInterruptReg();
+  if (intVal == ENRAI_DISTURBER) { enraiDisturbers++; return; }
+  if (intVal == ENRAI_NOISE)     { enraiNoise++; return; }
+  if (intVal != ENRAI_LIGHTNING) return;                     // 0 = nothing latched
   lightningKm     = enrai.distanceToStorm();
   lightningEnergy = enrai.lightningEnergy();
   lightningStrikes++;
@@ -1092,6 +1105,13 @@ void loop() {
       if (enraiWatchdog < 10) enraiWatchdog++;
       if (hasEnrai) enrai.watchdogThreshold(enraiWatchdog);
       Serial.printf("[enrai] watchdog=%u (higher = fewer disturbers)\n", enraiWatchdog);
+      lastUpdate = millis();
+    }
+    else if (cmd == 'K' || cmd == 'k') {   // Enrai: live lightning status — verify the poll mid-storm
+      Serial.printf("<<<ENRAI present=%d watchdog=%u strikes=%lu disturbers=%lu noise=%lu last=%dkm/%lue>>>\n",
+                    hasEnrai ? 1 : 0, enraiWatchdog, (unsigned long)lightningStrikes,
+                    (unsigned long)enraiDisturbers, (unsigned long)enraiNoise,
+                    lightningKm, (unsigned long)lightningEnergy);
       lastUpdate = millis();
     }
   }

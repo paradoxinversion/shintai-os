@@ -129,8 +129,12 @@ AS3935 is absent.
 - **D-1 — Direct on the bus, no mux.** `0x03` is free and collides with nothing; the AS3935 is a
   single sensor with a fixed address, so the PCA9546 buys nothing here (unlike the colliding ToFs).
 - **D-2 — Poll, don't wait for an IRQ.** No INT pin is wired on the Qwiic rig; polling the
-  interrupt-source register every loop catches lightning's slow cadence with margin. Wiring INT is a
-  forward-path precision upgrade.
+  interrupt-source register catches lightning's slow cadence with margin. Wiring INT is a
+  forward-path precision upgrade. **The poll is THROTTLED to ≥10 ms** (`ENRAI_POLL_MS`): the
+  AS3935's interrupt register needs ~2 ms to settle after an event, and polling every loop
+  iteration (sub-ms bursts) read-and-clears it inside that window and loses strikes — the bench
+  sketch's `delay(10)` never hit this and caught strikes reliably, so the integrated read matches
+  it. A `'K'` serial command reports live strike/disturber/noise tallies to verify the catch rate.
 - **D-3 — Last-strike snapshot + count in the CSV.** Lightning is event-based; a sampled CSV can't
   hold an "instant." The snapshot + monotonic count is the honest sampled projection, and the
   event edge lives on the BLE side.
