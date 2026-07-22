@@ -216,16 +216,38 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:60;
 .ticker b{color:var(--phosphor);font-weight:400;}.ticker .oh{color:var(--alert);}
 @media (prefers-reduced-motion:reduce){.banner.show{animation:none;}}
 @media (max-width:900px){.main{grid-template-columns:1fr;}}
+/* header gear + panel modal (§5.5 button, §5.6 status-LED toggles) */
+.gear{margin-left:14px;background:none;border:1px solid var(--grid);color:var(--bone);font-family:var(--mono);
+  font-size:11px;letter-spacing:.14em;padding:4px 10px;cursor:pointer;text-transform:uppercase;}
+.gear:hover{border-color:var(--phosphor);color:var(--phosphor);}
+.gear:focus-visible{outline:2px solid var(--phosphor);outline-offset:2px;}
+.modal[hidden]{display:none;}
+.modal{position:fixed;inset:0;z-index:100;background:rgba(5,8,10,.72);display:flex;align-items:center;justify-content:center;}
+.modal-panel{position:relative;background:var(--panel);border:1px solid var(--grid);padding:16px 18px;min-width:280px;}
+.modal-hdr{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:12px;}
+.modal-hdr .t{color:var(--bone);font-size:12px;letter-spacing:.2em;text-transform:uppercase;}
+.modal-hdr .x{background:none;border:none;color:var(--bone-dim);font-family:var(--mono);font-size:14px;cursor:pointer;}
+.modal-hdr .x:hover{color:var(--alert);}
+.toggles{display:flex;flex-direction:column;gap:1px;}
+.toggle{display:flex;align-items:center;gap:11px;background:none;border:none;color:var(--bone);font-family:var(--mono);
+  font-size:13px;letter-spacing:.06em;padding:7px 6px;cursor:pointer;text-align:left;text-transform:uppercase;}
+.toggle:hover{background:rgba(88,240,122,.06);}
+.toggle:focus-visible{outline:1px solid var(--phosphor);outline-offset:-1px;}
+.toggle .led{width:9px;height:9px;flex:none;border:1px solid var(--phosphor-dim);}
+.toggle.on .led{background:var(--phosphor);border-color:var(--phosphor);}
+.toggle.on{color:var(--phosphor);}
+.modal-hint{margin-top:12px;color:var(--bone-dim);font-size:11px;letter-spacing:.06em;}
 </style></head>
 <body>
 <div class="wrap">
   <div class="hdr"><span class="mark">SHINTAI-OS</span><span class="sub">// Live Console</span>
-    <span class="pod" id="pod"></span><span class="n" id="samples">#0</span></div>
+    <span class="pod" id="pod"></span><span class="n" id="samples">#0</span>
+    <button class="gear" id="gear" title="Show / hide panels">⚙ PANELS</button></div>
   <div class="main">
     <div class="left">
       <div class="banner" id="b-hold">◆ OBJECT INSIDE 0.2 M — HOLD</div>
       <div class="banner mid" id="b-vent">◆ CO2 OVER LIMIT — VENTILATE</div>
-      <div class="panel radarpanel"><span class="rt tl"></span><span class="rt br"></span>
+      <div class="panel radarpanel" data-panel="stormscope" data-label="Stormscope"><span class="rt tl"></span><span class="rt br"></span>
         <div class="t">Enrai Stormscope</div>
         <div class="scopewrap"><canvas id="scope"></canvas>
           <div class="honesty">RANGE ONLY · AZIMUTH INDICATIVE</div></div>
@@ -234,28 +256,28 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:60;
           <span class="b alert">NEAREST<b id="storm-near">—</b></span>
         </div>
       </div>
-      <div class="panel"><span class="rt tl"></span><span class="rt br"></span>
+      <div class="panel" data-panel="strikes" data-label="Recent strikes"><span class="rt tl"></span><span class="rt br"></span>
         <div class="t">Recent strikes</div>
         <div class="ticker" id="ticker"></div>
       </div>
     </div>
     <div class="right">
-      <div class="panel"><span class="rt tl"></span><span class="rt br"></span>
+      <div class="panel" data-panel="range" data-label="Range"><span class="rt tl"></span><span class="rt br"></span>
         <div class="t">Range · rear field</div><div class="segs" id="range-segs"></div>
         <div class="mval" id="range-val">—</div></div>
-      <div class="panel"><span class="rt tl"></span><span class="rt br"></span>
+      <div class="panel" data-panel="climate" data-label="Climate"><span class="rt tl"></span><span class="rt br"></span>
         <div class="t">Climate · CO₂</div><div class="segs" id="co2-segs"></div>
         <div class="mval" id="co2-val">—</div><div class="sub2" id="climate-tr">—</div></div>
-      <div class="panel"><span class="rt tl"></span><span class="rt br"></span>
+      <div class="panel" data-panel="thermal" data-label="Thermal"><span class="rt tl"></span><span class="rt br"></span>
         <div class="t">Thermal · hotspot Δ</div><div class="segs" id="therm-segs"></div>
         <div class="mval" id="therm-val">—</div><div class="sub2" id="therm-ctr">—</div></div>
-      <div class="panel"><span class="rt tl"></span><span class="rt br"></span>
+      <div class="panel" data-panel="air" data-label="Air"><span class="rt tl"></span><span class="rt br"></span>
         <div class="t">Air · pressure / gas</div><div class="rows">
           <div class="r"><span class="k">Pressure</span><span class="v" id="air-press">—</span></div>
           <div class="r"><span class="k">Gas · VOC</span><span class="v" id="air-gas">—</span></div>
           <div class="r"><span class="k">Smell · Kyūkaku</span><span class="v" id="air-smell">—</span></div>
         </div></div>
-      <div class="panel"><span class="rt tl"></span><span class="rt br"></span>
+      <div class="panel" data-panel="nav" data-label="Navigation"><span class="rt tl"></span><span class="rt br"></span>
         <div class="t">Navigation</div><div class="rows">
           <div class="r"><span class="k">Heading</span><span class="v" id="nav-hd">—</span></div>
           <div class="r"><span class="k">GPS</span><span class="v" id="nav-gps">—</span></div>
@@ -264,6 +286,13 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:60;
           <div class="r"><span class="k">Steps</span><span class="v" id="nav-steps">—</span></div>
         </div></div>
     </div>
+  </div>
+</div>
+<div class="modal" id="modal" hidden>
+  <div class="modal-panel"><span class="rt tl"></span><span class="rt br"></span>
+    <div class="modal-hdr"><span class="t">Display · panels</span><button class="x" id="modal-x" title="Close">✕</button></div>
+    <div class="toggles" id="toggles"></div>
+    <div class="modal-hint">Toggle a panel to hide it. Saved on this browser.</div>
   </div>
 </div>
 <script>
@@ -351,6 +380,24 @@ function frame(ts){
   if(!reduce)requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+// --- panel show/hide modal (localStorage-persisted display preference; §5.6 LED toggles) ---
+const PANELS=[...document.querySelectorAll('[data-panel]')].map(el=>({id:el.dataset.panel,label:el.dataset.label,el}));
+const PKEY='shintai-console-panels';
+let panelOn={};try{panelOn=JSON.parse(localStorage.getItem(PKEY))||{};}catch(e){}
+const isOn=id=>panelOn[id]!==false;
+function applyPanels(){PANELS.forEach(p=>{p.el.style.display=isOn(p.id)?'':'none';});}
+function renderToggles(){const c=$('toggles');c.innerHTML='';PANELS.forEach(p=>{
+  const b=document.createElement('button');b.className='toggle'+(isOn(p.id)?' on':'');
+  b.setAttribute('aria-pressed',isOn(p.id));
+  b.innerHTML='<span class="led"></span><span>'+p.label+'</span>';
+  b.onclick=()=>{panelOn[p.id]=!isOn(p.id);localStorage.setItem(PKEY,JSON.stringify(panelOn));
+    applyPanels();renderToggles();dispatchEvent(new Event('resize'));};
+  c.appendChild(b);});}
+$('gear').onclick=()=>{$('modal').hidden=false;};
+$('modal-x').onclick=()=>{$('modal').hidden=true;};
+$('modal').onclick=e=>{if(e.target===$('modal'))$('modal').hidden=true;};
+addEventListener('keydown',e=>{if(e.key==='Escape')$('modal').hidden=true;});
+applyPanels();renderToggles();
 </script></body></html>
 """
 
