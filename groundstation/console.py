@@ -108,23 +108,23 @@ html,body{margin:0;height:100%;}
 body{background:var(--void);color:var(--bone);font-family:var(--mono);font-size:13px;overflow:hidden;}
 body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:60;
   background:repeating-linear-gradient(to bottom,rgba(0,0,0,0) 0 2px,rgba(0,0,0,.16) 2px 3px);mix-blend-mode:multiply;}
-.wrap{display:grid;grid-template-rows:auto 1fr auto;height:100%;}
+.wrap{display:grid;grid-template-rows:auto 1fr;height:100%;}
 .hdr{display:flex;align-items:baseline;gap:16px;padding:11px 18px;border-bottom:1px solid var(--grid);}
 .hdr .mark{color:var(--phosphor);letter-spacing:.22em;font-weight:600;}
 .hdr .sub{color:var(--bone-dim);letter-spacing:.14em;font-size:12px;text-transform:uppercase;}
 .hdr .pod{color:var(--amber);letter-spacing:.14em;}
 .hdr .n{margin-left:auto;color:var(--bone-dim);font-variant-numeric:tabular-nums;}
-.main{display:grid;grid-template-columns:1.5fr 1fr;gap:12px;padding:12px;min-height:0;}
-.left{display:flex;flex-direction:column;gap:10px;min-height:0;}
-.right{display:flex;flex-direction:column;gap:12px;min-height:0;overflow-y:auto;}
+.main{display:grid;grid-template-columns:minmax(300px,360px) 1fr;gap:12px;padding:12px;min-height:0;}
+.left{display:flex;flex-direction:column;gap:10px;min-height:0;overflow-y:auto;}
+.right{display:grid;grid-template-columns:repeat(2,1fr);grid-auto-rows:min-content;gap:12px;min-height:0;overflow-y:auto;align-content:start;}
 /* panel: reticle-tick framed, chamfer-free (border-radius:0) */
 .panel{position:relative;background:var(--panel);border:1px solid var(--grid);padding:12px 14px;}
 .panel>.t{color:var(--bone);font-size:11px;letter-spacing:.2em;text-transform:uppercase;margin-bottom:9px;}
 .panel .rt{position:absolute;width:12px;height:12px;}
 .rt.tl{top:-1px;left:-1px;border-top:2px solid var(--phosphor-dim);border-left:2px solid var(--phosphor-dim);}
 .rt.br{bottom:-1px;right:-1px;border-bottom:2px solid var(--phosphor-dim);border-right:2px solid var(--phosphor-dim);}
-.radarpanel{flex:1;min-height:0;display:flex;flex-direction:column;}
-.scopewrap{flex:1;min-height:0;position:relative;display:flex;align-items:center;justify-content:center;}
+.radarpanel{display:flex;flex-direction:column;}
+.scopewrap{height:230px;position:relative;display:flex;align-items:center;justify-content:center;}
 #scope{display:block;}
 .honesty{position:absolute;bottom:2px;left:0;right:0;text-align:center;color:var(--bone-dim);font-size:10px;letter-spacing:.12em;}
 .storows{display:flex;gap:22px;margin-top:6px;}
@@ -149,7 +149,7 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:60;
 .banner.mid{border-color:var(--amber);color:var(--amber);}
 .banner.show{display:block;animation:blink 1s steps(2,end) infinite;}
 @keyframes blink{50%{opacity:.34;}}
-.ticker{border-top:1px solid var(--grid);padding:8px 18px;display:flex;gap:24px;overflow:hidden;white-space:nowrap;color:var(--bone-dim);font-size:12px;letter-spacing:.06em;}
+.ticker{display:flex;flex-direction:column;gap:4px;max-height:150px;overflow-y:auto;color:var(--bone-dim);font-size:12px;letter-spacing:.05em;font-variant-numeric:tabular-nums;}
 .ticker b{color:var(--phosphor);font-weight:400;}.ticker .oh{color:var(--alert);}
 @media (prefers-reduced-motion:reduce){.banner.show{animation:none;}}
 @media (max-width:900px){.main{grid-template-columns:1fr;}}
@@ -171,6 +171,10 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:60;
           <span class="b alert">NEAREST<b id="storm-near">—</b></span>
         </div>
       </div>
+      <div class="panel"><span class="rt tl"></span><span class="rt br"></span>
+        <div class="t">Recent strikes</div>
+        <div class="ticker" id="ticker"></div>
+      </div>
     </div>
     <div class="right">
       <div class="panel"><span class="rt tl"></span><span class="rt br"></span>
@@ -191,7 +195,6 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:60;
         </div></div>
     </div>
   </div>
-  <div class="ticker" id="ticker"></div>
 </div>
 <script>
 let DATA=/*DATA*/; const LIVE=/*LIVE*/;
@@ -236,9 +239,9 @@ const COL={grid:'#1C4028',dim:'#2E7A45',ph:'#58F07A',amber:'#F2A93B',alert:'#FF4
 const cv=$('scope'),ctx=cv.getContext('2d'),dpr=Math.min(devicePixelRatio||1,2);
 const reduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
 let W,H,cx,cy,R;
-function size(){const w=cv.parentElement,s=Math.max(180,Math.min(w.clientWidth-8,(w.clientHeight-8)*1.35));
-  const ht=s*0.74;cv.style.width=s+'px';cv.style.height=ht+'px';cv.width=s*dpr;cv.height=ht*dpr;
-  W=cv.width;H=cv.height;cx=W/2;cy=H*0.94;R=H*0.86;}
+function size(){const w=cv.parentElement,s=w.clientWidth,ht=w.clientHeight;
+  cv.style.width=s+'px';cv.style.height=ht+'px';cv.width=s*dpr;cv.height=ht*dpr;
+  W=cv.width;H=cv.height;cx=W/2;cy=H*0.92;R=H*0.84;}
 size();addEventListener('resize',size);
 const A0=Math.PI,A1=2*Math.PI,SPAN=A1-A0;
 const pt=(r,a)=>[cx+r*Math.cos(a),cy+r*Math.sin(a)];
