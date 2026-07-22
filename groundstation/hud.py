@@ -1,8 +1,10 @@
 """Shintai-OS HUD — the default view of the newest excursion.
 
 One command: finds the newest non-trivial log, cleans it, and builds an
-offline, cyberpunk HUD that integrates the GPS route (on a real DarkMatter
-street basemap, baked in) with every sensor on a synced time axis. If the
+offline, cassette-futurism instrument HUD (docs/style.md — VOID/PHOSPHOR,
+monochrome, subtle scanlines) that integrates the GPS route (on a real
+DarkMatter street basemap, baked in) with every sensor on a synced time axis.
+If the
 basemap tiles can't be fetched (no network), it gracefully drops to a tileless
 route so the view ALWAYS builds.
 
@@ -77,11 +79,17 @@ if "gas_ohms" in df.columns:
     df["gas_kohm"] = df["gas_ohms"] / 1000.0   # ohms → kΩ for a readable trace
 gps = df.dropna(subset=["lat", "lon"])
 
-# --- palette --------------------------------------------------------------
-BG, PANEL, GRID = "#05060a", "#0b0e1a", "#16203a"
-NEON = ["#00f0ff", "#ff2bd6", "#b14bff", "#39ff14", "#ffd300"]
-NEON_RGB = [(0, 240, 255), (255, 43, 214), (177, 75, 255), (57, 255, 20), (255, 211, 0)]
-NEON_SCALE = [[0, "#0d1b4c"], [0.4, "#b14bff"], [0.7, "#ff2bd6"], [1, "#00f0ff"]]
+# --- palette: cassette-futurism instrument language (docs/style.md, web posture) --
+# One emissive color per surface; green = nominal, amber = caution, red = alarm.
+# NO rainbow — that's the cyberpunk tell the guide rejects. Data reads in PHOSPHOR;
+# labels/chrome in BONE; structure in GRID.
+VOID, PANEL, GRID = "#05080A", "#0C1410", "#1C4028"
+PHOSPHOR, PHOSPHOR_DIM = "#58F07A", "#2E7A45"
+AMBER, ALERT = "#F2A93B", "#FF4438"
+BONE, BONE_DIM = "#C9CDBC", "#6B6F62"
+# CO₂ over the route carries STATE, not decoration: in-range green → climbing amber → over-limit red.
+STATE_SCALE = [[0.0, PHOSPHOR_DIM], [0.45, PHOSPHOR], [0.72, AMBER], [1.0, ALERT]]
+MONO = "'IBM Plex Mono', 'Space Mono', 'SFMono-Regular', Menlo, monospace"
 SENSORS = [("distance_l_mm", "REAR-L mm"), ("distance_r_mm", "REAR-R mm"),
            ("co2_ppm", "CO₂ ppm"), ("accel_mag", "ACCEL |g|"),
            ("hotspot_delta", "THERMAL Δ"), ("humidity_pct", "HUMID %"),
@@ -114,7 +122,7 @@ title = "// GPS TRACK" + (" on DarkMatter" if basemap else "") + " — colored b
 fig = make_subplots(rows=rows, cols=1,
                     row_heights=[0.46] + [0.54 / len(SENSORS)] * len(SENSORS),
                     vertical_spacing=0.012,
-                    subplot_titles=[title] + [s[1] for s in SENSORS])
+                    subplot_titles=[title] + [s[1].upper() for s in SENSORS])
 
 if len(gps):
     if basemap:
@@ -133,37 +141,57 @@ if len(gps):
                          scaleratio=1 / np.cos(np.radians(gps.lat.mean())),
                          row=1, col=1)
     fig.add_trace(go.Scatter(x=rx, y=ry, mode="lines",
-                  line=dict(color="rgba(0,240,255,0.20)", width=9),
+                  line=dict(color="rgba(46,122,69,0.35)", width=8),   # PHOSPHOR_DIM track
                   hoverinfo="skip"), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=rx, y=ry, mode="markers",
-        marker=dict(size=5, color=gps.co2_ppm, colorscale=NEON_SCALE, showscale=True,
-                    colorbar=dict(title="CO₂", len=0.4, y=0.8, thickness=10, outlinewidth=0)),
+        marker=dict(size=5, color=gps.co2_ppm, colorscale=STATE_SCALE, showscale=True,
+                    colorbar=dict(title=dict(text="CO₂", font=dict(color=BONE, family=MONO)),
+                                  len=0.4, y=0.8, thickness=10, outlinewidth=0,
+                                  tickfont=dict(color=BONE_DIM, family=MONO))),
         customdata=gps[["t_min", "speed_kmh"]],
         hovertemplate="t %{customdata[0]:.1f}min  %{customdata[1]:.1f}km/h<extra></extra>"),
         row=1, col=1)
 
 for i, (col, _) in enumerate(SENSORS):
     r = i + 2
+    # Monochrome discipline (style.md §2): every channel reads in PHOSPHOR — its own
+    # panel + BONE label distinguish it, not a decorative hue.
     fig.add_trace(go.Scatter(
         x=df.t_min, y=df[col], mode="lines",
-        line=dict(color=NEON[i % len(NEON)], width=1.6), fill="tozeroy",
-        fillcolor="rgba(%d,%d,%d,0.13)" % NEON_RGB[i % len(NEON_RGB)],
+        line=dict(color=PHOSPHOR, width=1.4), fill="tozeroy",
+        fillcolor="rgba(88,240,122,0.10)",
         hovertemplate=f"{col} %{{y:.1f}} @ %{{x:.1f}}min<extra></extra>"), row=r, col=1)
     fig.update_xaxes(matches="x2", row=r, col=1)
 fig.update_xaxes(title_text="MINUTES SINCE BOOT", row=rows, col=1)
 
 fig.update_layout(
-    template="plotly_dark", height=1240, paper_bgcolor=BG, plot_bgcolor=PANEL,
-    font=dict(family="SFMono-Regular, Menlo, monospace", color="#9fefff", size=11),
-    title=dict(text="▸ SHINTAI-OS // " + os.path.basename(logpath),
-               font=dict(size=18, color="#00f0ff")),
+    template="plotly_dark", height=1240, paper_bgcolor=VOID, plot_bgcolor=PANEL,
+    font=dict(family=MONO, color=BONE, size=11),
+    title=dict(text="▸ SHINTAI-OS  //  " + os.path.basename(logpath).upper(),
+               font=dict(family=MONO, size=17, color=PHOSPHOR)),
     margin=dict(l=60, r=30, t=70, b=40), showlegend=False, hovermode="x unified")
-fig.update_xaxes(gridcolor=GRID, zeroline=False, linecolor=GRID)
-fig.update_yaxes(gridcolor=GRID, zeroline=False, linecolor=GRID)
-for a in fig.layout.annotations:
-    a.update(font=dict(color="#ff2bd6", size=11, family="Menlo, monospace"), xanchor="left")
+fig.update_xaxes(gridcolor=GRID, zeroline=False, linecolor=GRID, tickfont=dict(color=BONE_DIM))
+fig.update_yaxes(gridcolor=GRID, zeroline=False, linecolor=GRID, tickfont=dict(color=BONE_DIM))
+for a in fig.layout.annotations:                          # panel titles are BONE chrome
+    a.update(font=dict(color=BONE, size=11, family=MONO), xanchor="left")
 
 fig.write_html(OUT, include_plotlyjs=True)
+# CRT flourish (style.md §7 / web posture): VOID ground, IBM Plex Mono, subtle scanlines —
+# injected into the self-contained HTML. The webfont @import upgrades when online and
+# falls back to the mono stack offline, so the HUD still builds + reads with no network.
+CRT_CSS = (
+    "<style>\n"
+    "@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap');\n"
+    "body{background:#05080A!important;}\n"
+    "body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;"
+    "background:repeating-linear-gradient(to bottom,rgba(0,0,0,0) 0 2px,rgba(0,0,0,0.16) 2px 3px);"
+    "mix-blend-mode:multiply;}\n"
+    "</style>\n"
+)
+with open(OUT, "r") as _fh:
+    _html = _fh.read()
+with open(OUT, "w") as _fh:
+    _fh.write(_html.replace("</head>", CRT_CSS + "</head>", 1))
 print("wrote", OUT)
 subprocess.run(["open", OUT], check=False)
