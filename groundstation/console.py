@@ -49,6 +49,57 @@ def _radius(dk):
     return km, 0.68 + (min(km, 40) - 15) / 25.0 * 0.30, "far"
 
 
+# Kyūkaku (嗅覚) smell — mirrors :core Kyukaku.kt / KyukakuBand.h over the CSV's
+# gas_ohms + humidity_pct: calibration-free, tracks an adaptive clean-air baseline R0 and
+# works in the ratio r = gas/R0. A fast drop is a Spike; a sustained low r is Foul/Taint.
+_KY = dict(TAINT_R=0.60, FOUL_R=0.35, HYST_R=0.05, SPIKE_DROP=0.25, HUM_VETO=3.0,
+           SEED_ALPHA=0.10, BASE_UP=0.02, BASE_DOWN=0.0006, RREF_ALPHA=0.25,
+           SETTLE=8, SPIKE_HOLD=2)
+
+
+def _ky_step(r, prev):
+    """Hysteretic band walk (mirror of Kyukaku.step), inverted for a falling signal."""
+    if prev < 0 or prev > 2:
+        return 2 if r < _KY["FOUL_R"] else (1 if r < _KY["TAINT_R"] else 0)
+    edge, h, b = (_KY["TAINT_R"], _KY["FOUL_R"]), _KY["HYST_R"], prev
+    while b < 2 and r < edge[b] - h:
+        b += 1
+    while b > 0 and r > edge[b - 1] + h:
+        b -= 1
+    return b
+
+
+def kyukaku_smell(readings):
+    """readings: [(gas_ohms|None, humidity|None)] oldest→newest → smell label, or None."""
+    baseline = lastHum = 0.0
+    rRef = ratio = 1.0
+    band = count = spikeHold = 0
+    for gas, hum in readings:
+        if gas is None or gas <= 0:
+            continue
+        if hum is None:
+            hum = lastHum
+        if count == 0:
+            baseline, rRef, lastHum, ratio, band, count, spikeHold = gas, 1.0, hum, 1.0, 0, 1, 0
+            continue
+        armed = count >= _KY["SETTLE"]
+        base = (baseline + _KY["SEED_ALPHA"] * (gas - baseline) if not armed
+                else baseline + (_KY["BASE_UP"] if gas > baseline else _KY["BASE_DOWN"]) * (gas - baseline))
+        r = gas / base
+        fresh = armed and (rRef - r) >= _KY["SPIKE_DROP"] and (hum - lastHum) < _KY["HUM_VETO"]
+        band = _ky_step(r, band)
+        baseline, rRef, lastHum, ratio = base, rRef + _KY["RREF_ALPHA"] * (r - rRef), hum, r
+        count += 1
+        spikeHold = _KY["SPIKE_HOLD"] if fresh else max(0, spikeHold - 1)
+    if count == 0:
+        return None
+    if count < _KY["SETTLE"]:
+        return "warming"
+    if spikeHold > 0:
+        return "spike"
+    return {2: "foul", 1: "taint", 0: "clean"}[band]
+
+
 def snapshot(path):
     """Latest telemetry row + strikes derived from the lightning_strikes count."""
     if not path or not os.path.exists(path):
@@ -88,8 +139,17 @@ def snapshot(path):
     nearest = "OVERHEAD" if overhead else (
         "%d KM" % min([s["km"] for s in strikes if s["km"] > 0], default=0)
         if any(s["km"] > 0 for s in strikes) else "—")
+
+    def _f(r, name):
+        try:
+            return float(cell(r, name).strip())
+        except ValueError:
+            return None
+    smell = kyukaku_smell([(_f(r, "gas_ohms"), _f(r, "humidity_pct")) for r in rows[-400:]])
+
     meta = {"samples": len(rows), "pod": latest.get("board", ""), "strikes": total,
-            "overhead": overhead, "nearest": nearest, "log": os.path.basename(path)}
+            "overhead": overhead, "nearest": nearest, "smell": smell or "—",
+            "log": os.path.basename(path)}
     return {"row": latest, "strikes": strikes, "meta": meta}
 
 
@@ -101,8 +161,11 @@ TEMPLATE = r"""<!doctype html><html lang="en"><head>
   --void:#05080A;--panel:#0C1410;--grid:#1C4028;
   --phosphor:#58F07A;--phosphor-dim:#2E7A45;--amber:#F2A93B;--amber-dim:#7A5620;
   --alert:#FF4438;--alert-dim:#8A2820;--bone:#C9CDBC;--bone-dim:#6B6F62;
+  --violet:#B36BFF;   /* Kyūkaku smell — a source identity, not a severity (per the apps) */
   --mono:ui-monospace,"IBM Plex Mono","SFMono-Regular",Menlo,Consolas,monospace;
 }
+.sm-clean{color:var(--phosphor);}.sm-taint{color:var(--amber);}.sm-foul{color:var(--alert);}
+.sm-spike{color:var(--violet);font-weight:600;}.sm-warming,.sm-none{color:var(--bone-dim);}
 *{box-sizing:border-box;}
 html,body{margin:0;height:100%;}
 body{background:var(--void);color:var(--bone);font-family:var(--mono);font-size:13px;overflow:hidden;}
@@ -187,9 +250,16 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:60;
         <div class="t">Thermal · hotspot Δ</div><div class="segs" id="therm-segs"></div>
         <div class="mval" id="therm-val">—</div><div class="sub2" id="therm-ctr">—</div></div>
       <div class="panel"><span class="rt tl"></span><span class="rt br"></span>
+        <div class="t">Air · pressure / gas</div><div class="rows">
+          <div class="r"><span class="k">Pressure</span><span class="v" id="air-press">—</span></div>
+          <div class="r"><span class="k">Gas · VOC</span><span class="v" id="air-gas">—</span></div>
+          <div class="r"><span class="k">Smell · Kyūkaku</span><span class="v" id="air-smell">—</span></div>
+        </div></div>
+      <div class="panel"><span class="rt tl"></span><span class="rt br"></span>
         <div class="t">Navigation</div><div class="rows">
           <div class="r"><span class="k">Heading</span><span class="v" id="nav-hd">—</span></div>
           <div class="r"><span class="k">GPS</span><span class="v" id="nav-gps">—</span></div>
+          <div class="r"><span class="k">Alt · Sats</span><span class="v" id="nav-alt">—</span></div>
           <div class="r"><span class="k">Accel</span><span class="v" id="nav-acc">—</span></div>
           <div class="r"><span class="k">Steps</span><span class="v" id="nav-steps">—</span></div>
         </div></div>
@@ -221,9 +291,19 @@ function apply(d){
   const hs=num(r,'hotspot_delta');
   if(hs!=null)setMeter('therm',hs/20,hs>=10?'near':(hs>=5?'mid':'far'),(hs>=0?'+':'')+hs.toFixed(1)+'°C');
   else setMeter('therm',0,'far','—');
-  const tc=num(r,'thermal_ctr');$('therm-ctr').textContent=tc!=null?tc.toFixed(1)+'°C ctr':'—';
+  const tc=num(r,'thermal_ctr'),tmin=num(r,'thermal_min'),tmax=num(r,'thermal_max');
+  $('therm-ctr').textContent=tc!=null?(tc.toFixed(1)+'°C ctr'+(tmin!=null&&tmax!=null?'  ·  '+tmin.toFixed(0)+'–'+tmax.toFixed(0)+'°C':'')):'—';
+  // AIR: pressure + gas + Kyūkaku smell (derived server-side from the gas baseline)
+  const pr=num(r,'pressure_hpa'),ga=num(r,'gas_ohms'),sm=(m.smell||'—');
+  $('air-press').textContent=pr!=null?pr.toFixed(1)+' hPa':'—';
+  $('air-gas').textContent=ga!=null?(ga/1000).toFixed(0)+' kΩ':'—';
+  const smEl=$('air-smell');smEl.textContent=sm==='—'?'—':sm.toUpperCase();
+  smEl.className='v sm-'+(sm==='—'?'none':sm);
+  // NAV
   const hd=num(r,'heading_deg');$('nav-hd').textContent=hd!=null?hd.toFixed(0)+'° '+(r.cardinal||''):'—';
   $('nav-gps').textContent=r.gps_fix==='1'?(num(r,'lat').toFixed(4)+','+num(r,'lon').toFixed(4)+'  '+(num(r,'speed_kmh')||0)+'km/h'):'no fix';
+  const alt=num(r,'alt_m'),sat=num(r,'sats');
+  $('nav-alt').textContent=r.gps_fix==='1'?((alt!=null?alt.toFixed(0)+'m':'—')+' · '+(sat!=null?sat+' sats':'—')):'—';
   const axx=num(r,'accel_x');$('nav-acc').textContent=axx!=null?'X'+axx.toFixed(1)+' Y'+num(r,'accel_y').toFixed(1)+' Z'+num(r,'accel_z').toFixed(1):'—';
   $('nav-steps').textContent=r.steps||'—';
   $('storm-count').textContent=m.strikes||0; $('storm-near').textContent=m.nearest||'—';
