@@ -18,7 +18,7 @@ profiles:
       - platform: esp32:esp32 (3.3.10)
         platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
     libraries:
-      - STM32duino VL53L4CX (1.1.0)
+      - STM32duino VL53L5CX (1.2.3)   # Zanshin rear depth field (specs/zokyo/zanshin.md); supersedes the VL53L4CX arcs
       - Adafruit LSM6DS (4.7.4)
       - Adafruit LIS3MDL (1.2.5)
       - Adafruit GPS Library (1.7.5)

@@ -295,6 +295,14 @@ private fun EyePane(
                     ThermalPanel(grid, units)
                 }
 
+                // Zanshin: the live 8×8 rear depth field — the HUD's rear-facing image
+                // surface. Present once the first grid frame arrives (VL53L5CX attached
+                // + subscribed); absent otherwise, so it never shows an empty box.
+                r.rearDepthGrid?.let { grid ->
+                    Spacer(Modifier.height(14.dp))
+                    RearDepthPanel(grid)
+                }
+
                 // Hokan: the dead-reckoned breadcrumb — the HUD's second image
                 // surface. Only once the wearer has moved (track past the origin).
                 r.hokan?.takeIf { it.track.size > 1 }?.let { pdr ->

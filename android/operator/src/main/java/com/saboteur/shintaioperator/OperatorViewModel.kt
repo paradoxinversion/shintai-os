@@ -167,7 +167,8 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
         // Operator takes EVERY string channel (ENVIRONMENT included) plus Metsuke's
         // binary thermal grid, on BOTH pods; the merge decides what each channel shows.
         clients[role] = ShintaiBleClient(
-            getApplication(), address, ShintaiGatt.ALL + ShintaiGatt.THERMAL_GRID, listenerFor(role),
+            getApplication(), address,
+            ShintaiGatt.ALL + ShintaiGatt.THERMAL_GRID + ShintaiGatt.REAR_DEPTH_GRID, listenerFor(role),
         ).also { it.connect() }
         podReadings[role] = ShintaiReadings(connection = ConnectionState.Connecting)
         _pairingOpen.value = false       // linked → return to the console

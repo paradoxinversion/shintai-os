@@ -15,9 +15,9 @@ Consumers key off `line.startswith("timestamp_ms")` (header) and `line[0].isdigi
 | Column | Unit / values | Meaning |
 |--------|---------------|---------|
 | `timestamp_ms` | ms | Milliseconds since boot (`millis()`) |
-| `distance_l_mm` | mm (blank = none) | Rear-**left** VL53L4CX time-of-flight distance (mux ch0) |
-| `distance_r_mm` | mm (blank = none) | Rear-**right** VL53L4CX time-of-flight distance (mux ch1) |
-| `alert` | 0 / 1 | 1 when the **nearer** arc is within `NEAR_MM` (200 mm) |
+| `distance_l_mm` | mm (blank = none) | Rear **left-half** nearest range — nearest valid zone in the VL53L5CX field's left columns (Zanshin) |
+| `distance_r_mm` | mm (blank = none) | Rear **right-half** nearest range — nearest valid zone in the field's right columns (Zanshin) |
+| `alert` | 0 / 1 | 1 when the **nearer** half is within `NEAR_MM` (200 mm) |
 | `heading_deg` | 0–360° | Compass heading (0 = North) |
 | `cardinal` | N…NW | Heading as a cardinal label |
 | `accel_x` / `accel_y` / `accel_z` | m/s² | Acceleration per axis (~9.8 on the up axis at rest) |
@@ -61,14 +61,16 @@ of the schema, so consumers that key on column *names* are unaffected and pre-Bu
 tag and merge the two streams; the full multi-producer model — identity, the per-channel
 authority table, and the merge rule — is in [Multi-producer model (Bunshin)](#multi-producer-model-bunshin).
 
-`distance_l_mm` / `distance_r_mm` are the **dual rear arc** — **Kōei (後衛)**
-(`specs/zokyo/koei.md`) — two VL53L4CX behind a PCA9546 I²C mux (both report at `0x29`;
-the mux isolates them onto separate channels,
-**ch0 = left, ch1 = right**, recorded in [`REGISTRY.md`](REGISTRY.md)). They replace the
-former single `distance_mm` column. Each arc is independent and blank when its channel
-has no target or its sensor is absent (non-fatal per channel — a missing arc never
-blanks the other). `alert` and the on-body Kehai reflex both key off the **nearer** of
-the two arcs, so the wearer is warned by whichever beam sees the closest object.
+`distance_l_mm` / `distance_r_mm` are the **rear depth field** — **Zanshin (残心)**
+(`specs/zokyo/zanshin.md`), superseding Kōei's (`specs/zokyo/koei.md`) two-arc pair. One
+**VL53L5CX** 8×8 multizone ToF (at `0x29`, behind the same PCA9546 mux on **ch0**) replaces
+the two VL53L4CX arcs: the nearest valid zone in the field's **left columns** fills
+`distance_l_mm`, the **right columns** fill `distance_r_mm` (which physical side is which is a
+mount detail, validated on-wrist). Each is blank when that half sees no valid target or the
+field is absent. `alert` and the on-body Kehai reflex key off the **nearer** half, so the
+wearer is warned by whichever side sees the closest object — the **CSV shape is unchanged
+from Kōei**, only the source moved from two point beams to one field. The full field is also
+streamed live over the **Rear Depth Grid** characteristic (below).
 
 Serial output modes (toggle live by sending a byte): `h` human · `c` CSV · `b` both
 (default; the logger requests `b`). Onboard-flash control bytes: `L` list · `P` dump · `E` erase.
@@ -92,6 +94,7 @@ payload (see [Thermal Grid](#thermal-grid-binary) below).
 | Environment | `abcdc0de-ab12-ab12-ab12-abcdef123456` | `1007.2hPa 84200ohm 22.8C 39%RH` |
 | Hokan | `abcdf007-ab12-ab12-ab12-abcdef123456` | `1240 98.5 112` (cumulative `steps` · `heading_deg` · `cadence` steps/min) |
 | Thermal Grid | `abcd7890-ab12-ab12-ab12-abcdef123456` | chunked **binary** 32×24 heat grid (see below) |
+| Rear Depth Grid | `abcd5c88-ab12-ab12-ab12-abcdef123456` | 128-byte **binary** 8×8 rear depth field (see below) |
 
 To receive notifications a central must write `ENABLE_NOTIFICATION` to each
 characteristic's CCCD. **The CCCD UUID is the Bluetooth Base UUID
@@ -135,6 +138,29 @@ Each notification is one **chunk — 199 bytes, little-endian**:
   flash log. The summary `thermal_*` columns remain the logged thermal representation.
 - CCCD gotcha still applies (the `8000` above).
 
+### Rear Depth Grid (binary)
+
+Added by **Zanshin (残心)** (`specs/zokyo/zanshin.md`) — the **second binary characteristic**
+(after Metsuke's thermal grid) and the sensor behind the rear `distance_l/r_mm` + `alert`. It
+streams the VL53L5CX's **8×8 (64-zone)** rear depth field for the glasses/phone to render as a
+rear depth panel, at the sensor's **~15 Hz**, **only while a central is subscribed**.
+
+Payload — **128 bytes, little-endian**, one notification (fits MTU 247, no chunking):
+
+| Offset | Type | Field | Meaning |
+|--------|------|-------|---------|
+| `2·z` | `uint16` | `zone[z]` | row-major 8×8 zone distance in **mm** (`z = row·8 + col`); **0 = no valid target** |
+
+- A zone packs its range only when the VL53L5CX `target_status` is a **valid code (5 or 9)**;
+  otherwise it packs **0** (a real ToF range is never 0). The consumer maps near→warm,
+  far→cool, `0`→blank, and may bilinear-upscale the 8×8 for a smooth panel.
+- The same field derives `distance_l_mm` / `distance_r_mm` on-device (nearest valid zone in the
+  left / right columns) and the `alert` / Kehai reflex (nearest zone overall) — so the string
+  `Distance` / `Alert` characteristics and the CSV are **unchanged**; this grid is the live
+  full-resolution companion, like Metsuke's thermal grid beside the `thermal_*` columns.
+- **Not logged** — BLE-live-only; not in the CSV schema or the flash log.
+- CCCD gotcha still applies (the `8000` above).
+
 The **Hokan** characteristic is added by `specs/zokyo/hokan.md` — the **second BLE-half
 addition** (after Metsuke's binary grid) and the only *string* characteristic beyond the
 original set. It streams the live pedometer state — cumulative `steps`, current
@@ -152,9 +178,10 @@ differently by design (see `android/`):
 
 - **Operator** (`com.saboteur.shintaioperator`, the phone field console) subscribes to
   the **nine string** characteristics, Environment and Hokan included — the complete numeric readout —
-  **plus Thermal Grid** (the Metsuke heat panel). Ten channels: the full-fidelity console.
+  **plus Thermal Grid and Rear Depth Grid** (the Metsuke heat panel + the Zanshin rear depth panel).
+  Eleven channels: the full-fidelity console.
 - **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **all nine string
-  channels plus Thermal Grid** (ten, same as Operator), but treats **Environment** (`abcdc0de`,
+  channels plus Thermal Grid and Rear Depth Grid** (eleven, same as Operator), but treats **Environment** (`abcdc0de`,
   BME688 pressure + gas) specially: it takes the channel **only to derive Kyūkaku's smell SPIKE
   badge** from `gas_ohms` (`:core` `Kyukaku.kt`), and does **not** render the raw pressure/VOC
   readout — that full clean/taint/foul readout stays on the phone. The overlay keeps its *displayed*
@@ -195,7 +222,7 @@ precedence order**. This table is the **default**, shared by every consumer (the
 
 | Channel(s) | Default precedence | Rationale |
 |---|---|---|
-| `distance_l_mm` / `distance_r_mm` / `alert` | **aft** → fwd | Rear arc (Kōei) lives on the pack |
+| `distance_l_mm` / `distance_r_mm` / `alert` + Rear Depth Grid | **aft** → fwd | Rear field (Zanshin) lives on the pack |
 | `heading_deg` / `cardinal` | **fwd** → aft | HUD wants head orientation |
 | `accel_x` / `accel_y` / `accel_z` | **fwd** → aft | Head IMU |
 | `thermal_*` + Thermal Grid | **fwd** → aft | Forward-looking thermal |

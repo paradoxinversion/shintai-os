@@ -49,7 +49,7 @@ private const val BLANK = "—"
  *  skipped before precedence, so a preferred-but-absent pod never beats a present one.
  *  GPS is "fix-gated" for free: with no fix the channel stays [BLANK], so it's skipped. */
 private fun ShintaiReadings.supplies(ch: Channel): Boolean = when (ch) {
-    Channel.Distance -> distanceText != BLANK
+    Channel.Distance -> distanceText != BLANK || rearDepthGrid != null
     Channel.Heading -> heading != BLANK
     Channel.Accel -> accel != BLANK
     Channel.Thermal -> thermal != BLANK || thermalGrid != null
@@ -107,6 +107,7 @@ fun mergeReadings(
         distanceMm = distance?.distanceMm,
         distanceLMm = distance?.distanceLMm,
         distanceRMm = distance?.distanceRMm,
+        rearDepthGrid = distance?.rearDepthGrid,
         alertActive = distance?.alertActive ?: false,
         heading = winner(Channel.Heading)?.heading ?: BLANK,
         accel = winner(Channel.Accel)?.accel ?: BLANK,

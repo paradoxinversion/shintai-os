@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
 import android.graphics.Bitmap
+import com.saboteur.shintai.core.DepthGrid
 import com.saboteur.shintai.core.HokanPdr
 import com.saboteur.shintai.core.ThermalGrid
 import com.saboteur.shintai.core.argb
@@ -203,6 +204,25 @@ fun HeatGrid(grid: ThermalGrid, modifier: Modifier = Modifier) {
     Canvas(modifier.fillMaxWidth().aspectRatio(4f / 3f).border(1.dp, T.Grid)) {
         drawImage(
             image = heat,
+            dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
+            filterQuality = FilterQuality.High,
+        )
+    }
+}
+
+/** Zanshin's 8×8 rear depth field as a colour panel (shared palette via `:core`),
+ *  bilinear-upscaled so the coarse grid reads smooth. Near zones read alarming red,
+ *  fading through amber/green to a cool far blue; no-target zones are dark. Square box —
+ *  the field's native aspect. */
+@Composable
+fun DepthField(grid: DepthGrid, modifier: Modifier = Modifier) {
+    val depth = remember(grid) {
+        Bitmap.createBitmap(grid.argb(), DepthGrid.W, DepthGrid.H, Bitmap.Config.ARGB_8888)
+            .asImageBitmap()
+    }
+    Canvas(modifier.fillMaxWidth().aspectRatio(1f).border(1.dp, T.Grid)) {
+        drawImage(
+            image = depth,
             dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
             filterQuality = FilterQuality.High,
         )
