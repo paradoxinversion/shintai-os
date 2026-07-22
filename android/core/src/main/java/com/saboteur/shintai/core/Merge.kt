@@ -21,7 +21,7 @@ enum class Role { Fwd, Aft }
  * the same pod together (e.g. [Distance] carries the packed text, the parsed arcs, and
  * the alert latch; [Environment] carries the raw readout and its derived Kyūkaku state).
  */
-enum class Channel { Distance, Heading, Accel, Thermal, Climate, Environment, Gps, Hokan }
+enum class Channel { Distance, Heading, Accel, Thermal, Climate, Environment, Gps, Hokan, Lightning }
 
 /** Per-channel precedence order, highest-priority pod first. */
 typealias Precedence = Map<Channel, List<Role>>
@@ -40,6 +40,7 @@ val DEFAULT_PRECEDENCE: Precedence = mapOf(
     Channel.Environment to listOf(Role.Aft, Role.Fwd),   // air chem rides the pack
     Channel.Gps to listOf(Role.Fwd, Role.Aft),           // fix-gated (a no-fix pod supplies nothing)
     Channel.Hokan to listOf(Role.Aft, Role.Fwd),         // torso pedometer beats head-bob
+    Channel.Lightning to listOf(Role.Aft, Role.Fwd),     // ambient storm sense rides the pack
 )
 
 /** The blank sentinel a string channel carries until its sensor supplies a value. */
@@ -57,6 +58,7 @@ private fun ShintaiReadings.supplies(ch: Channel): Boolean = when (ch) {
     Channel.Environment -> environment != BLANK
     Channel.Gps -> gps != BLANK
     Channel.Hokan -> hokan != null
+    Channel.Lightning -> lightning.hasStrike
 }
 
 /** The channels this pod currently supplies a valid value for. The Operator uses this
@@ -118,6 +120,7 @@ fun mergeReadings(
         kyukaku = environment?.kyukaku ?: KyukakuState(),
         thermalGrid = thermal?.thermalGrid,
         hokan = winner(Channel.Hokan)?.hokan,
+        lightning = winner(Channel.Lightning)?.lightning ?: LightningState(),
         packets = perPod.values.sumOf { it.packets },
         perBoard = perPod.mapValues { it.value.connection },
     )
