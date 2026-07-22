@@ -34,7 +34,10 @@ Consumers key off `line.startswith("timestamp_ms")` (header) and `line[0].isdigi
 | `pressure_hpa` | hPa (blank = none) | BME688 barometric pressure |
 | `gas_ohms` | Ω (blank = none) | BME688 gas-sensor resistance (VOC proxy; lower = more VOC) |
 | `steps` | count (cumulative) | Hokan pedometer — cumulative step count since boot, detected live from the LSM6DSOX (0 when the IMU is absent) |
-| `board` | `fwd` / `aft` | **Bunshin** — which pod (role) produced this row; end-appended for two-host federation. Absent in pre-Bunshin logs |
+| `lightning_km` | km (0 = none yet) | **Enrai** — most recent lightning strike's estimated distance (AS3935); `1` = overhead, `63` = detected-but-out-of-range, blank when the sensor is absent |
+| `lightning_energy` | raw (blank = none) | **Enrai** — most recent strike's raw energy value (AS3935 lightning-energy register; relative, not a physical unit) |
+| `lightning_strikes` | count (cumulative) | **Enrai** — cumulative validated strikes since boot (blank when the sensor is absent) |
+| `board` | `fwd` / `aft` | **Bunshin** — which pod (role) produced this row; the terminal role discriminator for two-host federation. Absent in pre-Bunshin logs |
 
 `thermal_*` are *surface* temps (the IR camera); `air_temp_c`/`humidity_pct`/`co2_ppm`
 are *air*. `air_temp_c` and `humidity_pct` are **shared semantic slots**: whichever
@@ -72,15 +75,27 @@ wearer is warned by whichever side sees the closest object — the **CSV shape i
 from Kōei**, only the source moved from two point beams to one field. The full field is also
 streamed live over the **Rear Depth Grid** characteristic (below).
 
+`lightning_km` / `lightning_energy` / `lightning_strikes` are added by **Enrai (遠雷)**
+(`specs/zokyo/enrai.md`) — an **AS3935** "Franklin" lightning detector direct on the main I²C
+bus at `0x03`. Lightning is **event-based** (strikes are intermittent) while the CSV samples
+every tick, so the three columns are a **last-strike snapshot** (`lightning_km`,
+`lightning_energy`) plus a **monotonic count** (`lightning_strikes`) — each row reports the most
+recent strike and the running total, not an instantaneous reading. They are **appended before
+`board`** (which stays the terminal Bunshin discriminator), so consumers that key on column
+*names* are unaffected and pre-Enrai logs still parse. The firmware polls the sensor's
+interrupt-source register every loop (no IRQ pin wired); a validated strike also notifies the
+live **Lightning** characteristic (below). Blank when the AS3935 is absent.
+
 Serial output modes (toggle live by sending a byte): `h` human · `c` CSV · `b` both
 (default; the logger requests `b`). Onboard-flash control bytes: `L` list · `P` dump · `E` erase.
 
 ## BLE GATT
 
 Device name `ShintaiOS`. Service `12345678-1234-1234-1234-123456789abc`. Every
-characteristic is `READ | NOTIFY`. All but one carry a **UTF-8 string** (no binary
-packing); the exception is **Thermal Grid**, which carries a packed **binary**
-payload (see [Thermal Grid](#thermal-grid-binary) below).
+characteristic is `READ | NOTIFY`. All but two carry a **UTF-8 string** (no binary
+packing); the exceptions are **Thermal Grid** and **Rear Depth Grid**, which carry packed
+**binary** payloads (see [Thermal Grid](#thermal-grid-binary) and
+[Rear Depth Grid](#rear-depth-grid-binary) below).
 
 | Characteristic | UUID | Example payload |
 |----------------|------|-----------------|
@@ -93,6 +108,7 @@ payload (see [Thermal Grid](#thermal-grid-binary) below).
 | Climate | `abcdba98-ab12-ab12-ab12-abcdef123456` | `23.0C 41%RH 750ppm` |
 | Environment | `abcdc0de-ab12-ab12-ab12-abcdef123456` | `1007.2hPa 84200ohm 22.8C 39%RH` |
 | Hokan | `abcdf007-ab12-ab12-ab12-abcdef123456` | `1240 98.5 112` (cumulative `steps` · `heading_deg` · `cadence` steps/min) |
+| Lightning | `abcda535-ab12-ab12-ab12-abcdef123456` | `km=1 e=227467 n=8` (last strike distance km · raw energy · cumulative count) |
 | Thermal Grid | `abcd7890-ab12-ab12-ab12-abcdef123456` | chunked **binary** 32×24 heat grid (see below) |
 | Rear Depth Grid | `abcd5c88-ab12-ab12-ab12-abcdef123456` | 128-byte **binary** 8×8 rear depth field (see below) |
 
@@ -161,6 +177,18 @@ Payload — **128 bytes, little-endian**, one notification (fits MTU 247, no chu
 - **Not logged** — BLE-live-only; not in the CSV schema or the flash log.
 - CCCD gotcha still applies (the `8000` above).
 
+### Lightning (string)
+
+Added by **Enrai (遠雷)** (`specs/zokyo/enrai.md`) — the AS3935 lightning detector's live
+channel. Payload is the UTF-8 string **`km=<d> e=<energy> n=<count>`** (e.g. `km=1 e=227467
+n=8`): the most recent strike's distance (km; `1` = overhead, `63` = out of range), its raw
+energy, and the cumulative strike count since boot — the BLE mirror of the
+`lightning_km`/`lightning_energy`/`lightning_strikes` CSV columns. Unlike the periodic string
+channels it notifies **event-driven** — once per validated strike, the instant the firmware's
+poll catches it — so a consumer can flash on the edge. It notifies only while the AS3935 is
+present. (No IRQ pin is wired; the firmware polls the sensor's interrupt-source register every
+loop.)
+
 The **Hokan** characteristic is added by `specs/zokyo/hokan.md` — the **second BLE-half
 addition** (after Metsuke's binary grid) and the only *string* characteristic beyond the
 original set. It streams the live pedometer state — cumulative `steps`, current
@@ -177,15 +205,18 @@ warms up ~5 s and updates every ~5 s; Thermal needs the MLX90640 attached; Hokan
 differently by design (see `android/`):
 
 - **Operator** (`com.saboteur.shintaioperator`, the phone field console) subscribes to
-  the **nine string** characteristics, Environment and Hokan included — the complete numeric readout —
+  the **ten string** characteristics, Environment, Hokan and Lightning included — the complete numeric readout —
   **plus Thermal Grid and Rear Depth Grid** (the Metsuke heat panel + the Zanshin rear depth panel).
-  Eleven channels: the full-fidelity console.
-- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **all nine string
-  channels plus Thermal Grid and Rear Depth Grid** (eleven, same as Operator), but treats **Environment** (`abcdc0de`,
+  Twelve channels: the full-fidelity console. It renders the full Enrai readout (distance · energy ·
+  count) and flashes on each new strike.
+- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **all ten string
+  channels plus Thermal Grid and Rear Depth Grid** (twelve, same as Operator), but treats **Environment** (`abcdc0de`,
   BME688 pressure + gas) specially: it takes the channel **only to derive Kyūkaku's smell SPIKE
   badge** from `gas_ohms` (`:core` `Kyukaku.kt`), and does **not** render the raw pressure/VOC
   readout — that full clean/taint/foul readout stays on the phone. The overlay keeps its *displayed*
   surface lean; a transient chemical spike is a heads-up worth the waveguide, the numbers aren't.
+  **Lightning** it surfaces lean too: the nearest-strike distance with a flash on the edge — a
+  storm overhead is worth the waveguide.
 
 Both apps render the Metsuke heat panel (`THERMAL_GRID`) — the one binary channel — from the
 shared `:core` parse + ironbow palette; only the surrounding surface differs (waveguide HUD vs
@@ -227,6 +258,7 @@ precedence order**. This table is the **default**, shared by every consumer (the
 | `accel_x` / `accel_y` / `accel_z` | **fwd** → aft | Head IMU |
 | `thermal_*` + Thermal Grid | **fwd** → aft | Forward-looking thermal |
 | `co2_ppm` / `air_temp_c` / `humidity_pct` / `pressure_hpa` / `gas_ohms` | **aft** → fwd | Air chem rides the pack |
+| `lightning_*` + Lightning (Enrai) | **aft** → fwd | Ambient storm sense; rides the pack with air chem (direction-agnostic) |
 | `gps_fix` / `lat` / `lon` / `alt_m` / `speed_kmh` / `sats` | **fwd** → aft (fix-gated) | A pod with no fix supplies nothing |
 | `steps` (Hokan) | **aft** → fwd | Torso pedometer beats head-bob |
 

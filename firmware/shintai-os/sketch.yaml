@@ -28,6 +28,7 @@ profiles:
       - Adafruit NeoPixel (1.15.5)   # Aizu's onboard-pixel output sink (specs/platform/aizu.md)
       - Adafruit SSD1306 (2.5.17)    # 1.3" 128x64 mono OLED (Adafruit #938) — tertiary info pane. This unit is SSD1306, not SH1106 (confirmed on hardware: SH110X left it dark = no charge-pump enable)
       - Adafruit APDS9960 Library (1.3.1)   # gesture/proximity sensor — swipe input for the OLED pane
+      - SparkFun AS3935 Lightning Detector Arduino Library (1.4.9)   # Enrai lightning sense (specs/zokyo/enrai.md); AS3935 @ 0x03, polled
       # transitive deps (profiles use an isolated lib set — must be explicit)
       - Sensirion Core (0.7.3)
       - Adafruit BusIO (1.17.4)

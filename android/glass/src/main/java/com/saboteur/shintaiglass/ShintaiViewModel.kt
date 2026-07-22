@@ -142,6 +142,7 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
             ShintaiGatt.DISTANCE, ShintaiGatt.ALERT, ShintaiGatt.HEADING, ShintaiGatt.ACCEL,
             ShintaiGatt.GPS, ShintaiGatt.CLIMATE, ShintaiGatt.THERMAL, ShintaiGatt.HOKAN,
             ShintaiGatt.ENVIRONMENT, ShintaiGatt.THERMAL_GRID, ShintaiGatt.REAR_DEPTH_GRID,
+            ShintaiGatt.LIGHTNING,
         )
 
         private const val KEY_IPD = "ipd_nudge"

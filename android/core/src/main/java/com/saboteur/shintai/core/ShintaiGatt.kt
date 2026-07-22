@@ -36,6 +36,10 @@ object ShintaiGatt {
      *  integrate it into a dead-reckoned mini-map. See CONTRACT.md. */
     val HOKAN: UUID = UUID.fromString("abcdf007-ab12-ab12-ab12-abcdef123456")
 
+    /** Enrai's live lightning channel: "km=<d> e=<energy> n=<count>" (string),
+     *  notified event-driven once per validated AS3935 strike. See CONTRACT.md. */
+    val LIGHTNING: UUID = UUID.fromString("abcda535-ab12-ab12-ab12-abcdef123456")
+
     /** Metsuke's binary heat grid (packed bytes, not a string). See [BINARY]. */
     val THERMAL_GRID: UUID = UUID.fromString("abcd7890-ab12-ab12-ab12-abcdef123456")
 
@@ -57,5 +61,5 @@ object ShintaiGatt {
      *  out of the string set). Apps pass the subset they render to [ShintaiBleClient];
      *  nothing forces an app to take them all (the Glass HUD skips [ENVIRONMENT]). */
     val ALL: List<UUID> =
-        listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT, HOKAN)
+        listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT, HOKAN, LIGHTNING)
 }

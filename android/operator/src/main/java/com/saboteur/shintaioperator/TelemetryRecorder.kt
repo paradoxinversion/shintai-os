@@ -66,6 +66,7 @@ class TelemetryRecorder(private val dir: File) {
             r.distanceLMm?.toString().orEmpty(), r.distanceRMm?.toString().orEmpty(),
             if (r.alertActive) "1" else "0", r.heading, r.accel,
             r.gps, r.climate, r.thermal, r.environment,
+            r.lightning.km.toString(), r.lightning.energy.toString(), r.lightning.strikes.toString(),
             role?.name?.lowercase().orEmpty(),   // board: fwd / aft
         )
         try {
@@ -96,6 +97,7 @@ class TelemetryRecorder(private val dir: File) {
     companion object {
         private const val TAG = "ShintaiRec"
         const val HEADER =
-            "wall_ms,distance_l,distance_r,alert,heading,accel,gps,climate,thermal,environment,board"
+            "wall_ms,distance_l,distance_r,alert,heading,accel,gps,climate,thermal,environment," +
+                "lightning_km,lightning_energy,lightning_strikes,board"
     }
 }

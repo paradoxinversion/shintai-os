@@ -19,8 +19,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -29,7 +33,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.saboteur.shintai.core.Channel
 import com.saboteur.shintai.core.ConnectionState
+import kotlinx.coroutines.delay
 import com.saboteur.shintai.core.HokanPdr
+import com.saboteur.shintai.core.LightningState
 import com.saboteur.shintai.core.Precedence
 import com.saboteur.shintai.core.Role
 import com.saboteur.shintai.core.NEAR_MM
@@ -250,6 +256,9 @@ private fun Console(
     // Console stays within the method-length/complexity budget (same as NavigationPanel).
     AirPanel(r, units)
 
+    // LIGHTNING — Enrai's AS3935 last-strike readout; the LED flashes on each new strike.
+    LightningPanel(r.lightning)
+
     // TREND — rolling history the glasses don't keep.
     Panel("Trend") {
         Text("RANGE", color = T.Bone, fontFamily = T.Mono, fontSize = 11.sp, letterSpacing = 2.sp)
@@ -339,6 +348,30 @@ private fun channelLabel(ch: Channel): String = when (ch) {
     Channel.Environment -> "Environment"
     Channel.Gps -> "GPS"
     Channel.Hokan -> "Steps"
+    Channel.Lightning -> "Lightning"
+}
+
+/** Milliseconds the Lightning LED stays lit after a strike. */
+private const val STRIKE_FLASH_MS = 450L
+
+/** Enrai's lightning readout — last-strike distance / energy / cumulative count. The panel
+ *  LED flashes white for a beat on each new strike (the count is monotonic, so any increase
+ *  is a fresh bolt); it idles amber otherwise. */
+@Composable
+private fun LightningPanel(l: LightningState) {
+    var flash by remember { mutableStateOf(false) }
+    LaunchedEffect(l.strikes) {
+        if (l.strikes > 0) {
+            flash = true
+            delay(STRIKE_FLASH_MS)
+            flash = false
+        }
+    }
+    Panel("Lightning", ledColor = if (flash) T.Bone else T.Amber) {
+        ReadoutRow("Distance", l.distanceLabel)
+        ReadoutRow("Energy", if (l.hasStrike) l.energy.toString() else "—")
+        ReadoutRow("Strikes", l.strikes.toString())
+    }
 }
 
 /** Hokan's pedometer readout + dead-reckoned breadcrumb mini-map. Steps/cadence are

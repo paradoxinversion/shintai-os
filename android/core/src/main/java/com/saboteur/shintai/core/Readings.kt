@@ -28,6 +28,7 @@ data class ShintaiReadings(
     val thermalGrid: ThermalGrid? = null,  // Metsuke's 32×24 heat grid, null until the first frame
     val rearDepthGrid: DepthGrid? = null,  // Zanshin's 8×8 rear depth field, null until the first notify
     val hokan: HokanPdr? = null,       // Hokan's dead-reckoned breadcrumb, null until the first notify
+    val lightning: LightningState = LightningState(),  // Enrai's last-strike snapshot + count
     val packets: Int = 0,              // total notifications received — a visible heartbeat
     val perBoard: Map<Role, ConnectionState> = emptyMap(),  // Bunshin: per-pod connection (empty = single-producer)
 )
@@ -265,6 +266,42 @@ data class HokanPdr(
 }
 
 /**
+ * Enrai's decoded lightning snapshot (specs/zokyo/enrai.md), folded from the
+ * "km=<d> e=<energy> n=<count>" characteristic. Lightning is event-based, so this is
+ * the **last strike** ([km], [energy]) plus a **monotonic count** ([strikes]) — a
+ * consumer flashes when [strikes] changes. [km] follows the AS3935: `1` = overhead,
+ * `63` = out of range, `0` = none yet.
+ */
+data class LightningState(
+    val km: Int = 0,
+    val energy: Long = 0,
+    val strikes: Int = 0,
+) {
+    val hasStrike: Boolean get() = strikes > 0
+
+    /** Human distance label: "overhead" / "out of range" / "~5 km" / "—". */
+    val distanceLabel: String get() = when {
+        strikes == 0 -> "—"
+        km <= 1 -> "overhead"
+        km >= 63 -> "out of range"
+        else -> "~$km km"
+    }
+
+    companion object {
+        /** Fold a "km=1 e=227467 n=8" payload; a malformed/missing field keeps prev. */
+        fun fold(prev: LightningState?, value: String): LightningState {
+            val p = prev ?: LightningState()
+            fun field(tag: String) = Regex("""$tag=(-?\d+)""").find(value)?.groupValues?.get(1)
+            return LightningState(
+                km = field("km")?.toIntOrNull() ?: p.km,
+                energy = field("e")?.toLongOrNull() ?: p.energy,
+                strikes = field("n")?.toIntOrNull() ?: p.strikes,
+            )
+        }
+    }
+}
+
+/**
  * Fold one characteristic notification into a new snapshot. Parsing lives here,
  * not in the BLE layer, so [ShintaiBleClient] stays a dumb transport and BOTH
  * view models share one source of truth for how a payload becomes state.
@@ -303,6 +340,7 @@ fun ShintaiReadings.fold(uuid: UUID, value: String): ShintaiReadings {
         // smell state (no BLE channel of its own — see Kyukaku.kt). Both apps get it.
         ShintaiGatt.ENVIRONMENT -> base.copy(environment = value, kyukaku = base.kyukaku.fold(value))
         ShintaiGatt.HOKAN -> base.copy(hokan = HokanPdr.fold(base.hokan, value))
+        ShintaiGatt.LIGHTNING -> base.copy(lightning = LightningState.fold(base.lightning, value))
         else -> base
     }
 }

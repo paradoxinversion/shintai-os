@@ -37,8 +37,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -52,7 +54,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.saboteur.shintai.core.ConnectionState
 import com.saboteur.shintai.core.ShintaiReadings
+import com.saboteur.shintai.core.LightningState
 import com.saboteur.shintai.core.Smell
+import kotlinx.coroutines.delay
 import com.saboteur.shintai.core.Units
 import com.saboteur.shintai.core.distanceParts
 import com.saboteur.shintai.core.formatClimate
@@ -267,6 +271,11 @@ private fun EyePane(
                 // is for; the full clean/taint/foul readout stays on the phone.
                 SmellSpikeBadge(r.kyukaku.smell)
 
+                // Enrai: a lean lightning heads-up — nearest-strike distance, flashing on
+                // each new bolt. A storm overhead is worth the waveguide; the full
+                // energy/count readout stays on the phone.
+                LightningBadge(r.lightning)
+
                 Spacer(Modifier.height(16.dp))
                 // Kōei's rear dual-arc — both ToF beams as a glanceable behind-you overlay
                 // under the nearer-arc hero. distanceLMm/distanceRMm are parsed in :core.
@@ -342,6 +351,30 @@ private fun SmellSpikeBadge(smell: Smell) {
     Text(
         "◆ AIR CHANGED — SMELL",
         color = G.Violet.copy(alpha = alertBlink()),
+        fontFamily = G.Mono, fontWeight = FontWeight.Bold, fontSize = 18.sp,
+        letterSpacing = 1.sp,
+    )
+}
+
+/** Milliseconds the lightning badge stays at full brightness after a strike. */
+private const val STRIKE_FLASH_MS = 450L
+
+/** Enrai's lean HUD heads-up: the nearest-strike distance, shown only once a strike has
+ *  landed (no clutter otherwise) and brightened to full for a beat on each new bolt (the
+ *  strike count is monotonic, so any increase is fresh). The energy/count stay on the phone. */
+@Composable
+private fun LightningBadge(l: LightningState) {
+    if (!l.hasStrike) return
+    var flash by remember { mutableStateOf(false) }
+    LaunchedEffect(l.strikes) {
+        flash = true
+        delay(STRIKE_FLASH_MS)
+        flash = false
+    }
+    Spacer(Modifier.height(6.dp))
+    Text(
+        "⚡ LIGHTNING  ${l.distanceLabel}",
+        color = G.Amber.copy(alpha = if (flash) 1f else 0.8f),
         fontFamily = G.Mono, fontWeight = FontWeight.Bold, fontSize = 18.sp,
         letterSpacing = 1.sp,
     )

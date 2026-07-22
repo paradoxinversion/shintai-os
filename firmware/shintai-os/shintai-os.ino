@@ -8,6 +8,7 @@
 #include <Adafruit_BME680.h>
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_APDS9960.h>
+#include <SparkFun_AS3935.h>   // Enrai lightning sense (specs/zokyo/enrai.md): AS3935 Franklin detector
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -39,6 +40,7 @@
 #define THERMAL_GRID_UUID   "abcd7890-ab12-ab12-ab12-abcdef123456"  // Metsuke: binary heat grid
 #define HOKAN_UUID          "abcdf007-ab12-ab12-ab12-abcdef123456"  // Hokan: steps/heading/cadence ("f007" = foot)
 #define ZANSHIN_GRID_UUID   "abcd5c88-ab12-ab12-ab12-abcdef123456"  // Zanshin: binary rear depth grid ("5c88" = 53L5CX 8x8)
+#define LIGHTNING_UUID      "abcda535-ab12-ab12-ab12-abcdef123456"  // Enrai: lightning km/energy/strikes ("a535" = AS3935)
 
 const int NEAR_MM  = 200;
 const int FAR_MM   = 2000;   // Kehai-Hikari Approach/Clear boundary (was reserved)
@@ -177,6 +179,7 @@ BLECharacteristic *climateChar;
 BLECharacteristic *environmentChar;
 BLECharacteristic *thermalGridChar;   // Metsuke: binary 16x12 heat grid
 BLECharacteristic *hokanChar;         // Hokan: "steps heading cadence" string (live PDR breadcrumb)
+BLECharacteristic *lightningChar;     // Enrai: "km=.. e=.. n=.." lightning string (event-driven notify)
 BLE2902           *thermalGridCccd = nullptr;   // its CCCD — emit only while subscribed
 BLECharacteristic *zanshinGridChar;             // Zanshin: binary 8x8 rear depth grid
 BLE2902           *zanshinGridCccd = nullptr;   // its CCCD — emit only while subscribed
@@ -193,6 +196,21 @@ bool hasZanshin     = false;   // VL53L5CX rear depth field inited (mux ch0)
 bool imuPresent     = false;
 bool magPresent     = false;
 bool thermalPresent = false;
+
+// Enrai (遠雷) — AS3935 "Franklin" lightning detector (specs/zokyo/enrai.md): direct on the
+// main bus at 0x03, polled every loop (no IRQ pin wired). A strike updates the snapshot
+// below + notifies the Lightning characteristic; the CSV logs the last-strike snapshot +
+// cumulative count. Config mirrors the bench bring-up that caught the storm.
+#define ENRAI_ADDR       0x03
+#define ENRAI_INDOOR     0x12
+#define ENRAI_LIGHTNING  0x08   // readInterruptReg() value for a validated strike
+#define ENRAI_DISTURBER  0x04
+#define ENRAI_NOISE      0x01
+SparkFun_AS3935 enrai(ENRAI_ADDR);
+bool     hasEnrai         = false;   // AS3935 answered + inited at boot
+int16_t  lightningKm      = 0;       // last strike distance (km; 1=overhead, 63=out of range, 0=none yet)
+uint32_t lightningEnergy  = 0;       // last strike raw energy (not physical units)
+uint32_t lightningStrikes = 0;       // cumulative validated strikes since boot
 
 // SCD-40 state. Present is set at boot; it updates every ~5s (slower than our
 // loop), so we cache the last good reading between fresh samples.
@@ -285,7 +303,9 @@ const char* CSV_HEADER =
   "accel_x,accel_y,accel_z,gps_fix,lat,lon,alt_m,speed_kmh,"
   "sats,thermal_min,thermal_ctr,thermal_max,thermal_mean,"
   "hotspot_delta,co2_ppm,air_temp_c,humidity_pct,pressure_hpa,gas_ohms,"
-  "steps,board";   // steps: Hokan pedometer · board: Bunshin pod role (fwd/aft) — both appended (CSV-half contract changes)
+  "steps,lightning_km,lightning_energy,lightning_strikes,board";
+  // steps: Hokan pedometer · lightning_*: Enrai AS3935 last-strike snapshot + count ·
+  // board: Bunshin pod role (fwd/aft) — board stays terminal; lightning cols inserted before it
 
 // Onboard flash logging (FFat) — autonomous field capture, pulled over USB.
 // Each power-up writes a new sequential file (/shtNNNN.csv). Rows are logged
@@ -392,7 +412,7 @@ void scanI2C() {
     Wire.beginTransmission(a);
     if (Wire.endTransmission() == 0) { Serial.printf("  0x%02X\n", a); n++; }
   }
-  Serial.printf("  %d device(s) (expect ToF mux=0x70 [gates 0x29 field], IMU=0x6a, mag=0x1c/0x1e, GPS=0x10, thermal=0x33, SCD=0x62, BME=0x77, APDS=0x39, Andon matrix=0x3f)\n", n);
+  Serial.printf("  %d device(s) (expect ToF mux=0x70 [gates 0x29 field], IMU=0x6a, mag=0x1c/0x1e, GPS=0x10, thermal=0x33, SCD=0x62, BME=0x77, APDS=0x39, Andon matrix=0x3f, lightning=0x03)\n", n);
 }
 
 // Probe the VL53L5CX rear field ('T'): report the boot presence flag, then poll for a
@@ -558,6 +578,23 @@ void setup() {
     Serial.println("[WARN] BME688 not found — pressure/gas disabled, air T/RH falls back to SCD-40");
   }
 
+  // Enrai (遠雷) — AS3935 lightning detector, direct on the main bus at 0x03 — non-fatal.
+  // No IRQ pin is wired, so serviceEnrai() polls the interrupt-source register. Config
+  // mirrors the bench bring-up that caught the storm: INDOOR gain (most sensitive),
+  // watchdog 3 to reject man-made disturbers, disturbers unmasked so a real strike is
+  // never gated behind one.
+  Wire.beginTransmission(ENRAI_ADDR);
+  if (Wire.endTransmission() == 0 && enrai.begin(Wire)) {
+    enrai.setIndoorOutdoor(ENRAI_INDOOR);
+    enrai.setNoiseLevel(2);
+    enrai.watchdogThreshold(3);
+    enrai.maskDisturber(false);
+    hasEnrai = true;
+    Serial.println("[OK] AS3935 Lightning (Enrai, 0x03, polled)");
+  } else {
+    Serial.println("[WARN] AS3935 not found @ 0x03 — lightning disabled");
+  }
+
   // BLE
   // Bunshin: name carries the pod's identity — ShintaiOS-fwd / ShintaiOS-aft. The
   // service UUID is identical on both pods; a central tells them apart by this name.
@@ -589,6 +626,7 @@ void setup() {
   climateChar  = makeChar(CLIMATE_UUID,  "Climate (CO2/Temp/RH)");
   environmentChar = makeChar(ENVIRONMENT_UUID, "Environment (P/gas/T/RH)");
   hokanChar       = makeChar(HOKAN_UUID,       "Hokan (steps/heading/cadence)");
+  lightningChar   = makeChar(LIGHTNING_UUID,   "Lightning (km/energy/n)");
   // Metsuke: the one BINARY characteristic (68-byte packed heat grid). Built
   // directly (not via makeChar) so we KEEP the BLE2902 pointer — we gate emission
   // on the client having subscribed (getNotifications, AC-4), and on this stack
@@ -985,6 +1023,26 @@ void renderPane(uint8_t page) {
   oled.display();
 }
 
+// Enrai lightning poll — the sole AS3935 read site. No IRQ pin is wired, so we poll the
+// interrupt-source register every loop iteration (reading it clears the latch). A validated
+// strike updates the last-strike snapshot (km + energy), bumps the cumulative count, and
+// notifies the Lightning characteristic immediately; disturbers/noise are ignored here (the
+// watchdog=3 config already thins them). CSV logging reads the snapshot at its own cadence.
+void serviceEnrai() {
+  if (!hasEnrai) return;
+  if (enrai.readInterruptReg() != ENRAI_LIGHTNING) return;   // 0 = nothing; disturber/noise ignored
+  lightningKm     = enrai.distanceToStorm();
+  lightningEnergy = enrai.lightningEnergy();
+  lightningStrikes++;
+  if (deviceConnected && lightningChar) {
+    char buf[48];
+    snprintf(buf, sizeof(buf), "km=%d e=%lu n=%lu",
+             lightningKm, (unsigned long)lightningEnergy, (unsigned long)lightningStrikes);
+    lightningChar->setValue(buf);
+    lightningChar->notify();
+  }
+}
+
 void loop() {
   // Always read GPS in background
   GPS.read();
@@ -1024,6 +1082,7 @@ void loop() {
   serviceThermalTx(); // Metsuke: paced chunk TX — one chunk per ~30 ms, no burst
   serviceNesshi();    // Nesshi: while BOOT held, cached-frame surface temp -> Aizu cue
   serviceHokan();     // Hokan: fast IMU DSP -> cumulative steps + latching fall SOS
+  serviceEnrai();     // Enrai: poll AS3935 -> last-strike snapshot + Lightning notify
   Aizu.tick();
 
   // ── Tertiary pane input + render (both on their own fast clocks, before the
@@ -1319,6 +1378,9 @@ void loop() {
     row += ',';  row += (bmeHasData ? String(bmePressure, 1): String(""));
     row += ',';  row += (bmeHasData ? String(bmeGas, 0)     : String(""));
     row += ',';  row += (imuPresent ? String(hokanSteps)    : String(""));   // Hokan cumulative steps
+    row += ',';  row += (hasEnrai ? String(lightningKm)      : String(""));  // Enrai last-strike km (0=none)
+    row += ',';  row += (hasEnrai ? String(lightningEnergy)  : String(""));  // Enrai last-strike energy
+    row += ',';  row += (hasEnrai ? String(lightningStrikes) : String(""));  // Enrai cumulative strikes
     row += ',';  row += podRole;   // Bunshin: which pod (fwd/aft) produced this row
 
     // Persist to onboard flash only while untethered (no USB host). close() on a
