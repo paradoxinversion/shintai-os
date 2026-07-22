@@ -585,12 +585,22 @@ void setup() {
   // never gated behind one.
   Wire.beginTransmission(ENRAI_ADDR);
   if (Wire.endTransmission() == 0 && enrai.begin(Wire)) {
-    enrai.setIndoorOutdoor(ENRAI_INDOOR);
-    enrai.setNoiseLevel(2);
-    enrai.watchdogThreshold(3);
-    enrai.maskDisturber(false);
-    hasEnrai = true;
-    Serial.println("[OK] AS3935 Lightning (Enrai, 0x03, polled)");
+    // The address-ACK above (and SparkFun begin(), which only ACK-checks) FALSE-POSITIVES
+    // on a floating bus — no sensor, no pull-ups → a nondeterministic ACK at 0x03. Confirm
+    // real bidirectional comms by round-tripping a distinctive noise-floor value: a genuine
+    // AS3935 reads back exactly what we wrote (readNoiseLevel mirrors setNoiseLevel on
+    // bits[6:4]); an empty bus reads 0. Only a passing round-trip means Enrai is really here.
+    enrai.setNoiseLevel(5);
+    if (enrai.readNoiseLevel() == 5) {
+      enrai.setIndoorOutdoor(ENRAI_INDOOR);
+      enrai.setNoiseLevel(2);            // operational floor
+      enrai.watchdogThreshold(3);
+      enrai.maskDisturber(false);
+      hasEnrai = true;
+      Serial.println("[OK] AS3935 Lightning (Enrai, 0x03, polled)");
+    } else {
+      Serial.println("[WARN] AS3935 @ 0x03 ACKed but register read-back failed (floating bus?) — lightning disabled");
+    }
   } else {
     Serial.println("[WARN] AS3935 not found @ 0x03 — lightning disabled");
   }
