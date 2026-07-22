@@ -207,34 +207,51 @@ body::after{
   <div class="ticker" id="ticker"></div>
 </div>
 <script>
-const STRIKES = /*STRIKES*/;
-const META = /*META*/;
+let STRIKES = /*STRIKES*/;
+let META = /*META*/;
+const LIVE = /*LIVE*/;
+const bornAt = {};        // strike index -> first-seen time (ms) for live phosphor fade
+let sawCount = 0;
+const fmt = n => (n||0).toLocaleString();
 
-// --- readouts ---
-document.getElementById('count').textContent = META.total;
-document.getElementById('nearest').textContent = META.nearest;
-document.getElementById('overhead').textContent = META.overhead;
-document.getElementById('rate').textContent = (META.rate==null?'—':META.rate)+' /min';
-document.getElementById('laste').textContent = META.last_e.toLocaleString();
-if(META.overhead>0){document.getElementById('banner').classList.add('show');}
-// segmented proximity meter: closest strike drives how many segments light + their band
-(function(){
+function applyData(){
+  document.getElementById('count').textContent = META.total;
+  document.getElementById('nearest').textContent = META.nearest;
+  document.getElementById('overhead').textContent = META.overhead;
+  document.getElementById('rate').textContent = (META.rate==null?'—':META.rate)+' /min';
+  document.getElementById('laste').textContent = fmt(META.last_e);
+  document.getElementById('banner').classList.toggle('show', META.overhead>0);
+  // segmented proximity meter: the closest strike drives how many segments light + the band
   const segs=document.getElementById('segs'); const N=12;
-  // proximity 0..1 where 1 = overhead (closest). Use the smallest radius among strikes.
-  let minR = STRIKES.length?Math.min.apply(null,STRIKES.map(s=>s.r)):1;
-  const prox = 1-minR; const lit = Math.max(1,Math.round(prox*N));
+  const minR = STRIKES.length?Math.min.apply(null,STRIKES.map(s=>s.r)):1;
+  const lit = STRIKES.length?Math.max(1,Math.round((1-minR)*N)):0;
   const band = minR<0.22?'on-near':(minR<0.68?'on-mid':'on-far');
+  segs.innerHTML='';
   for(let i=0;i<N;i++){const d=document.createElement('div');d.className='seg'+(i<lit?' '+band:'');segs.appendChild(d);}
-})();
-// ticker: last ~14 strikes, newest first
-(function(){
+  // ticker: last ~14 strikes, newest first
   const t=document.getElementById('ticker');
-  const last=STRIKES.slice(-14).reverse();
-  t.innerHTML = last.map(s=>{
+  t.innerHTML = STRIKES.slice(-14).reverse().map(s=>{
     const d = s.cls==='overhead'?'<span class="oh">OVERHEAD</span>':(s.cls==='oor'?'OUT OF RANGE':s.km+' KM');
-    return '<span>⚡ '+d+' · <b>'+s.e.toLocaleString()+'</b></span>';
-  }).join('') || '<span>NO STRIKES LOGGED</span>';
-})();
+    return '<span>⚡ '+d+' · <b>'+fmt(s.e)+'</b></span>';
+  }).join('') || '<span>'+(LIVE?'AWAITING STRIKES…':'NO STRIKES LOGGED')+'</span>';
+}
+
+function markNew(list){                 // append-only log → index is a stable identity
+  const now = performance.now();
+  for(let i=sawCount;i<list.length;i++) bornAt[i]=now;
+  sawCount = Math.max(sawCount, list.length);
+}
+
+async function refresh(){
+  if(!LIVE) return;
+  try{
+    const j = await (await fetch('/strikes.json',{cache:'no-store'})).json();
+    markNew(j.strikes); STRIKES=j.strikes; META=j.meta; applyData();
+  }catch(e){ /* transient: keep the last frame */ }
+}
+
+markNew(STRIKES); applyData();
+if(LIVE){ refresh(); setInterval(refresh, 2000); }
 
 // --- radar scope (canvas) ---
 const COL={grid:'#1C4028',dim:'#2E7A45',ph:'#58F07A',amber:'#F2A93B',alert:'#FF4438',bone:'#6B6F62'};
@@ -295,7 +312,9 @@ function frame(ts){
     const base = s.cls==='overhead'?COL.alert:(s.cls==='near'?COL.amber:COL.ph);
     // proximity of the rotating sweep to this blip's angle -> paint boost
     let d=Math.abs(sweep-a); const boost=Math.max(0,1-d/0.5);
-    let al = 0.28 + 0.6*boost;
+    let al = 0.24 + 0.5*boost;
+    // live phosphor persistence: a freshly-arrived strike flares, then decays over ~12s
+    const born=bornAt[i]; if(born!=null){const age=(ts-born)/1000; if(age<12) al += 0.7*(1-age/12);}
     if(s.cls==='overhead' && !reduce){al *= (0.55+0.45*Math.abs(Math.sin(ts/300)));}
     ctx.globalAlpha=Math.min(1,al);
     const rad=(s.cls==='overhead'?3.4:2.6)*dpr*(1+0.6*boost);
@@ -316,23 +335,78 @@ requestAnimationFrame(frame);
 """
 
 
-def build(path):
-    strikes, meta = parse_strikes(path)
-    html = (TEMPLATE
+def render_html(strikes, meta, live):
+    return (TEMPLATE
             .replace("/*STRIKES*/", json.dumps(strikes))
             .replace("/*META*/", json.dumps(meta))
+            .replace("/*LIVE*/", "true" if live else "false")
             .replace("/*LOG*/", meta["log"]))
+
+
+def build(path):
+    """Static snapshot → analysis/storm.html."""
+    strikes, meta = parse_strikes(path)
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w") as fh:
-        fh.write(html)
+        fh.write(render_html(strikes, meta, live=False))
     return meta
 
 
+def serve(arg, port=8137):
+    """Live stormscope — a local server that re-reads the newest strike log every poll,
+    so strikes paint onto the scope as the logger writes them. Stdlib only."""
+    import http.server
+    import socketserver
+
+    def snapshot():
+        try:
+            return parse_strikes(newest_strike_log(arg))
+        except SystemExit:
+            return [], {"log": "—", "total": 0, "overhead": 0,
+                        "rate": None, "nearest": "— —", "last_e": 0}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _send(self, body, ctype):
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            strikes, meta = snapshot()
+            if self.path.startswith("/strikes.json"):
+                self._send(json.dumps({"strikes": strikes, "meta": meta}).encode(), "application/json")
+            else:
+                self._send(render_html(strikes, meta, live=True).encode(), "text/html; charset=utf-8")
+
+    socketserver.ThreadingTCPServer.allow_reuse_address = True
+    srv = socketserver.ThreadingTCPServer(("127.0.0.1", port), Handler)
+    srv.daemon_threads = True
+    url = "http://127.0.0.1:%d/" % port
+    print("live stormscope → %s   (Ctrl+C to stop)" % url)
+    subprocess.run(["open", url], check=False)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        print("\nstopped")
+        srv.shutdown()
+
+
 if __name__ == "__main__":
-    arg = sys.argv[1] if len(sys.argv) > 1 else None
-    src = newest_strike_log(arg)
-    print("strike log:", os.path.basename(src))
-    m = build(src)
-    print("strikes: %d  (%d overhead)  nearest %s  -> %s"
-          % (m["total"], m["overhead"], m["nearest"], OUT))
-    subprocess.run(["open", OUT], check=False)
+    argv = sys.argv[1:]
+    live = "--serve" in argv or "--live" in argv
+    rest = [a for a in argv if not a.startswith("-")]
+    arg = rest[0] if rest else None
+    if live:
+        serve(arg)
+    else:
+        src = newest_strike_log(arg)
+        print("strike log:", os.path.basename(src))
+        m = build(src)
+        print("strikes: %d  (%d overhead)  nearest %s  -> %s"
+              % (m["total"], m["overhead"], m["nearest"], OUT))
+        subprocess.run(["open", OUT], check=False)
