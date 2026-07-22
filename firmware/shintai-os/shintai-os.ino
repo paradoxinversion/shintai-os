@@ -211,6 +211,9 @@ bool     hasEnrai         = false;   // AS3935 answered + inited at boot
 int16_t  lightningKm      = 0;       // last strike distance (km; 1=overhead, 63=out of range, 0=none yet)
 uint32_t lightningEnergy  = 0;       // last strike raw energy (not physical units)
 uint32_t lightningStrikes = 0;       // cumulative validated strikes since boot
+uint8_t  enraiWatchdog    = 1;       // AS3935 watchdog threshold (1-10): lower = more
+                                     // sensitive → catches distant strikes; higher rejects
+                                     // more man-made disturbers. Live-tunable via 'w'/'W'.
 
 // SCD-40 state. Present is set at boot; it updates every ~5s (slower than our
 // loop), so we cache the last good reading between fresh samples.
@@ -595,7 +598,7 @@ void setup() {
   if (Wire.endTransmission() == 0 && enrai.begin(Wire)) {
     enrai.setIndoorOutdoor(ENRAI_INDOOR);
     enrai.setNoiseLevel(2);
-    enrai.watchdogThreshold(3);
+    enrai.watchdogThreshold(enraiWatchdog);
     enrai.maskDisturber(false);
     hasEnrai = true;
     Serial.println("[OK] AS3935 Lightning (Enrai, 0x03, polled)");
@@ -1077,6 +1080,18 @@ void loop() {
     }
     else if (cmd == 'M' || cmd == 'm') {   // print this board's BLE MAC (for :glass's hardcoded address)
       Serial.println("[ble] ShintaiOS-" + podRole + " MAC " + String(BLEDevice::getAddress().toString().c_str()));
+      lastUpdate = millis();
+    }
+    else if (cmd == 'w') {   // Enrai: LOWER the AS3935 watchdog — more sensitive, catches distant strikes
+      if (enraiWatchdog > 1) enraiWatchdog--;
+      if (hasEnrai) enrai.watchdogThreshold(enraiWatchdog);
+      Serial.printf("[enrai] watchdog=%u (lower = more sensitive / distant)\n", enraiWatchdog);
+      lastUpdate = millis();
+    }
+    else if (cmd == 'W') {   // Enrai: RAISE the AS3935 watchdog — rejects more man-made disturbers
+      if (enraiWatchdog < 10) enraiWatchdog++;
+      if (hasEnrai) enrai.watchdogThreshold(enraiWatchdog);
+      Serial.printf("[enrai] watchdog=%u (higher = fewer disturbers)\n", enraiWatchdog);
       lastUpdate = millis();
     }
   }
