@@ -408,7 +408,10 @@ void eraseLogs() {
 void scanI2C() {
   Serial.println("<<<I2C scan>>>");
   int n = 0;
-  for (uint8_t a = 0x08; a <= 0x77; a++) {
+  // Start at 0x03 (not the usual 0x08): the AS3935 (Enrai) sits at the I2C-RESERVED
+  // address 0x03, so a normal 0x08-floor scan can't see it. 0x03-0x07 are harmless to
+  // bare-address probe; 0x00-0x02 (general-call / CBUS) stay skipped.
+  for (uint8_t a = 0x03; a <= 0x77; a++) {
     Wire.beginTransmission(a);
     if (Wire.endTransmission() == 0) { Serial.printf("  0x%02X\n", a); n++; }
   }
@@ -583,24 +586,19 @@ void setup() {
   // mirrors the bench bring-up that caught the storm: INDOOR gain (most sensitive),
   // watchdog 3 to reject man-made disturbers, disturbers unmasked so a real strike is
   // never gated behind one.
+  // Presence-gate on the address-ACK at 0x03 (the AS3935's I2C-reserved address) — same
+  // idiom as every other sensor. A register read-back confirm was tried and reverted: run
+  // right after begin() it false-NEGATIVES a present sensor (the AS3935's oscillators need
+  // to settle first), and the ACK already detects the sensor reliably (confirm with 'I',
+  // which now scans down to 0x03).
   Wire.beginTransmission(ENRAI_ADDR);
   if (Wire.endTransmission() == 0 && enrai.begin(Wire)) {
-    // The address-ACK above (and SparkFun begin(), which only ACK-checks) FALSE-POSITIVES
-    // on a floating bus — no sensor, no pull-ups → a nondeterministic ACK at 0x03. Confirm
-    // real bidirectional comms by round-tripping a distinctive noise-floor value: a genuine
-    // AS3935 reads back exactly what we wrote (readNoiseLevel mirrors setNoiseLevel on
-    // bits[6:4]); an empty bus reads 0. Only a passing round-trip means Enrai is really here.
-    enrai.setNoiseLevel(5);
-    if (enrai.readNoiseLevel() == 5) {
-      enrai.setIndoorOutdoor(ENRAI_INDOOR);
-      enrai.setNoiseLevel(2);            // operational floor
-      enrai.watchdogThreshold(3);
-      enrai.maskDisturber(false);
-      hasEnrai = true;
-      Serial.println("[OK] AS3935 Lightning (Enrai, 0x03, polled)");
-    } else {
-      Serial.println("[WARN] AS3935 @ 0x03 ACKed but register read-back failed (floating bus?) — lightning disabled");
-    }
+    enrai.setIndoorOutdoor(ENRAI_INDOOR);
+    enrai.setNoiseLevel(2);
+    enrai.watchdogThreshold(3);
+    enrai.maskDisturber(false);
+    hasEnrai = true;
+    Serial.println("[OK] AS3935 Lightning (Enrai, 0x03, polled)");
   } else {
     Serial.println("[WARN] AS3935 not found @ 0x03 — lightning disabled");
   }
