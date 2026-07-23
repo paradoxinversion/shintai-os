@@ -29,6 +29,7 @@ data class ShintaiReadings(
     val rearDepthGrid: DepthGrid? = null,  // Zanshin's 8×8 rear depth field, null until the first notify
     val hokan: HokanPdr? = null,       // Hokan's dead-reckoned breadcrumb, null until the first notify
     val lightning: LightningState = LightningState(),  // Enrai's last-strike snapshot + count
+    val lightningConfig: LightningConfig = LightningConfig(),  // Enrai's AS3935 tuning (Lightning Control char)
     val packets: Int = 0,              // total notifications received — a visible heartbeat
     val perBoard: Map<Role, ConnectionState> = emptyMap(),  // Bunshin: per-pod connection (empty = single-producer)
 )
@@ -302,6 +303,35 @@ data class LightningState(
 }
 
 /**
+ * Enrai's AS3935 tuning, from the writable Lightning Control characteristic
+ * (specs/zokyo/enrai.md). The app drives its tuning UI from this and writes tokens back;
+ * [known] is false until the board's first config notify arrives.
+ */
+data class LightningConfig(
+    val outdoor: Boolean = false,   // AFE gain: false = INDOOR (high), true = OUTDOOR (lower)
+    val spike: Int = 2,             // spike rejection 1..11
+    val watchdog: Int = 1,          // watchdog threshold 1..10
+    val tune: Int = 0,              // antenna tuning cap 0..15
+    val known: Boolean = false,     // a config notify has been seen
+) {
+    companion object {
+        /** Parse the board's config payload, e.g. "gain=out spike=2 wdog=1 tune=0". */
+        fun parse(value: String): LightningConfig {
+            fun intOf(k: String, d: Int) =
+                Regex("""$k=(\d+)""").find(value)?.groupValues?.get(1)?.toIntOrNull() ?: d
+            val gain = Regex("""gain=(\w+)""").find(value)?.groupValues?.get(1)
+            return LightningConfig(
+                outdoor = gain == "out",
+                spike = intOf("spike", 2),
+                watchdog = intOf("wdog", 1),
+                tune = intOf("tune", 0),
+                known = gain != null,
+            )
+        }
+    }
+}
+
+/**
  * Fold one characteristic notification into a new snapshot. Parsing lives here,
  * not in the BLE layer, so [ShintaiBleClient] stays a dumb transport and BOTH
  * view models share one source of truth for how a payload becomes state.
@@ -341,6 +371,7 @@ fun ShintaiReadings.fold(uuid: UUID, value: String): ShintaiReadings {
         ShintaiGatt.ENVIRONMENT -> base.copy(environment = value, kyukaku = base.kyukaku.fold(value))
         ShintaiGatt.HOKAN -> base.copy(hokan = HokanPdr.fold(base.hokan, value))
         ShintaiGatt.LIGHTNING -> base.copy(lightning = LightningState.fold(base.lightning, value))
+        ShintaiGatt.LIGHTNING_CTRL -> base.copy(lightningConfig = LightningConfig.parse(value))
         else -> base
     }
 }

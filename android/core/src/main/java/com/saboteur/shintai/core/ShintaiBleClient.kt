@@ -56,6 +56,12 @@ class ShintaiBleClient(
     /** CCCDs still to be written, drained one-at-a-time as each write completes. */
     private val subscribeQueue = ArrayDeque<UUID>()
 
+    /** App→board control writes, drained one-at-a-time after the link is Live (same single-GATT
+     *  -op rule as the subscribe queue). Used for the writable Lightning Control characteristic. */
+    private val writeQueue = ArrayDeque<Pair<UUID, ByteArray>>()
+    private var writing = false
+    private var live = false   // subscribe queue drained; safe to fire control writes
+
     /** Guards discoverServices() to a single call — the MTU callback races its watchdog. */
     private var discoveryKicked = false
 
@@ -89,7 +95,19 @@ class ShintaiBleClient(
             it.close()
         }
         gatt = null
+        live = false
         subscribeQueue.clear()
+        writeQueue.clear()
+    }
+
+    /** Queue a command to a WRITABLE characteristic (the Lightning Control tuning tokens).
+     *  Serialized behind any in-flight GATT op and only fired once the link is Live, honouring
+     *  the same one-op-at-a-time rule as [subscribeNext]. */
+    fun write(uuid: UUID, value: ByteArray) {
+        main.post {
+            writeQueue.add(uuid to value)
+            if (live && !writing) writeNext()
+        }
     }
 
     /**
@@ -150,6 +168,9 @@ class ShintaiBleClient(
                     }, 600)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
+                    live = false
+                    writing = false
+                    writeQueue.clear()
                     listener.onState(ConnectionState.Disconnected)
                     Log.w(TAG, "disconnected (status=$status) — retrying in ${RETRY_MS}ms")
                     reconnectSoon() // direct connect won't retry on its own
@@ -195,6 +216,17 @@ class ShintaiBleClient(
             subscribeNext(g)
         }
 
+        override fun onCharacteristicWrite(
+            g: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int,
+        ) {
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                Log.w(TAG, "control write failed for ${characteristic.uuid} status=$status")
+            }
+            writeNext() // drain the next queued control write
+        }
+
         // API 33+ delivers the value directly.
         override fun onCharacteristicChanged(
             g: BluetoothGatt,
@@ -236,8 +268,10 @@ class ShintaiBleClient(
     private fun subscribeNext(g: BluetoothGatt) {
         val uuid = subscribeQueue.poll()
         if (uuid == null) {
+            live = true
             listener.onState(ConnectionState.Live)
             Log.i(TAG, "subscribe queue drained")
+            if (!writing) writeNext() // flush any control writes queued before we went Live
             return
         }
         val service = g.getService(ShintaiGatt.SERVICE)
@@ -257,6 +291,35 @@ class ShintaiBleClient(
             cccd.value = enable
             @Suppress("DEPRECATION")
             g.writeDescriptor(cccd)
+        }
+    }
+
+    /** Fire the next queued control write — one at a time, honouring the single-GATT-op rule. */
+    private fun writeNext() {
+        if (!live || writeQueue.isEmpty()) {
+            writing = false
+            return
+        }
+        val g = gatt ?: run {
+            writeQueue.clear(); writing = false; return
+        }
+        val (uuid, value) = writeQueue.poll()
+        val ch = g.getService(ShintaiGatt.SERVICE)?.getCharacteristic(uuid)
+        if (ch == null) {
+            Log.w(TAG, "control write: characteristic $uuid missing, skipping")
+            writeNext() // keep draining
+            return
+        }
+        writing = true
+        if (Build.VERSION.SDK_INT >= 33) {
+            g.writeCharacteristic(ch, value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+        } else {
+            @Suppress("DEPRECATION")
+            ch.value = value
+            @Suppress("DEPRECATION")
+            ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            @Suppress("DEPRECATION")
+            g.writeCharacteristic(ch)
         }
     }
 

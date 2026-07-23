@@ -42,6 +42,7 @@ CHAR_TO_KOTLIN = {
     "Environment": "ENVIRONMENT",
     "Hokan": "HOKAN",
     "Lightning": "LIGHTNING",
+    "Lightning Control": "LIGHTNING_CTRL",
     "Thermal Grid": "THERMAL_GRID",
 }
 # Characteristics the Android app is documented NOT to expose (CONTRACT.md "Consumer

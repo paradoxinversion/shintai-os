@@ -184,6 +184,14 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
         log("DISCONNECT")
     }
 
+    /** Send an Enrai AS3935 tuning token to the board(s) over the writable Lightning Control
+     *  characteristic (e.g. "gain", "spike+", "wdog-", "tune+", "clear"). See CONTRACT.md. */
+    fun sendLightningCommand(token: String) {
+        val bytes = token.toByteArray(Charsets.UTF_8)
+        clients.values.forEach { it.write(ShintaiGatt.LIGHTNING_CTRL, bytes) }
+        log("LGT $token")
+    }
+
     // --- recording ---------------------------------------------------------
 
     fun toggleRecording() = if (recorder.active) stopRecording() else startRecording()
