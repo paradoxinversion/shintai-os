@@ -24,6 +24,7 @@ PORT = 8138
 
 def newest_log(arg):
     logs = sorted(glob.glob(os.path.join(LOG_DIR, "shintai_log_*.csv"))
+                  + glob.glob(os.path.join(LOG_DIR, "shintai_ble_*.csv"))   # wireless BLE capture
                   + glob.glob(os.path.join(LOG_DIR, "spidey_log_*.csv")),
                   key=os.path.getmtime, reverse=True)
     if arg:
