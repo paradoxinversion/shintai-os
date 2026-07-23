@@ -92,10 +92,11 @@ Serial output modes (toggle live by sending a byte): `h` human · `c` CSV · `b`
 ## BLE GATT
 
 Device name `ShintaiOS`. Service `12345678-1234-1234-1234-123456789abc`. Every
-characteristic is `READ | NOTIFY`. All but two carry a **UTF-8 string** (no binary
-packing); the exceptions are **Thermal Grid** and **Rear Depth Grid**, which carry packed
-**binary** payloads (see [Thermal Grid](#thermal-grid-binary) and
-[Rear Depth Grid](#rear-depth-grid-binary) below).
+characteristic is `READ | NOTIFY`; **Lightning Control** additionally has `WRITE` — the
+one **app→board** path (a central writes a tuning token; see [Lightning Control](#lightning-control-writable)).
+All but two carry a **UTF-8 string** (no binary packing); the exceptions are **Thermal Grid**
+and **Rear Depth Grid**, which carry packed **binary** payloads (see
+[Thermal Grid](#thermal-grid-binary) and [Rear Depth Grid](#rear-depth-grid-binary) below).
 
 | Characteristic | UUID | Example payload |
 |----------------|------|-----------------|
@@ -109,6 +110,7 @@ packing); the exceptions are **Thermal Grid** and **Rear Depth Grid**, which car
 | Environment | `abcdc0de-ab12-ab12-ab12-abcdef123456` | `1007.2hPa 84200ohm 22.8C 39%RH` |
 | Hokan | `abcdf007-ab12-ab12-ab12-abcdef123456` | `1240 98.5 112` (cumulative `steps` · `heading_deg` · `cadence` steps/min) |
 | Lightning | `abcda535-ab12-ab12-ab12-abcdef123456` | `km=1 e=227467 n=8` (last strike distance km · raw energy · cumulative count) |
+| Lightning Control | `abcda53c-ab12-ab12-ab12-abcdef123456` | **WRITE** a token → applies AS3935 tuning; notifies `gain=out spike=2 wdog=1 tune=0` (see below) |
 | Thermal Grid | `abcd7890-ab12-ab12-ab12-abcdef123456` | chunked **binary** 32×24 heat grid (see below) |
 | Rear Depth Grid | `abcd5c88-ab12-ab12-ab12-abcdef123456` | 128-byte **binary** 8×8 rear depth field (see below) |
 
@@ -188,6 +190,28 @@ channels it notifies **event-driven** — once per validated strike, the instant
 poll catches it — so a consumer can flash on the edge. It notifies only while the AS3935 is
 present. (No IRQ pin is wired; the firmware polls the sensor's interrupt-source register every
 loop.)
+
+### Lightning Control (writable)
+
+Added by **Enrai (遠雷)** (`specs/zokyo/enrai.md`) — the platform's **first writable
+characteristic** (`READ | WRITE | NOTIFY`), the one **app→board** path in an otherwise
+read-only contract. A central **writes a UTF-8 command token** to tune the AS3935 live (the
+sensor's distance is a coarse storm-front energy estimate — see the spec); the firmware applies
+it and **notifies the new config** back so the app can reflect it. The same tokens are on the
+firmware's serial knobs (`o`/`s`/`S`/`w`/`W`/`y`/`Y`/`x`).
+
+| Write token | Effect |
+|-------------|--------|
+| `gain` | toggle AFE gain INDOOR ↔ OUTDOOR (OUTDOOR = lower gain, spreads the distance estimate) |
+| `spike+` / `spike-` | spike rejection 1–11 (stricter waveform validation) |
+| `wdog+` / `wdog-` | watchdog threshold 1–10 (sensitivity vs disturber rejection) |
+| `tune+` / `tune-` | antenna tuning cap 0–15 (empirical — no IRQ wired to measure the LCO) |
+| `clear` | clear the storm statistics (reset the distance estimate) |
+
+**Read / notify payload** — the current config as space-separated `key=value`:
+`gain=out spike=2 wdog=1 tune=0` (`gain` ∈ `in`/`out`). Notified on connect, on read, and after
+every applied write. Present only while the AS3935 is; an unknown token is ignored. CCCD gotcha
+still applies (the `8000` above) for the notify half.
 
 The **Hokan** characteristic is added by `specs/zokyo/hokan.md` — the **second BLE-half
 addition** (after Metsuke's binary grid) and the only *string* characteristic beyond the

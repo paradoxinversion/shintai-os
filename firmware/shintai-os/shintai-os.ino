@@ -41,6 +41,7 @@
 #define HOKAN_UUID          "abcdf007-ab12-ab12-ab12-abcdef123456"  // Hokan: steps/heading/cadence ("f007" = foot)
 #define ZANSHIN_GRID_UUID   "abcd5c88-ab12-ab12-ab12-abcdef123456"  // Zanshin: binary rear depth grid ("5c88" = 53L5CX 8x8)
 #define LIGHTNING_UUID      "abcda535-ab12-ab12-ab12-abcdef123456"  // Enrai: lightning km/energy/strikes ("a535" = AS3935)
+#define LIGHTNING_CTRL_UUID "abcda53c-ab12-ab12-ab12-abcdef123456"  // Enrai: WRITABLE AS3935 tuning control ("a53c" = AS3935 ctrl)
 
 const int NEAR_MM  = 200;
 const int FAR_MM   = 2000;   // Kehai-Hikari Approach/Clear boundary (was reserved)
@@ -180,6 +181,7 @@ BLECharacteristic *environmentChar;
 BLECharacteristic *thermalGridChar;   // Metsuke: binary 16x12 heat grid
 BLECharacteristic *hokanChar;         // Hokan: "steps heading cadence" string (live PDR breadcrumb)
 BLECharacteristic *lightningChar;     // Enrai: "km=.. e=.. n=.." lightning string (event-driven notify)
+BLECharacteristic *lightningCtrlChar; // Enrai: WRITABLE AS3935 tuning control (app→board) + config notify
 BLE2902           *thermalGridCccd = nullptr;   // its CCCD — emit only while subscribed
 BLECharacteristic *zanshinGridChar;             // Zanshin: binary 8x8 rear depth grid
 BLE2902           *zanshinGridCccd = nullptr;   // its CCCD — emit only while subscribed
@@ -202,7 +204,8 @@ bool thermalPresent = false;
 // below + notifies the Lightning characteristic; the CSV logs the last-strike snapshot +
 // cumulative count. Config mirrors the bench bring-up that caught the storm.
 #define ENRAI_ADDR       0x03
-#define ENRAI_INDOOR     0x12
+#define ENRAI_INDOOR     0x12   // AFE gain: high (sensor indoors / weak signals)
+#define ENRAI_OUTDOOR    0x0E   // AFE gain: lower (strong storm signals) — spreads the distance estimate
 #define ENRAI_LIGHTNING  0x08   // readInterruptReg() value for a validated strike
 #define ENRAI_DISTURBER  0x04
 #define ENRAI_NOISE      0x01
@@ -214,6 +217,14 @@ uint32_t lightningStrikes = 0;       // cumulative validated strikes since boot
 uint8_t  enraiWatchdog    = 1;       // AS3935 watchdog threshold (1-10): lower = more
                                      // sensitive → catches distant strikes; higher rejects
                                      // more man-made disturbers. Live-tunable via 'w'/'W'.
+bool     enraiOutdoor     = false;   // AFE gain: false=INDOOR (high/sensitive), true=OUTDOOR (lower — spreads distance in a strong storm)
+uint8_t  enraiSpike       = 2;       // spike rejection (1-11): higher = stricter waveform validation
+uint8_t  enraiTuneCap     = 0;       // antenna tuning cap (0-15); empirical — no IRQ wired to measure the LCO
+// The AS3935 tuning is live-adjustable from the app (writable Lightning Control char) AND
+// serial ('o' gain · 's'/'S' spike · 'x' clear-stats · 'y'/'Y' tune-cap). One apply path:
+void applyEnraiConfig();                    // push all of the above to the sensor
+void enraiConfigStr(char *buf, size_t n);   // "gain=out spike=2 wdog=1 tune=0"
+void applyEnraiCommand(const char *cmd);    // one control token -> update + apply + notify
 uint32_t enraiDisturbers  = 0;       // man-made disturbers seen (diagnostic, 'K')
 uint32_t enraiNoise       = 0;       // noise-floor-high events seen (diagnostic, 'K')
 unsigned long lastEnraiMs = 0;       // poll timer — throttles the AS3935 read (see serviceEnrai)
@@ -483,6 +494,16 @@ class ServerCallbacks : public BLEServerCallbacks {
                                     s->startAdvertising(); }
 };
 
+// Enrai's writable Lightning Control characteristic — the first app→board path. A central
+// writes a short command token ("gain", "spike+", "wdog-", "tune+", "clear"); we apply it
+// to the AS3935 and notify the new config back. Same tokens the serial knobs use.
+class EnraiCtrlCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *c) override {
+    String v = c->getValue();
+    if (v.length() > 0) applyEnraiCommand(v.c_str());
+  }
+};
+
 void setup() {
   Serial.begin(115200);
   unsigned long serialWait = millis();
@@ -604,11 +625,8 @@ void setup() {
   // which now scans down to 0x03).
   Wire.beginTransmission(ENRAI_ADDR);
   if (Wire.endTransmission() == 0 && enrai.begin(Wire)) {
-    enrai.setIndoorOutdoor(ENRAI_INDOOR);
-    enrai.setNoiseLevel(2);
-    enrai.watchdogThreshold(enraiWatchdog);
-    enrai.maskDisturber(false);
     hasEnrai = true;
+    applyEnraiConfig();            // gain / noise / watchdog / spike / tune-cap / mask, one place
     Serial.println("[OK] AS3935 Lightning (Enrai, 0x03, polled)");
   } else {
     Serial.println("[WARN] AS3935 not found @ 0x03 — lightning disabled");
@@ -646,6 +664,19 @@ void setup() {
   environmentChar = makeChar(ENVIRONMENT_UUID, "Environment (P/gas/T/RH)");
   hokanChar       = makeChar(HOKAN_UUID,       "Hokan (steps/heading/cadence)");
   lightningChar   = makeChar(LIGHTNING_UUID,   "Lightning (km/energy/n)");
+  // Enrai control — the one WRITABLE characteristic (READ|WRITE|NOTIFY). A central writes a
+  // tuning token; onWrite applies it and notifies the config back. Built directly (not via
+  // makeChar) for the WRITE property + the write callback.
+  lightningCtrlChar = service->createCharacteristic(LIGHTNING_CTRL_UUID,
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY);
+  lightningCtrlChar->addDescriptor(new BLE2902());
+  {
+    BLEDescriptor *cd = new BLEDescriptor(BLEUUID((uint16_t)0x2901));
+    cd->setValue("Lightning Control (AS3935 tuning)");
+    lightningCtrlChar->addDescriptor(cd);
+  }
+  lightningCtrlChar->setCallbacks(new EnraiCtrlCallbacks());
+  { char cfg[48]; enraiConfigStr(cfg, sizeof(cfg)); lightningCtrlChar->setValue(cfg); }
   // Metsuke: the one BINARY characteristic (68-byte packed heat grid). Built
   // directly (not via makeChar) so we KEEP the BLE2902 pointer — we gate emission
   // on the client having subscribed (getNotifications, AC-4), and on this stack
@@ -1042,6 +1073,45 @@ void renderPane(uint8_t page) {
   oled.display();
 }
 
+// ── Enrai AS3935 tuning ── one apply path, driven by the writable Lightning Control char
+// AND the serial knobs. Distance is a coarse storm-FRONT energy estimate; OUTDOOR gain +
+// clearing statistics spread it, spike rejection + tune-cap refine it. See specs/zokyo/enrai.md.
+void applyEnraiConfig() {
+  if (!hasEnrai) return;
+  enrai.setIndoorOutdoor(enraiOutdoor ? ENRAI_OUTDOOR : ENRAI_INDOOR);
+  enrai.setNoiseLevel(2);
+  enrai.watchdogThreshold(enraiWatchdog);
+  enrai.spikeRejection(enraiSpike);
+  enrai.tuneCap(enraiTuneCap);
+  enrai.maskDisturber(false);
+}
+
+void enraiConfigStr(char *buf, size_t n) {
+  snprintf(buf, n, "gain=%s spike=%u wdog=%u tune=%u",
+           enraiOutdoor ? "out" : "in", enraiSpike, enraiWatchdog, enraiTuneCap);
+}
+
+// Apply one control token (from a BLE write or a serial key), then notify the new config back.
+void applyEnraiCommand(const char *cmd) {
+  if (!hasEnrai) return;
+  if      (!strcmp(cmd, "gain"))   enraiOutdoor = !enraiOutdoor;
+  else if (!strcmp(cmd, "spike+")) { if (enraiSpike    < 11) enraiSpike++; }
+  else if (!strcmp(cmd, "spike-")) { if (enraiSpike    > 1)  enraiSpike--; }
+  else if (!strcmp(cmd, "wdog+"))  { if (enraiWatchdog < 10) enraiWatchdog++; }
+  else if (!strcmp(cmd, "wdog-"))  { if (enraiWatchdog > 1)  enraiWatchdog--; }
+  else if (!strcmp(cmd, "tune+"))  { if (enraiTuneCap  < 15) enraiTuneCap++; }
+  else if (!strcmp(cmd, "tune-"))  { if (enraiTuneCap  > 0)  enraiTuneCap--; }
+  else if (!strcmp(cmd, "clear"))  { enrai.clearStatistics(true); }
+  else return;                                       // unknown token — ignore
+  applyEnraiConfig();
+  char cfg[48]; enraiConfigStr(cfg, sizeof(cfg));
+  Serial.printf("[enrai] %s\n", cfg);
+  if (lightningCtrlChar) {
+    lightningCtrlChar->setValue(cfg);
+    if (deviceConnected) lightningCtrlChar->notify();
+  }
+}
+
 // Enrai lightning poll — the sole AS3935 read site. No IRQ pin is wired, so we poll the
 // interrupt-source register, but THROTTLED to ENRAI_POLL_MS: polling every loop iteration
 // read-and-clears the register inside its ~2 ms post-event settle window and loses strikes
@@ -1095,21 +1165,19 @@ void loop() {
       Serial.println("[ble] ShintaiOS-" + podRole + " MAC " + String(BLEDevice::getAddress().toString().c_str()));
       lastUpdate = millis();
     }
-    else if (cmd == 'w') {   // Enrai: LOWER the AS3935 watchdog — more sensitive, catches distant strikes
-      if (enraiWatchdog > 1) enraiWatchdog--;
-      if (hasEnrai) enrai.watchdogThreshold(enraiWatchdog);
-      Serial.printf("[enrai] watchdog=%u (lower = more sensitive / distant)\n", enraiWatchdog);
-      lastUpdate = millis();
-    }
-    else if (cmd == 'W') {   // Enrai: RAISE the AS3935 watchdog — rejects more man-made disturbers
-      if (enraiWatchdog < 10) enraiWatchdog++;
-      if (hasEnrai) enrai.watchdogThreshold(enraiWatchdog);
-      Serial.printf("[enrai] watchdog=%u (higher = fewer disturbers)\n", enraiWatchdog);
-      lastUpdate = millis();
-    }
-    else if (cmd == 'K' || cmd == 'k') {   // Enrai: live lightning status — verify the poll mid-storm
-      Serial.printf("<<<ENRAI present=%d watchdog=%u strikes=%lu disturbers=%lu noise=%lu last=%dkm/%lue>>>\n",
-                    hasEnrai ? 1 : 0, enraiWatchdog, (unsigned long)lightningStrikes,
+    // Enrai AS3935 tuning — same tokens as the writable Lightning Control char (app→board).
+    else if (cmd == 'w') { applyEnraiCommand("wdog-");  lastUpdate = millis(); }   // watchdog down (more sensitive/distant)
+    else if (cmd == 'W') { applyEnraiCommand("wdog+");  lastUpdate = millis(); }   // watchdog up (fewer disturbers)
+    else if (cmd == 'o') { applyEnraiCommand("gain");   lastUpdate = millis(); }   // toggle INDOOR/OUTDOOR gain
+    else if (cmd == 's') { applyEnraiCommand("spike-"); lastUpdate = millis(); }   // spike rejection down
+    else if (cmd == 'S') { applyEnraiCommand("spike+"); lastUpdate = millis(); }   // spike rejection up
+    else if (cmd == 'y') { applyEnraiCommand("tune-");  lastUpdate = millis(); }   // antenna tune-cap down
+    else if (cmd == 'Y') { applyEnraiCommand("tune+");  lastUpdate = millis(); }   // antenna tune-cap up
+    else if (cmd == 'x') { applyEnraiCommand("clear");  lastUpdate = millis(); }   // clear storm statistics
+    else if (cmd == 'K' || cmd == 'k') {   // Enrai: live status — poll health (disturbers) + config
+      char cfg[48]; enraiConfigStr(cfg, sizeof(cfg));
+      Serial.printf("<<<ENRAI present=%d %s strikes=%lu disturbers=%lu noise=%lu last=%dkm/%lue>>>\n",
+                    hasEnrai ? 1 : 0, cfg, (unsigned long)lightningStrikes,
                     (unsigned long)enraiDisturbers, (unsigned long)enraiNoise,
                     lightningKm, (unsigned long)lightningEnergy);
       lastUpdate = millis();

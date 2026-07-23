@@ -90,7 +90,14 @@ AS3935 is absent.
   [CONTRACT.md](../../CONTRACT.md#csv--serial-schema); firmware `CSV_HEADER` mirrors it (order-exact).
 - **New string characteristic** — **Lightning** (`abcda535…`, `"a535" ≈ AS3935`), event-driven.
   Mirror sites moved in lock-step (firmware `#define`, `:core` `ShintaiGatt`, the linter's
-  `CHAR_TO_KOTLIN`); `tools/check-contract.py` green (30 columns, 11 UUIDs).
+  `CHAR_TO_KOTLIN`); `tools/check-contract.py` green.
+- **First WRITABLE characteristic** — **Lightning Control** (`abcda53c…`, `READ|WRITE|NOTIFY`):
+  the platform's first **app→board** path in an otherwise read-only contract. A central writes a
+  tuning token (`gain`/`spike±`/`wdog±`/`tune±`/`clear`); the firmware applies it to the AS3935 and
+  notifies the config back (`gain=out spike=2 wdog=1 tune=0`). Distance is a coarse storm-front
+  energy estimate, so tuning (OUTDOOR gain, clear-stats, spike/tune-cap) *spreads* it — it's not a
+  per-strike rangefinder. Same tokens on the serial knobs (`o`/`s`/`S`/`w`/`W`/`y`/`Y`/`x`). Needed a
+  new write path in `:core` `ShintaiBleClient` (queued, single-GATT-op) + an Operator tuning panel.
 - **Bunshin** — the `lightning_*` + Lightning row joins the authority table (**aft → fwd**: ambient
   storm sense rides the pack with air chem; it's direction-agnostic).
 

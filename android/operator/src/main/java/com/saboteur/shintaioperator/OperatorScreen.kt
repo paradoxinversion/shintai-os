@@ -35,6 +35,7 @@ import com.saboteur.shintai.core.Channel
 import com.saboteur.shintai.core.ConnectionState
 import kotlinx.coroutines.delay
 import com.saboteur.shintai.core.HokanPdr
+import com.saboteur.shintai.core.LightningConfig
 import com.saboteur.shintai.core.LightningState
 import com.saboteur.shintai.core.Precedence
 import com.saboteur.shintai.core.Role
@@ -259,6 +260,9 @@ private fun Console(
     // LIGHTNING — Enrai's AS3935 last-strike readout; the LED flashes on each new strike.
     LightningPanel(r.lightning)
 
+    // Enrai AS3935 tuning — writes tokens to the board over the Lightning Control char.
+    LightningTuningPanel(r.lightningConfig, vm::sendLightningCommand)
+
     // TREND — rolling history the glasses don't keep.
     Panel("Trend") {
         Text("RANGE", color = T.Bone, fontFamily = T.Mono, fontSize = 11.sp, letterSpacing = 2.sp)
@@ -371,6 +375,41 @@ private fun LightningPanel(l: LightningState) {
         ReadoutRow("Distance", l.distanceLabel)
         ReadoutRow("Energy", if (l.hasStrike) l.energy.toString() else "—")
         ReadoutRow("Strikes", l.strikes.toString())
+    }
+}
+
+/** Enrai AS3935 tuning — writes control tokens to the board over the Lightning Control char.
+ *  Shows the boot defaults until the board's config notify confirms them ([LightningConfig.known]).
+ *  Distance is a coarse storm-front estimate: OUTDOOR gain + Clear-stats spread it (see the spec). */
+@Composable
+private fun LightningTuningPanel(cfg: LightningConfig, onCmd: (String) -> Unit) {
+    Panel("Lightning Tuning", ledColor = if (cfg.known) T.Phosphor else T.PhosphorDim) {
+        ConsoleButton(
+            if (cfg.outdoor) "Gain: OUTDOOR — tap for INDOOR" else "Gain: INDOOR — tap for OUTDOOR",
+            { onCmd("gain") }, modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        TuneStepper("Spike reject", cfg.spike.toString(), { onCmd("spike-") }, { onCmd("spike+") })
+        TuneStepper("Watchdog", cfg.watchdog.toString(), { onCmd("wdog-") }, { onCmd("wdog+") })
+        TuneStepper("Tune cap", cfg.tune.toString(), { onCmd("tune-") }, { onCmd("tune+") })
+        Spacer(Modifier.height(8.dp))
+        ConsoleButton("Clear storm stats", { onCmd("clear") }, modifier = Modifier.fillMaxWidth())
+    }
+}
+
+/** Label · [−] value [+] row — a compact stepper for one AS3935 setting. */
+@Composable
+private fun TuneStepper(label: String, value: String, onMinus: () -> Unit, onPlus: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+    ) {
+        Text(label, color = T.Bone, fontFamily = T.Mono, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        ConsoleButton("−", onMinus)
+        Text(value, color = T.Phosphor, fontFamily = T.Mono, fontSize = 15.sp,
+            modifier = Modifier.padding(horizontal = 6.dp))
+        ConsoleButton("+", onPlus)
     }
 }
 

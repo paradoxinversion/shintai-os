@@ -121,6 +121,7 @@ fun mergeReadings(
         thermalGrid = thermal?.thermalGrid,
         hokan = winner(Channel.Hokan)?.hokan,
         lightning = winner(Channel.Lightning)?.lightning ?: LightningState(),
+        lightningConfig = winner(Channel.Lightning)?.lightningConfig ?: LightningConfig(),
         packets = perPod.values.sumOf { it.packets },
         perBoard = perPod.mapValues { it.value.connection },
     )
