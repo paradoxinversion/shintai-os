@@ -24,6 +24,7 @@ groundstation/pull.sh    # shintaipull — dump onboard flash logs into logs/
 python groundstation/console.py            # live web "Sulaco" console: tail newest log → 127.0.0.1:8138
 python groundstation/storm_radar.py [--serve]   # Enrai stormscope → analysis/storm.html (--serve = live, :8137)
 python groundstation/analyze.py            # stitch ALL sessions → combined.csv + pngs + route_map.html
+python groundstation/enrai_calib.py        # Enrai tuning sweep against a LIVE storm (needs the board on USB)
 ```
 
 ## Layout
@@ -47,6 +48,12 @@ python groundstation/analyze.py            # stitch ALL sessions → combined.cs
 - `storm_radar.py` — the **Enrai stormscope**, the signature motion-tracker (`docs/style.md`
   §5.1), for the strike log (`lightning-*.csv`): a self-contained radar → `analysis/storm.html`;
   `--serve` makes it live (:8137). `console.py` embeds the same scope as one panel.
+- `enrai_calib.py` — **Enrai tuning sweep**, run against a live storm (the AS3935's antenna trim
+  can't be measured without an IRQ pin to frequency-count, so tuning is empirical). Drives the
+  serial knobs, watches `lightning_strikes` increment in the CSV stream, and scores each config on
+  **range spread first**, then yield, then disturbers/strike. **Interleaves** configs in short
+  alternating segments — a storm moves, so back-to-back A-then-B measures the weather, not the
+  config. Writes `logs/enrai-calib-<time>.csv`.
 - `bootroll.py` — the shared **cassette-futurism style module** (`docs/style.md`): the ANSI
   palette + `seg_bar`/`meter`/`banner` + the boot roll-call ritual, imported by
   `shintai-logger.py`; `python bootroll.py` runs a standalone demo.

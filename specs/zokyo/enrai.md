@@ -96,7 +96,8 @@ AS3935 is absent.
   tuning token (`gain`/`spike±`/`wdog±`/`tune±`/`clear`); the firmware applies it to the AS3935 and
   notifies the config back (`gain=out spike=2 wdog=1 tune=0`). Distance is a coarse storm-front
   energy estimate, so tuning (OUTDOOR gain, clear-stats, spike/tune-cap) *spreads* it — it's not a
-  per-strike rangefinder. Same tokens on the serial knobs (`o`/`s`/`S`/`w`/`W`/`y`/`Y`/`x`). Needed a
+  per-strike rangefinder. Most tokens have a serial knob too — `o` gain, `s`/`S` spike, `y`/`Y`
+  tune-cap, `x` clear-stats, `z` recalibrate; **`wdog±` is BLE-only**, with no serial key. Needed a
   new write path in `:core` `ShintaiBleClient` (queued, single-GATT-op) + an Operator tuning panel.
 - **Bunshin** — the `lightning_*` + Lightning row joins the authority table (**aft → fwd**: ambient
   storm sense rides the pack with air chem; it's direction-agnostic).
@@ -147,9 +148,52 @@ AS3935 is absent.
   event edge lives on the BLE side.
 - **D-4 — New string char, event-driven.** The strike is a discrete event, so the characteristic
   notifies once per strike (not on a periodic tick) — letting the apps flash on the edge.
-- **D-5 — INDOOR gain + watchdog 3.** The bench config that actually caught the overhead storm:
-  maximum sensitivity, disturbers unmasked (so a real strike is never gated behind one), watchdog
-  raised to thin the indoor man-made noise floor.
+- **D-5 — INDOOR gain + watchdog 1.** Close to the bench config that caught the overhead storm:
+  maximum sensitivity, disturbers unmasked (so a real strike is never gated behind one). The
+  watchdog sits at **1**, the most permissive setting — the indoor man-made floor it was meant to
+  thin never materialised once the sensor could actually be heard from (see Calibration below).
+
+- **D-6 — The AS3935 runs the bus at 100 kHz, alone among the sensors.** `setup()` puts the
+  chain in Fast Mode (400 kHz) for the MLX90640 grid read. The AS3935 will not do it: it ACKs
+  its address but returns `0xFF` on every register read, so the config silently never lands and
+  the part validates nothing. Its transactions are therefore bracketed back down to 100 kHz by
+  the depth-counted `EnraiBus` guard and the bus restored after — slowing the whole chain would
+  cost the thermal grid far more than Enrai gains. **This is why the bench sketch worked and the
+  integration didn't**: `as3935-bringup` never calls `setClock()`.
+- **D-7 — `calibrateOsc()` at boot, and after every tune-cap change.** The datasheet requires an
+  RCO trim after power-up; the internal TRCO/SRCO timers gate signal validation, so an un-trimmed
+  part validates nothing at all. The trim follows the antenna's resonance, so it runs *after* the
+  config is applied and is re-runnable (`'z'` / the `"calib"` control token) — a `tune±` change
+  invalidates it, and a tune-cap judged against a stale timebase isn't the value you think it is.
+
+## Calibration — the failure mode this sense taught
+
+Enrai spent its first integration reporting **zero strikes, zero disturbers and zero noise**.
+That is indistinguishable from a quiet sky, which is exactly why it survived review: the
+all-zero reading is the *expected* reading most of the time. It was a deaf sensor (D-6, D-7).
+
+The lesson generalised: for a sensor whose healthy output is "nothing", **presence-gating on an
+I²C ACK proves only that something answers to the address — not that it works.** The `'K'`
+command now prints two lines, and the second is the one that matters:
+
+```
+<<<ENRAI present=1 calib=1 gain=in spike=2 wdog=1 tune=0 strikes=6 disturbers=3 …>>>
+<<<ENRAI-CHIP gain=0x12 wdog=1 nfloor=2 spike=2 tune=0 mask=0>>>
+```
+
+The first is the firmware's *shadow* copy — what it meant to write. The second is read back off
+the chip. Only their agreement distinguishes a landed config from a silently dropped one; when
+every `ENRAI-CHIP` field reads all-ones, the sensor isn't talking. Any future event-based sense
+should ship a readback line like this from day one.
+
+**Tuning is empirical, and must be measured against a live storm.** The antenna trim can only be
+measured properly by frequency-counting the LCO on the IRQ pin, which this Qwiic rig doesn't
+break out — so `groundstation/enrai_calib.py` sweeps candidate configs against real strikes
+instead. It **interleaves** configs in short alternating segments rather than running each once,
+because a storm moves: measure A then B back-to-back and the difference is mostly the storm
+getting closer. Configs are scored on **range spread first** (a config that reports every strike
+as `overhead` is saturated and useless however many it "detects"), then strike yield, then
+disturbers per strike.
 
 ## Forward path
 
