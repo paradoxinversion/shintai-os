@@ -200,17 +200,25 @@ def main():
             print("[round %d/%d] %s" % (rnd + 1, args.rounds, name))
             shadow, chip = apply_config(ser, keys)
             print("    %s" % chip)
+            # Disturber/noise tallies are firmware globals that count since BOOT. The 'x'
+            # clear-stats token clears the AS3935's own storm statistics, NOT these -- so the
+            # only honest per-segment figure is a delta across the segment. Summing the raw
+            # readings instead inflates every config by its whole history (and inflates the
+            # LAST config most), which is exactly backwards for a sweep.
+            before = parse_kv(shadow)
             state["last_n"] = None
             t0 = time.time()
             got = run_segment(ser, args.segment, idx_holder, state)
-            shadow, _ = drain_status(ser)
-            k = parse_kv(shadow)
+            after, _ = drain_status(ser)
+            k = parse_kv(after)
+            d = int(k.get("disturbers", 0)) - int(before.get("disturbers", 0))
+            nz = int(k.get("noise", 0)) - int(before.get("noise", 0))
             r = results[name]
             r["strikes"].extend(got)
-            r["dist"] += int(k.get("disturbers", 0))
-            r["noise"] += int(k.get("noise", 0))
+            r["dist"] += max(0, d)
+            r["noise"] += max(0, nz)
             r["secs"] += time.time() - t0
-            print("    -> %d strikes, %s disturbers this segment\n" % (len(got), k.get("disturbers", 0)))
+            print("    -> %d strikes, %d disturbers this segment\n" % (len(got), max(0, d)))
 
     # ── Report ────────────────────────────────────────────────────────────────
     print("\n" + "=" * 68)
@@ -234,8 +242,20 @@ def main():
         if n:
             print("  disturbers/strike: %.2f" % (r["dist"] / float(n)))
 
-    print("\nPick by: range spread first (a config that pins everything at 'overhead' is")
-    print("saturated), then strikes/min, then the lowest disturbers/strike.")
+    # A sweep is only as good as the storm it ran against. With a handful of strikes spread
+    # over three configs, the "winner" is whichever one the weather happened to favour --
+    # so say so outright rather than let a tidy-looking table imply a verdict it can't support.
+    total_strikes = sum(len(results[n]["strikes"]) for n, _ in CANDIDATES)
+    MIN_STRIKES = 30
+    print("\n" + "-" * 68)
+    if total_strikes < MIN_STRIKES:
+        print("INCONCLUSIVE: %d strikes total (want >=%d, ~%d per config)."
+              % (total_strikes, MIN_STRIKES, MIN_STRIKES // len(CANDIDATES)))
+        print("At this count the differences between configs are noise, not signal —")
+        print("do NOT retune on this run. Re-run while the storm is actually overhead.")
+    else:
+        print("Pick by: range spread first (a config that pins everything at 'overhead' is")
+        print("saturated), then strikes/min, then the lowest disturbers/strike.")
 
     out = os.path.join(LOG_DIR, "enrai-calib-%s.csv" % datetime.now().strftime("%Y%m%d-%H%M"))
     with open(out, "w") as fh:
