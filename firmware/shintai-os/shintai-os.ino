@@ -220,8 +220,25 @@ uint8_t  enraiWatchdog    = 1;       // AS3935 watchdog threshold (1-10): lower 
 bool     enraiOutdoor     = false;   // AFE gain: false=INDOOR (high/sensitive), true=OUTDOOR (lower — spreads distance in a strong storm)
 uint8_t  enraiSpike       = 2;       // spike rejection (1-11): higher = stricter waveform validation
 uint8_t  enraiTuneCap     = 0;       // antenna tuning cap (0-15); empirical — no IRQ wired to measure the LCO
+bool     enraiCalibrated  = false;   // last calibrateOsc() result — see the boot call for why it matters
+// ── Enrai bus speed ── The AS3935 is the ONE sensor on the chain that will not do Fast Mode
+// reliably: at the bus-wide 400 kHz (set in setup() for the MLX90640 grid read) it ACKs its
+// address but every register read comes back 0xFF, so the config silently never lands and the
+// part validates nothing — zero strikes AND zero disturbers AND zero noise, which reads like a
+// quiet sky rather than a deaf sensor. The bench bring-up caught real strikes precisely because
+// it never called setClock() and so ran at 100 kHz. Rather than slow the whole bus (the thermal
+// grid needs the speed), every Enrai transaction is bracketed to 100 kHz and the bus restored.
+// Depth-counted so the nested case (applyEnraiConfig inside a guarded scope) restores once.
+#define ENRAI_I2C_HZ  100000
+#define BUS_I2C_HZ    400000
+struct EnraiBus {
+  static uint8_t depth;
+  EnraiBus()  { if (depth++ == 0) Wire.setClock(ENRAI_I2C_HZ); }
+  ~EnraiBus() { if (--depth == 0) Wire.setClock(BUS_I2C_HZ);   }
+};
+uint8_t EnraiBus::depth = 0;
 // The AS3935 tuning is live-adjustable from the app (writable Lightning Control char) AND
-// serial ('o' gain · 's'/'S' spike · 'x' clear-stats · 'y'/'Y' tune-cap). One apply path:
+// serial ('o' gain · 's'/'S' spike · 'x' clear-stats · 'y'/'Y' tune-cap · 'z' recalibrate). One apply path:
 void applyEnraiConfig();                    // push all of the above to the sensor
 void enraiConfigStr(char *buf, size_t n);   // "gain=out spike=2 wdog=1 tune=0"
 void applyEnraiCommand(const char *cmd);    // one control token -> update + apply + notify
@@ -535,8 +552,9 @@ void setup() {
   // default 100 kHz it blocks the loop long enough (~175 ms) to stretch the telemetry
   // cadence and hitch Kehai's reflex once Metsuke reads at 2 Hz. 400 kHz roughly
   // quarters every I2C transfer (and speeds the ToF reflex read too). Every sensor
-  // on the chain supports Fast Mode; the MLX itself goes to 1 MHz.
-  Wire.setClock(400000);
+  // on the chain supports Fast Mode EXCEPT the AS3935 (Enrai), which reads back 0xFF
+  // at 400 kHz — its transactions bracket themselves back down to 100 kHz via EnraiBus.
+  Wire.setClock(BUS_I2C_HZ);
   delay(100);
 
   // Rear depth field (Zanshin) — one VL53L5CX behind the PCA9546 mux (0x70). Non-fatal: a
@@ -623,14 +641,22 @@ void setup() {
   // right after begin() it false-NEGATIVES a present sensor (the AS3935's oscillators need
   // to settle first), and the ACK already detects the sensor reliably (confirm with 'I',
   // which now scans down to 0x03).
+  { EnraiBus slow;
   Wire.beginTransmission(ENRAI_ADDR);
   if (Wire.endTransmission() == 0 && enrai.begin(Wire)) {
     hasEnrai = true;
     applyEnraiConfig();            // gain / noise / watchdog / spike / tune-cap / mask, one place
-    Serial.println("[OK] AS3935 Lightning (Enrai, 0x03, polled)");
+    // RCO calibration — REQUIRED by the datasheet after every power-up, and its absence
+    // is silent: the AS3935's internal TRCO/SRCO timers are what gate signal validation,
+    // so an un-trimmed part validates NOTHING — zero strikes, zero disturbers, zero noise,
+    // which reads exactly like a quiet room instead of a dead sensor. Run it AFTER the
+    // config above: the trim follows the antenna's resonance, so tune-cap must be set first.
+    enraiCalibrated = enrai.calibrateOsc();
+    Serial.printf("[%s] AS3935 Lightning (Enrai, 0x03, polled) RCO calib=%s\n",
+                  enraiCalibrated ? "OK" : "WARN", enraiCalibrated ? "ok" : "FAILED");
   } else {
     Serial.println("[WARN] AS3935 not found @ 0x03 — lightning disabled");
-  }
+  } }
 
   // BLE
   // Bunshin: name carries the pod's identity — ShintaiOS-fwd / ShintaiOS-aft. The
@@ -1078,6 +1104,7 @@ void renderPane(uint8_t page) {
 // clearing statistics spread it, spike rejection + tune-cap refine it. See specs/zokyo/enrai.md.
 void applyEnraiConfig() {
   if (!hasEnrai) return;
+  EnraiBus slow;
   enrai.setIndoorOutdoor(enraiOutdoor ? ENRAI_OUTDOOR : ENRAI_INDOOR);
   enrai.setNoiseLevel(2);
   enrai.watchdogThreshold(enraiWatchdog);
@@ -1094,6 +1121,7 @@ void enraiConfigStr(char *buf, size_t n) {
 // Apply one control token (from a BLE write or a serial key), then notify the new config back.
 void applyEnraiCommand(const char *cmd) {
   if (!hasEnrai) return;
+  EnraiBus slow;
   if      (!strcmp(cmd, "gain"))   enraiOutdoor = !enraiOutdoor;
   else if (!strcmp(cmd, "spike+")) { if (enraiSpike    < 11) enraiSpike++; }
   else if (!strcmp(cmd, "spike-")) { if (enraiSpike    > 1)  enraiSpike--; }
@@ -1102,6 +1130,10 @@ void applyEnraiCommand(const char *cmd) {
   else if (!strcmp(cmd, "tune+"))  { if (enraiTuneCap  < 15) enraiTuneCap++; }
   else if (!strcmp(cmd, "tune-"))  { if (enraiTuneCap  > 0)  enraiTuneCap--; }
   else if (!strcmp(cmd, "clear"))  { enrai.clearStatistics(true); }
+  // Re-run the RCO trim on demand. Every tune-cap change retunes the antenna the trim was
+  // derived from, so the calibration is stale the moment "tune+"/"tune-" lands — recalibrate
+  // after sweeping, or the new cap value is being judged against the old timebase.
+  else if (!strcmp(cmd, "calib"))  { enraiCalibrated = enrai.calibrateOsc(); }
   else return;                                       // unknown token — ignore
   applyEnraiConfig();
   char cfg[48]; enraiConfigStr(cfg, sizeof(cfg));
@@ -1121,6 +1153,7 @@ void serviceEnrai() {
   if (!hasEnrai) return;
   if (millis() - lastEnraiMs < ENRAI_POLL_MS) return;
   lastEnraiMs = millis();
+  EnraiBus slow;
   uint8_t intVal = enrai.readInterruptReg();
   if (intVal == ENRAI_DISTURBER) { enraiDisturbers++; return; }
   if (intVal == ENRAI_NOISE)     { enraiNoise++; return; }
@@ -1174,12 +1207,25 @@ void loop() {
     else if (cmd == 'y') { applyEnraiCommand("tune-");  lastUpdate = millis(); }   // antenna tune-cap down
     else if (cmd == 'Y') { applyEnraiCommand("tune+");  lastUpdate = millis(); }   // antenna tune-cap up
     else if (cmd == 'x') { applyEnraiCommand("clear");  lastUpdate = millis(); }   // clear storm statistics
+    else if (cmd == 'z') { applyEnraiCommand("calib");  lastUpdate = millis(); }   // re-run RCO trim (after a tune-cap change)
     else if (cmd == 'K' || cmd == 'k') {   // Enrai: live status — poll health (disturbers) + config
       char cfg[48]; enraiConfigStr(cfg, sizeof(cfg));
-      Serial.printf("<<<ENRAI present=%d %s strikes=%lu disturbers=%lu noise=%lu last=%dkm/%lue>>>\n",
-                    hasEnrai ? 1 : 0, cfg, (unsigned long)lightningStrikes,
+      Serial.printf("<<<ENRAI present=%d calib=%d %s strikes=%lu disturbers=%lu noise=%lu last=%dkm/%lue>>>\n",
+                    hasEnrai ? 1 : 0, enraiCalibrated ? 1 : 0, cfg,
+                    (unsigned long)lightningStrikes,
                     (unsigned long)enraiDisturbers, (unsigned long)enraiNoise,
                     lightningKm, (unsigned long)lightningEnergy);
+      // Second line reads the settings back OFF THE CHIP. The line above is our shadow copy
+      // of what we *meant* to write; only this one can tell a landed config from a write the
+      // sensor silently dropped — the distinction that matters when the event counters are
+      // all zero and it's ambiguous whether the sky is quiet or the sensor is deaf.
+      if (hasEnrai) {
+        EnraiBus slow;
+        Serial.printf("<<<ENRAI-CHIP gain=0x%02x wdog=%u nfloor=%u spike=%u tune=%u mask=%u>>>\n",
+                      enrai.readIndoorOutdoor(), enrai.readWatchdogThreshold(),
+                      enrai.readNoiseLevel(),    enrai.readSpikeRejection(),
+                      enrai.readTuneCap(),       enrai.readMaskDisturber());
+      }
       lastUpdate = millis();
     }
   }
