@@ -106,6 +106,45 @@ class MergeTest {
         assertTrue(ShintaiReadings().suppliedChannels().isEmpty())
     }
 
+    // ── GPS: the firmware notifies whenever the RECEIVER is present, so a no-fix pod is
+    // loud but must still lose to a pod holding a lock. Silence now means "no receiver".
+
+    @Test
+    fun gpsNoFixDoesNotSupply() {
+        assertTrue(ShintaiReadings(gps = "no fix sats=0").suppliedChannels().isEmpty())
+        assertTrue(ShintaiReadings(gps = "no fix sats=3").suppliedChannels().isEmpty())
+    }
+
+    @Test
+    fun gpsFixBeatsNoFixEvenAgainstPrecedence() {
+        // GPS precedence is fwd → aft, so an unfixed fwd pod would win on precedence alone.
+        val merged = mergeReadings(
+            mapOf(
+                Role.Fwd to ShintaiReadings(connection = ConnectionState.Live, gps = "no fix sats=2"),
+                Role.Aft to ShintaiReadings(
+                    connection = ConnectionState.Live, gps = "37.1,-122.1 12m 3km/h",
+                ),
+            ),
+        )
+        assertEquals("37.1,-122.1 12m 3km/h", merged.gps)
+    }
+
+    @Test
+    fun gpsAllNoFixFallsBackToSearchingNotDash() {
+        val merged = mergeReadings(
+            mapOf(Role.Aft to ShintaiReadings(connection = ConnectionState.Live, gps = "no fix sats=4")),
+        )
+        assertEquals("no fix sats=4", merged.gps)   // "searching", not "no receiver"
+    }
+
+    @Test
+    fun gpsSilentPodStaysDash() {
+        val merged = mergeReadings(
+            mapOf(Role.Aft to withHeading("10.0° N")),   // no GPS char ever notified
+        )
+        assertEquals("—", merged.gps)
+    }
+
     @Test
     fun emptyMapYieldsDefaults() {
         val merged = mergeReadings(emptyMap())

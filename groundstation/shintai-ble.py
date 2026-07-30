@@ -85,6 +85,8 @@ class State:
             if m:
                 d["accel_x"], d["accel_y"], d["accel_z"] = m.group(1), m.group(2), m.group(3)
         elif key == "gps":
+            # The char also carries "no fix sats=N" from a present-but-unlocked receiver;
+            # it can't match this regex, so gps_fix correctly stays 0 and lat/lon stay blank.
             m = re.search(r"(-?[\d.]+),(-?[\d.]+)\s+(-?[\d.]+)m\s+([\d.]+)km/h", text)
             if m:
                 d["gps_fix"] = "1"

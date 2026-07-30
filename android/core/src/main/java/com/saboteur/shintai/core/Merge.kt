@@ -46,9 +46,16 @@ val DEFAULT_PRECEDENCE: Precedence = mapOf(
 /** The blank sentinel a string channel carries until its sensor supplies a value. */
 private const val BLANK = "—"
 
+/** The no-fix form of the GPS channel: a present receiver reporting that it has no lock
+ *  ("no fix sats=N"). It is a *rendered* value — it shows "searching" instead of a dash —
+ *  but NOT a supplied one, so it never wins GPS precedence over a pod holding a real fix. */
+private const val GPS_NO_FIX_PREFIX = "no fix"
+
 /** Does this pod currently supply a *valid* value for [ch]? Invalid sources are
  *  skipped before precedence, so a preferred-but-absent pod never beats a present one.
- *  GPS is "fix-gated" for free: with no fix the channel stays [BLANK], so it's skipped. */
+ *  GPS is fix-gated EXPLICITLY: the firmware notifies whenever the receiver is present,
+ *  so silence no longer means "no fix" — it means "no receiver". Without the prefix test
+ *  a searching fwd pod would outrank an aft pod that actually has a lock. */
 private fun ShintaiReadings.supplies(ch: Channel): Boolean = when (ch) {
     Channel.Distance -> distanceText != BLANK || rearDepthGrid != null
     Channel.Heading -> heading != BLANK
@@ -56,7 +63,7 @@ private fun ShintaiReadings.supplies(ch: Channel): Boolean = when (ch) {
     Channel.Thermal -> thermal != BLANK || thermalGrid != null
     Channel.Climate -> climate != BLANK
     Channel.Environment -> environment != BLANK
-    Channel.Gps -> gps != BLANK
+    Channel.Gps -> gps != BLANK && !gps.startsWith(GPS_NO_FIX_PREFIX)
     Channel.Hokan -> hokan != null
     Channel.Lightning -> lightning.hasStrike
 }
@@ -113,7 +120,11 @@ fun mergeReadings(
         alertActive = distance?.alertActive ?: false,
         heading = winner(Channel.Heading)?.heading ?: BLANK,
         accel = winner(Channel.Accel)?.accel ?: BLANK,
-        gps = winner(Channel.Gps)?.gps ?: BLANK,
+        // A fix beats everything; with no fix anywhere, fall back to any pod's no-fix report
+        // so the UI shows "searching" rather than the dash that means "no receiver at all".
+        gps = winner(Channel.Gps)?.gps
+            ?: perPod.values.map { it.gps }.firstOrNull { it != BLANK }
+            ?: BLANK,
         climate = winner(Channel.Climate)?.climate ?: BLANK,
         thermal = thermal?.thermal ?: BLANK,
         environment = environment?.environment ?: BLANK,
