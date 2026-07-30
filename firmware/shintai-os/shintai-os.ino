@@ -698,7 +698,10 @@ void setup() {
   gpsChar      = makeChar(GPS_UUID,      "GPS");
   // Seed the no-fix form so a central that READS before the first notify gets the honest
   // state instead of an empty value (the same reason lightningCtrlChar seeds its config).
-  gpsChar->setValue("no fix sats=0");
+  // ONLY when a receiver actually acked: on a pod with no GPS the seed would assert
+  // "present, searching" to any reader, which is the exact ambiguity this change removes.
+  // Empty here keeps read and notify telling the same story — silence means no receiver.
+  if (gpsPresent) gpsChar->setValue("no fix sats=0");
   thermalChar  = makeChar(THERMAL_UUID,  "Thermal (C)");
   climateChar  = makeChar(CLIMATE_UUID,  "Climate (CO2/Temp/RH)");
   environmentChar = makeChar(ENVIRONMENT_UUID, "Environment (P/gas/T/RH)");
@@ -1469,7 +1472,11 @@ void loop() {
       Serial.println("ACCEL    : X:" + String(accel.acceleration.x, 1)
                    + " Y:" + String(accel.acceleration.y, 1)
                    + " Z:" + String(accel.acceleration.z, 1) + " m/s²");
-    if (gpsFix) {
+    // Three states, three lines — the human stream should draw the same distinction the
+    // BLE channel now does, or a bare board reads as "searching" when there's no receiver.
+    if (!gpsPresent) {
+      Serial.println("GPS      : not present");
+    } else if (gpsFix) {
       Serial.println("GPS      : " + String(gpsLat, 5) + "," + String(gpsLon, 5)
                    + " " + String(gpsAlt, 0) + "m " + String(gpsSpeed, 1) + "km/h");
       Serial.println("GPS SATS : " + String(gpsSats));
