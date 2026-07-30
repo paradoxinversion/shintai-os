@@ -95,6 +95,7 @@ static inline int16_t nearerMm(int16_t a, int16_t b) {
 }
 Adafruit_LSM6DSOX imu;
 Adafruit_LIS3MDL  mag;
+#define GPS_ADDR 0x10
 Adafruit_GPS GPS(&Wire);
 Adafruit_MLX90640 mlx;
 SensirionI2cScd4x scd4x;   // SCD-40: CO2 + ambient air temp + humidity (I2C 0x62)
@@ -198,6 +199,7 @@ bool hasZanshin     = false;   // VL53L5CX rear depth field inited (mux ch0)
 bool imuPresent     = false;
 bool magPresent     = false;
 bool thermalPresent = false;
+bool gpsPresent     = false;   // PA1010D acked at 0x10 (absent != "searching" — see the GPS notify)
 
 // Enrai (遠雷) — AS3935 "Franklin" lightning detector (specs/zokyo/enrai.md): direct on the
 // main bus at 0x03, polled every loop (no IRQ pin wired). A strike updates the snapshot
@@ -583,11 +585,20 @@ void setup() {
   Serial.println(magPresent ? "[OK] LIS3MDL Magnetometer"
                             : "[WARN] LIS3MDL not found — heading disabled");
 
-  // GPS
-  GPS.begin(0x10);
-  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
-  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
-  Serial.println("[OK] PA1010D GPS");
+  // GPS — ACK-probe 0x10 first (the same non-fatal test the ToF mux and the OLED use).
+  // GPS.begin() doesn't probe, so it "succeeds" on an empty bus; without this flag an
+  // absent receiver and a receiver still searching for lock both look identical to the
+  // consumers, which is exactly the ambiguity the GPS notify below exists to remove.
+  Wire.beginTransmission(GPS_ADDR);
+  gpsPresent = (Wire.endTransmission() == 0);
+  if (gpsPresent) {
+    GPS.begin(GPS_ADDR);
+    GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
+    GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
+    Serial.println("[OK] PA1010D GPS @ 0x10");
+  } else {
+    Serial.println("[WARN] PA1010D GPS not found @ 0x10 — GPS disabled");
+  }
 
   // Thermal — non-fatal: warn and continue if absent
   thermalPresent = mlx.begin(MLX90640_I2CADDR_DEFAULT, &Wire);
@@ -685,6 +696,9 @@ void setup() {
   headingChar  = makeChar(HEADING_UUID,  "Heading (deg)");
   accelChar    = makeChar(ACCEL_UUID,    "Accelerometer");
   gpsChar      = makeChar(GPS_UUID,      "GPS");
+  // Seed the no-fix form so a central that READS before the first notify gets the honest
+  // state instead of an empty value (the same reason lightningCtrlChar seeds its config).
+  gpsChar->setValue("no fix sats=0");
   thermalChar  = makeChar(THERMAL_UUID,  "Thermal (C)");
   climateChar  = makeChar(CLIMATE_UUID,  "Climate (CO2/Temp/RH)");
   environmentChar = makeChar(ENVIRONMENT_UUID, "Environment (P/gas/T/RH)");
@@ -1604,9 +1618,18 @@ void loop() {
       accelChar->notify();
     }
 
-    if (gpsFix) {
-      String gpsStr = String(gpsLat, 5) + "," + String(gpsLon, 5)
-                    + " " + String(gpsAlt, 0) + "m " + String(gpsSpeed, 1) + "km/h";
+    // GPS speaks whenever the receiver is PRESENT, not only when it has a fix. Fix-gating
+    // the notify made silence carry two meanings — "no receiver" and "receiver searching" —
+    // and the apps could only render the dash for both. The no-fix form carries GGA's
+    // satellite count (satellites USED — we only enable RMC+GGA, so this is not sats in
+    // view and stays 0 through most of a cold start; it's a lock-progress hint, not an
+    // antenna test). Consumers must treat "no fix" as not-supplying for merge precedence
+    // — see :core Merge.supplies / CONTRACT.md.
+    if (gpsPresent) {
+      String gpsStr = gpsFix
+        ? String(gpsLat, 5) + "," + String(gpsLon, 5)
+          + " " + String(gpsAlt, 0) + "m " + String(gpsSpeed, 1) + "km/h"
+        : "no fix sats=" + String(gpsSats);
       gpsChar->setValue(gpsStr.c_str());
       gpsChar->notify();
     }

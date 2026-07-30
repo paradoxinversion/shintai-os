@@ -104,7 +104,7 @@ and **Rear Depth Grid**, which carry packed **binary** payloads (see
 | Alert | `abcd5678-ab12-ab12-ab12-abcdef123456` | `CLOSE` (edge-triggered; no explicit clear) |
 | Heading | `abcd9012-ab12-ab12-ab12-abcdef123456` | `169.0° S` |
 | Accelerometer | `abcdef12-ab12-ab12-ab12-abcdef123456` | `X:1.8 Y:0.0 Z:9.8` |
-| GPS | `abcd3456-ab12-ab12-ab12-abcdef123456` | `37.12345,-122.12345 12m 3.4km/h` |
+| GPS | `abcd3456-ab12-ab12-ab12-abcdef123456` | `37.12345,-122.12345 12m 3.4km/h` — or `no fix sats=0` |
 | Thermal | `abcd6789-ab12-ab12-ab12-abcdef123456` | `Ctr:23.1 Min:22.6 Max:31.4C` |
 | Climate | `abcdba98-ab12-ab12-ab12-abcdef123456` | `23.0C 41%RH 750ppm` |
 | Environment | `abcdc0de-ab12-ab12-ab12-abcdef123456` | `1007.2hPa 84200ohm 22.8C 39%RH` |
@@ -283,12 +283,24 @@ precedence order**. This table is the **default**, shared by every consumer (the
 | `thermal_*` + Thermal Grid | **fwd** → aft | Forward-looking thermal |
 | `co2_ppm` / `air_temp_c` / `humidity_pct` / `pressure_hpa` / `gas_ohms` | **aft** → fwd | Air chem rides the pack |
 | `lightning_*` + Lightning (Enrai) | **aft** → fwd | Ambient storm sense; rides the pack with air chem (direction-agnostic) |
-| `gps_fix` / `lat` / `lon` / `alt_m` / `speed_kmh` / `sats` | **fwd** → aft (fix-gated) | A pod with no fix supplies nothing |
+| `gps_fix` / `lat` / `lon` / `alt_m` / `speed_kmh` / `sats` | **fwd** → aft (fix-gated) | A pod with no fix supplies nothing — but it still *notifies* `no fix sats=N`, so consumers must gate on the payload, not on silence |
 | `steps` (Hokan) | **aft** → fwd | Torso pedometer beats head-bob |
 
 **Merge rule (one sentence):** for each channel, filter to the pods currently supplying a
 **valid** value (non-blank / GPS fix / non-null), then take the highest in that channel's
 precedence order — so a preferred-but-absent pod never wins over a present one.
+
+**GPS is the one channel where silence and "no value" differ.** The firmware notifies the
+GPS characteristic whenever the *receiver* is present, fix or not, so:
+
+| On the air | Means | Merge treats it as |
+| --- | --- | --- |
+| (nothing ever sent) | no receiver on this pod | not supplying |
+| `no fix sats=N` | receiver present, no lock | not supplying (but rendered as "searching") |
+| `<lat>,<lon> <alt>m <speed>km/h` | fix | supplying |
+
+If no pod has a fix, the merged value falls back to any pod's `no fix` report, so the UI
+can distinguish "still searching" from "no GPS hardware" — which a bare dash cannot.
 
 **Runtime override (Operator).** The precedence order is a **default, not a fixed law**: the
 Operator app exposes a per-channel control to pick which pod wins each *contested* channel,
