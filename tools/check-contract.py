@@ -44,6 +44,7 @@ CHAR_TO_KOTLIN = {
     "Lightning": "LIGHTNING",
     "Lightning Control": "LIGHTNING_CTRL",
     "Particulate": "PARTICULATE",
+    "Fuda": "FUDA",
     "Thermal Grid": "THERMAL_GRID",
 }
 # Characteristics the Android app is documented NOT to expose (CONTRACT.md "Consumer

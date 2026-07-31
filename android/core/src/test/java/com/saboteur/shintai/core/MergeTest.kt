@@ -184,6 +184,37 @@ class MergeTest {
         )
     }
 
+    // ── Fuda: identity, fwd → aft (you scan the tag you're facing). Event-driven, so a pod
+    // that has never seen a tag stays blank rather than reporting an empty scan.
+
+    @Test
+    fun defaultPrecedenceFwdWinsFuda() {
+        val merged = mergeReadings(
+            mapOf(
+                Role.Fwd to ShintaiReadings(connection = ConnectionState.Live, fuda = "UID:AAAA ISO14443A"),
+                Role.Aft to ShintaiReadings(connection = ConnectionState.Live, fuda = "UID:BBBB ISO14443A"),
+            ),
+        )
+        assertEquals("UID:AAAA ISO14443A", merged.fuda)
+    }
+
+    @Test
+    fun fudaFallsBackToAftWhenFwdHasNoReader() {
+        val merged = mergeReadings(
+            mapOf(
+                Role.Fwd to withHeading("10.0° N"),   // no PN532 on this pod
+                Role.Aft to ShintaiReadings(connection = ConnectionState.Live, fuda = "UID:BBBB ISO14443A"),
+            ),
+        )
+        assertEquals("UID:BBBB ISO14443A", merged.fuda)
+    }
+
+    @Test
+    fun fudaBlankUntilATagIsRead() {
+        assertEquals("—", mergeReadings(mapOf(Role.Fwd to withHeading("10.0° N"))).fuda)
+        assertTrue(ShintaiReadings().suppliedChannels().isEmpty())
+    }
+
     @Test
     fun emptyMapYieldsDefaults() {
         val merged = mergeReadings(emptyMap())

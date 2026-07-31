@@ -22,7 +22,8 @@ enum class Role { Fwd, Aft }
  * the alert latch; [Environment] carries the raw readout and its derived Kyūkaku state).
  */
 enum class Channel {
-    Distance, Heading, Accel, Thermal, Climate, Environment, Gps, Hokan, Lightning, Particulate
+    Distance, Heading, Accel, Thermal, Climate, Environment, Gps, Hokan, Lightning, Particulate,
+    Fuda,
 }
 
 /** Per-channel precedence order, highest-priority pod first. */
@@ -44,6 +45,7 @@ val DEFAULT_PRECEDENCE: Precedence = mapOf(
     Channel.Hokan to listOf(Role.Aft, Role.Fwd),         // torso pedometer beats head-bob
     Channel.Lightning to listOf(Role.Aft, Role.Fwd),     // ambient storm sense rides the pack
     Channel.Particulate to listOf(Role.Aft, Role.Fwd),   // Enmu: the air you breathe is direction-agnostic
+    Channel.Fuda to listOf(Role.Fwd, Role.Aft),          // Fuda: you scan the tag you're facing — head-side
 )
 
 /** The blank sentinel a string channel carries until its sensor supplies a value. */
@@ -70,6 +72,7 @@ private fun ShintaiReadings.supplies(ch: Channel): Boolean = when (ch) {
     Channel.Hokan -> hokan != null
     Channel.Lightning -> lightning.hasStrike
     Channel.Particulate -> particulate != BLANK
+    Channel.Fuda -> fuda != BLANK
 }
 
 /** The channels this pod currently supplies a valid value for. The Operator uses this
@@ -131,6 +134,7 @@ fun mergeReadings(
             ?: BLANK,
         climate = winner(Channel.Climate)?.climate ?: BLANK,
         particulate = winner(Channel.Particulate)?.particulate ?: BLANK,
+        fuda = winner(Channel.Fuda)?.fuda ?: BLANK,
         thermal = thermal?.thermal ?: BLANK,
         environment = environment?.environment ?: BLANK,
         kyukaku = environment?.kyukaku ?: KyukakuState(),

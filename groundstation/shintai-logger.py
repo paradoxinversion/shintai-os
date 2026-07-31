@@ -121,6 +121,9 @@ def dashboard(vals, samples, csv_name):
     if pm25:
         out.append(b._row("AQI", f"PM2.5 {pm25}  PM10 {_num(g('pm10_ugm3'), 0)}  "
                                  f"PM1.0 {_num(g('pm1_0_ugm3'), 0)} µg/m³", b.PHOSPHOR))
+    uid = g("nfc_uid")               # Fuda — the held tag (blank once the ~5 s hold lapses)
+    if uid:
+        out.append(b._row("NFC", f"{uid}  {g('nfc_type')}", b.PHOSPHOR))
     if g("gps_fix") == "1":
         out.append(b._row("GPS", f"{_num(g('lat'), 4)},{_num(g('lon'), 4)} {_num(g('speed_kmh'))}km/h", b.PHOSPHOR))
     else:

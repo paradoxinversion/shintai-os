@@ -47,6 +47,7 @@ import com.saboteur.shintai.core.distanceParts
 import com.saboteur.shintai.core.label
 import com.saboteur.shintai.core.formatClimate
 import com.saboteur.shintai.core.formatEnvironment
+import com.saboteur.shintai.core.formatFuda
 import com.saboteur.shintai.core.formatGps
 import com.saboteur.shintai.core.formatTemp
 import com.saboteur.shintai.core.formatThermal
@@ -263,6 +264,10 @@ private fun Console(
     // LIGHTNING — Enrai's AS3935 last-strike readout; the LED flashes on each new strike.
     LightningPanel(r.lightning)
 
+    // IDENTITY — Fuda's NFC tag. Its own category (not air); event-driven, so present
+    // only once a tag has been read (then it persists the last one).
+    if (r.fuda != "—") IdentityPanel(r)
+
     // Enrai AS3935 tuning — writes tokens to the board over the Lightning Control char.
     LightningTuningPanel(r.lightningConfig, vm::sendLightningCommand)
 
@@ -357,6 +362,19 @@ private fun channelLabel(ch: Channel): String = when (ch) {
     Channel.Hokan -> "Steps"
     Channel.Lightning -> "Lightning"
     Channel.Particulate -> "Particulate"
+    Channel.Fuda -> "NFC Tag"
+}
+
+/** Fuda's NFC readout — the last tag's UID and RF family. Its own panel category rather
+ *  than a row in Air: this is the first channel that reports *who/what* (a discrete
+ *  identity) instead of a physical scalar, so it doesn't belong under an air heading. */
+@Composable
+private fun IdentityPanel(r: ShintaiReadings) {
+    val (uid, type) = formatFuda(r.fuda)
+    Panel("Identity") {
+        ReadoutRow("Tag UID", uid)
+        ReadoutRow("Type", type)
+    }
 }
 
 /** Milliseconds the Lightning LED stays lit after a strike. */

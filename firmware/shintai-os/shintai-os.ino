@@ -10,6 +10,7 @@
 #include <Adafruit_APDS9960.h>
 #include <SparkFun_AS3935.h>   // Enrai lightning sense (specs/zokyo/enrai.md): AS3935 Franklin detector
 #include <Adafruit_PM25AQI.h>  // Enmu particulate sense (specs/zokyo/enmu.md): PMSA003I PM1.0/2.5/10 over I2C 0x12
+#include <Adafruit_PN532.h>    // Fuda identity sense (specs/zokyo/fuda.md): PN532 ISO14443A tag UID over I2C 0x24
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -44,6 +45,7 @@
 #define LIGHTNING_UUID      "abcda535-ab12-ab12-ab12-abcdef123456"  // Enrai: lightning km/energy/strikes ("a535" = AS3935)
 #define LIGHTNING_CTRL_UUID "abcda53c-ab12-ab12-ab12-abcdef123456"  // Enrai: WRITABLE AS3935 tuning control ("a53c" = AS3935 ctrl)
 #define PARTICULATE_UUID    "abcdd057-ab12-ab12-ab12-abcdef123456"  // Enmu: PM1.0/2.5/10 ug/m3 ("d057" = dust)
+#define FUDA_UUID           "abcdfada-ab12-ab12-ab12-abcdef123456"  // Fuda: NFC tag UID+type ("fada" = fuda/tag)
 
 const int NEAR_MM  = 200;
 const int FAR_MM   = 2000;   // Kehai-Hikari Approach/Clear boundary (was reserved)
@@ -103,6 +105,18 @@ Adafruit_MLX90640 mlx;
 SensirionI2cScd4x scd4x;   // SCD-40: CO2 + ambient air temp + humidity (I2C 0x62)
 Adafruit_BME680 bme;       // BME688: gas + pressure, plus authoritative air temp/RH (I2C 0x77)
 Adafruit_PM25AQI pmsa;     // PMSA003I: particulate PM1.0/2.5/10 (Enmu, I2C 0x12)
+
+// PN532 NFC/RFID reader (Fuda, I2C 0x24 7-bit). Wired I2C-ONLY via Qwiic
+// (SDA/SCL/3V3/GND) — its IRQ and RESET lines are NOT connected. Adafruit_PN532's I2C
+// constructor still wants pin numbers, and begin() drives RESET, so these must be FREE
+// GPIOs on this board (they just wiggle unrouted MCU pins; for I2C the driver polls the
+// status byte over the bus, it does not depend on IRQ). A2/A3 are broken out on the QT
+// Py ESP32-S3 and unused by this sketch — verified against Aizu (PIN_NEOPIXEL /
+// NEOPIXEL_POWER macros + GPIO0 for BOOT) and the I2C pins (41/40). If NFC init fails
+// or a header pin misbehaves, re-check these two don't collide with something wired since.
+#define PN532_IRQ   A3
+#define PN532_RESET A2
+Adafruit_PN532 pn532(PN532_IRQ, PN532_RESET, &Wire);
 
 // Tertiary info pane — 1.3" 128x64 mono OLED (Adafruit #938) on the STEMMA QT bus at
 // 0x3D. A flare / secondary-readout surface, distinct from Aizu's single-pixel
@@ -187,6 +201,7 @@ BLECharacteristic *hokanChar;         // Hokan: "steps heading cadence" string (
 BLECharacteristic *lightningChar;     // Enrai: "km=.. e=.. n=.." lightning string (event-driven notify)
 BLECharacteristic *lightningCtrlChar; // Enrai: WRITABLE AS3935 tuning control (app→board) + config notify
 BLECharacteristic *particulateChar;   // Enmu: "PM1.0:.. PM2.5:.. PM10:.. ug/m3" string
+BLECharacteristic *fudaChar;          // Fuda: "UID:<hex> <type>" NFC tag string (event-driven)
 BLE2902           *thermalGridCccd = nullptr;   // its CCCD — emit only while subscribed
 BLECharacteristic *zanshinGridChar;             // Zanshin: binary 8x8 rear depth grid
 BLE2902           *zanshinGridCccd = nullptr;   // its CCCD — emit only while subscribed
@@ -322,6 +337,19 @@ uint16_t pm1_0 = 0;   // PM1.0 µg/m³ (PMSA003I pm10_env)
 uint16_t pm2_5 = 0;   // PM2.5 µg/m³ (PMSA003I pm25_env)
 uint16_t pm10  = 0;   // PM10  µg/m³ (PMSA003I pm100_env)
 
+// Fuda (札) — NFC / RFID identity sense. The PN532 reads the UID of an ISO14443A tag
+// held in its RF field. Unlike the free-running sensors, a read is a discrete EVENT, so
+// we latch the last UID+type and HOLD them (nfcHoldUntil) ~5 s — long enough that a
+// brief tap logs across a couple of telemetry cycles — then blank. The read itself runs
+// once per telemetry cycle with a short timeout (never in the fast reflex loop), so
+// scanning never stalls Kehai. The platform's first identity sense: it reports who/what.
+bool     pn532Present = false;
+String   nfcUid  = "";   // last tag UID as UPPERCASE hex (e.g. "04A1B2C3"); "" = no tag held
+String   nfcType = "";   // last tag RF family (e.g. "ISO14443A"); "" alongside nfcUid
+uint32_t nfcHoldUntil = 0;                  // UID/type held (last-seen) until this millis
+const uint32_t FUDA_HOLD_MS = 5000;         // a scanned tag stays in the readout ~5 s
+const uint16_t FUDA_READ_TIMEOUT_MS = 50;   // per-cycle RF poll window (short — runs in the 1.5 s block)
+
 // Kyūkaku (嗅覚) — sense of smell. Watches bmeGas against an adaptive clean-air
 // baseline (calibration-free, KY-1): a fast drop of the ratio = a violet→red Spike
 // ("the air just changed", transient ALERT), a sustained low ratio = a violet
@@ -360,10 +388,12 @@ const char* CSV_HEADER =
   "sats,thermal_min,thermal_ctr,thermal_max,thermal_mean,"
   "hotspot_delta,co2_ppm,air_temp_c,humidity_pct,pressure_hpa,gas_ohms,"
   "steps,lightning_km,lightning_energy,lightning_strikes,"
-  "pm1_0_ugm3,pm2_5_ugm3,pm10_ugm3,board";
+  "pm1_0_ugm3,pm2_5_ugm3,pm10_ugm3,"
+  "nfc_uid,nfc_type,board";
   // steps: Hokan pedometer · lightning_*: Enrai AS3935 last-strike snapshot + count ·
-  // pm*_ugm3: Enmu PMSA003I particulate · board: Bunshin pod role (fwd/aft) — board stays
-  // terminal; every later column (lightning, then particulate) is inserted before it
+  // pm*_ugm3: Enmu PMSA003I particulate · nfc_*: Fuda PN532 tag identity (STRING columns,
+  // like cardinal/board) · board: Bunshin pod role (fwd/aft) — board stays terminal; every
+  // later column (lightning, then particulate, then nfc) is inserted before it
 
 // Onboard flash logging (FFat) — autonomous field capture, pulled over USB.
 // Each power-up writes a new sequential file (/shtNNNN.csv). Rows are logged
@@ -665,6 +695,21 @@ void setup() {
   Serial.println(pmsaPresent ? "[OK] PMSA003I Particulate (Enmu — PM1.0/2.5/10)"
                              : "[WARN] PMSA003I not found @ 0x12 — particulate disabled");
 
+  // Fuda (札) — PN532 NFC/RFID reader at 0x24 (7-bit; = 0x48/0x49 in 8-bit; NOT 0x12 —
+  // that's a double-shift artifact, and 0x12 is Enmu's address besides) — non-fatal.
+  // getFirmwareVersion() is the real probe: it round-trips a command, so a 0 return
+  // means "no reader talking", not merely "no ACK". SAMConfig() puts it in read mode.
+  pn532.begin();
+  uint32_t pn532Ver = pn532.getFirmwareVersion();
+  pn532Present = (pn532Ver != 0);
+  if (pn532Present) {
+    pn532.SAMConfig();
+    Serial.printf("[OK] PN532 NFC (Fuda) — fw %d.%d @ 0x24\n",
+                  (int)((pn532Ver >> 16) & 0xFF), (int)((pn532Ver >> 8) & 0xFF));
+  } else {
+    Serial.println("[WARN] PN532 not found @ 0x24 — Fuda NFC disabled");
+  }
+
   // Enrai (遠雷) — AS3935 lightning detector, direct on the main bus at 0x03 — non-fatal.
   // No IRQ pin is wired, so serviceEnrai() polls the interrupt-source register. Config
   // mirrors the bench bring-up that caught the storm: INDOOR gain (most sensitive),
@@ -731,6 +776,7 @@ void setup() {
   hokanChar       = makeChar(HOKAN_UUID,       "Hokan (steps/heading/cadence)");
   lightningChar   = makeChar(LIGHTNING_UUID,   "Lightning (km/energy/n)");
   particulateChar = makeChar(PARTICULATE_UUID, "Particulate (ug/m3)");   // Enmu
+  fudaChar        = makeChar(FUDA_UUID,        "Fuda (NFC tag)");        // Fuda
   // Enrai control — the one WRITABLE characteristic (READ|WRITE|NOTIFY). A central writes a
   // tuning token; onWrite applies it and notifies the config back. Built directly (not via
   // makeChar) for the WRITE property + the write callback.
@@ -1428,6 +1474,33 @@ void loop() {
     }
   }
 
+  // ── Fuda (札): PN532 NFC read. readPassiveTargetID BLOCKS up to the timeout waiting
+  // for an ISO14443A tag — we use a short 50 ms window and run it only here in the
+  // 1.5 s telemetry block (never the fast reflex loop) so a scan never stalls Kehai. A
+  // read latches the UID (uppercase hex) + type and holds them ~5 s; once the hold
+  // lapses with no fresh tag, the fields blank so the columns/BLE reflect "no tag".
+  bool nfcFreshRead = false;   // a tag was read THIS cycle — drives the event-driven BLE notify below
+  if (pn532Present) {
+    uint8_t uid[7] = {0};
+    uint8_t uidLen = 0;
+    if (pn532.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLen, FUDA_READ_TIMEOUT_MS)) {
+      String hex;
+      for (uint8_t i = 0; i < uidLen; i++) {
+        if (uid[i] < 0x10) hex += '0';
+        hex += String(uid[i], HEX);
+      }
+      hex.toUpperCase();
+      nfcUid  = hex;
+      nfcType = "ISO14443A";
+      nfcHoldUntil = millis() + FUDA_HOLD_MS;
+      nfcFreshRead = true;
+    } else if (nfcUid.length() > 0 && (int32_t)(millis() - nfcHoldUntil) >= 0) {
+      // hold has lapsed (millis() reached nfcHoldUntil) with no fresh tag — clear it
+      nfcUid  = "";
+      nfcType = "";
+    }
+  }
+
   // ── Kyūkaku (嗅覚): fold the fresh gas reading into the rolling baseline/ratio and
   // express it as an Aizu cue. A fresh Spike latches a short hold (the startle); while
   // held we post the violet→red pulse, otherwise the resolved Foul/Taint band (Clean
@@ -1567,6 +1640,13 @@ void loop() {
     } else if (pmsaPresent) {
       Serial.println("AQI      : waiting for first frame");
     }
+    // Fuda: the held tag, or an explicit "no tag" so a present-but-idle reader is
+    // distinguishable from an absent one (the same three-state rule GPS follows).
+    if (nfcUid.length() > 0) {
+      Serial.println("NFC      : " + nfcUid + " (" + nfcType + ")");
+    } else if (pn532Present) {
+      Serial.println("NFC      : no tag");
+    }
     Serial.println();
   }
 
@@ -1607,6 +1687,8 @@ void loop() {
     row += ',';  row += (pmsaHasData ? String(pm1_0) : String(""));   // Enmu PM1.0
     row += ',';  row += (pmsaHasData ? String(pm2_5) : String(""));   // Enmu PM2.5
     row += ',';  row += (pmsaHasData ? String(pm10)  : String(""));   // Enmu PM10
+    row += ',';  row += nfcUid;    // Fuda NFC tag UID (hex; "" = no tag held)
+    row += ',';  row += nfcType;   // Fuda NFC tag type ("" alongside nfcUid)
     row += ',';  row += podRole;   // Bunshin: which pod (fwd/aft) produced this row — stays terminal
 
     // Persist to onboard flash only while untethered (no USB host). close() on a
@@ -1718,6 +1800,14 @@ void loop() {
                    + " PM10:" + String(pm10) + " ug/m3";
       particulateChar->setValue(pmStr.c_str());
       particulateChar->notify();
+    }
+    // Fuda (札): event-driven — notify only on a FRESH tag read, not on every cycle of
+    // the ~5 s hold. A central sees the scan as it happens; re-sending the held value
+    // would turn a discrete identity event into a periodic reading, which it isn't.
+    if (nfcFreshRead) {
+      String fudaStr = "UID:" + nfcUid + " " + nfcType;
+      fudaChar->setValue(fudaStr.c_str());
+      fudaChar->notify();
     }
     // Hokan (歩勘): "steps heading cadence" — the live PDR breadcrumb the apps
     // integrate into a dead-reckoned mini-map. Space-separated so the consumer just

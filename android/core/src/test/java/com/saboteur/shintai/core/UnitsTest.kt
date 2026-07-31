@@ -28,4 +28,22 @@ class UnitsTest {
         assertEquals("—", formatPm25(""))
         assertEquals("—", formatPm25("PM1.0:12 PM10:56 ug/m3"))   // PM2.5 missing from the payload
     }
+
+    @Test
+    fun formatFudaSplitsUidAndType() {
+        assertEquals("04A1B2C3" to "ISO14443A", formatFuda("UID:04A1B2C3 ISO14443A"))
+    }
+
+    @Test
+    fun formatFudaYieldsBlankTypeWhenOnlyAUidIsCarried() {
+        // The glasses render .first alone, so a type-less payload must still give a UID.
+        assertEquals("04A1B2C3" to "—", formatFuda("UID:04A1B2C3"))
+    }
+
+    @Test
+    fun formatFudaFallsBackToBlankPairWhenNoTagRead() {
+        assertEquals("—" to "—", formatFuda("—"))   // event-driven: no scan yet
+        assertEquals("—" to "—", formatFuda(""))
+        assertEquals("—" to "—", formatFuda("garbage"))
+    }
 }
