@@ -45,6 +45,7 @@ CH = {
     "hokan":       "abcdf007-ab12-ab12-ab12-abcdef123456",
     "lightning":   "abcda535-ab12-ab12-ab12-abcdef123456",
     "particulate": "abcdd057-ab12-ab12-ab12-abcdef123456",
+    "fuda":        "abcdfada-ab12-ab12-ab12-abcdef123456",
 }
 
 # Reconstructed CSV columns — the firmware schema, so console.py/hud.py read it unchanged.
@@ -52,7 +53,7 @@ COLS = ("timestamp_ms,distance_l_mm,distance_r_mm,alert,heading_deg,cardinal,acc
         "accel_z,gps_fix,lat,lon,alt_m,speed_kmh,sats,thermal_min,thermal_ctr,thermal_max,"
         "thermal_mean,hotspot_delta,co2_ppm,air_temp_c,humidity_pct,pressure_hpa,gas_ohms,"
         "steps,lightning_km,lightning_energy,lightning_strikes,"
-        "pm1_0_ugm3,pm2_5_ugm3,pm10_ugm3,board").split(",")
+        "pm1_0_ugm3,pm2_5_ugm3,pm10_ugm3,nfc_uid,nfc_type,board").split(",")
 
 
 class State:
@@ -129,6 +130,14 @@ class State:
             m = re.search(r"PM1\.0:(\d+)\s+PM2\.5:(\d+)\s+PM10:(\d+)", text)
             if m:
                 d["pm1_0_ugm3"], d["pm2_5_ugm3"], d["pm10_ugm3"] = m.group(1), m.group(2), m.group(3)
+        elif key == "fuda":
+            # Fuda: "UID:04A1B2C3 ISO14443A". EVENT-DRIVEN — the board notifies only on a
+            # fresh scan, so unlike every other channel these cells are not refreshed each
+            # cycle: the last tag simply persists in the reconstructed rows. The firmware's
+            # ~5 s hold is a CSV-side concept and does not reach us over BLE.
+            m = re.search(r"UID:(\S+)(?:\s+(\S+))?", text)
+            if m:
+                d["nfc_uid"], d["nfc_type"] = m.group(1), m.group(2) or ""
 
 
 async def find_board(name):

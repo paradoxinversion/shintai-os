@@ -49,6 +49,10 @@ object ShintaiGatt {
      *  The BLE-live twin of the pm*_ugm3 CSV columns. See CONTRACT.md. */
     val PARTICULATE: UUID = UUID.fromString("abcdd057-ab12-ab12-ab12-abcdef123456")
 
+    /** Fuda's NFC tag readout: "UID:04A1B2C3 ISO14443A" (string). EVENT-DRIVEN — the board
+     *  notifies only when the PN532 actually reads a tag, not on a cycle. See CONTRACT.md. */
+    val FUDA: UUID = UUID.fromString("abcdfada-ab12-ab12-ab12-abcdef123456")
+
     /** Metsuke's binary heat grid (packed bytes, not a string). See [BINARY]. */
     val THERMAL_GRID: UUID = UUID.fromString("abcd7890-ab12-ab12-ab12-abcdef123456")
 
@@ -71,5 +75,5 @@ object ShintaiGatt {
      *  nothing forces an app to take them all (the Glass HUD skips [ENVIRONMENT]). */
     val ALL: List<UUID> =
         listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT, HOKAN,
-            LIGHTNING, LIGHTNING_CTRL, PARTICULATE)
+            LIGHTNING, LIGHTNING_CTRL, PARTICULATE, FUDA)
 }
