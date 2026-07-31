@@ -103,6 +103,17 @@ private fun ConnectionState.rank(): Int = when (this) {
  * Single-pod ([perPod] of size 1) is transparent: every channel the lone pod supplies
  * comes from it, the rest stay blank — identical to that pod's own readings.
  */
+/**
+ * The OLED pane is NOT a sensor channel and has no precedence: each pod drives its own
+ * panel. Take the first pod that has reported one so the console has something to render;
+ * the per-pod truth stays in `perPod` for a UI that wants to page pods separately.
+ *
+ * Split out of [mergeReadings] to keep it under detekt's complexity ceiling — the merge
+ * body is one long constructor call and every extra branch in it costs against the limit.
+ */
+private fun pickPane(perPod: Map<Role, ShintaiReadings>): PaneState =
+    perPod.values.firstOrNull { it.pane.known }?.pane ?: PaneState()
+
 fun mergeReadings(
     perPod: Map<Role, ShintaiReadings>,
     precedence: Precedence = DEFAULT_PRECEDENCE,
@@ -135,6 +146,7 @@ fun mergeReadings(
         climate = winner(Channel.Climate)?.climate ?: BLANK,
         particulate = winner(Channel.Particulate)?.particulate ?: BLANK,
         fuda = winner(Channel.Fuda)?.fuda ?: BLANK,
+        pane = pickPane(perPod),
         thermal = thermal?.thermal ?: BLANK,
         environment = environment?.environment ?: BLANK,
         kyukaku = environment?.kyukaku ?: KyukakuState(),

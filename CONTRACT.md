@@ -137,6 +137,7 @@ and **Rear Depth Grid**, which carry packed **binary** payloads (see
 | Hokan | `abcdf007-ab12-ab12-ab12-abcdef123456` | `1240 98.5 112` (cumulative `steps` · `heading_deg` · `cadence` steps/min) |
 | Particulate | `abcdd057-ab12-ab12-ab12-abcdef123456` | `PM1.0:12 PM2.5:34 PM10:56 ug/m3` (**Enmu** — the three mass concentrations; `d057` = "dust") |
 | Fuda | `abcdfada-ab12-ab12-ab12-abcdef123456` | `UID:04A1B2C3 ISO14443A` (**Fuda** — the NFC tag last read; **event-driven**, notifies only on a read) |
+| Pane Control | `abcd1306-ab12-ab12-ab12-abcdef123456` | **WRITE** a token → pages the OLED pane; notifies `pane=2/5 NAV` (see below; `1306` = SSD1306) |
 | Lightning | `abcda535-ab12-ab12-ab12-abcdef123456` | `km=1 e=227467 n=8` (last strike distance km · raw energy · cumulative count) |
 | Lightning Control | `abcda53c-ab12-ab12-ab12-abcdef123456` | **WRITE** a token → applies AS3935 tuning; notifies `gain=out spike=2 wdog=1 tune=0` (see below) |
 | Thermal Grid | `abcd7890-ab12-ab12-ab12-abcdef123456` | chunked **binary** 32×24 heat grid (see below) |
@@ -237,9 +238,14 @@ firmware's serial knobs (`o`/`s`/`S`/`w`/`W`/`y`/`Y`/`x`).
 | `clear` | clear the storm statistics (reset the distance estimate) |
 
 **Read / notify payload** — the current config as space-separated `key=value`:
-`gain=out spike=2 wdog=1 tune=0` (`gain` ∈ `in`/`out`). Notified on connect, on read, and after
-every applied write. Present only while the AS3935 is; an unknown token is ignored. CCCD gotcha
-still applies (the `8000` above) for the notify half.
+`gain=out spike=2 wdog=1 tune=0` (`gain` ∈ `in`/`out`). **Readable** at any time (the value is
+seeded at boot and kept current), and **notified after every applied write** — but *not* on connect:
+nothing pushes it when a central links, so a consumer that only subscribes sees nothing until the
+first write lands. (The Android client never issues a GATT read, so in practice its config stays
+unknown until the operator touches a control — which is why the tuning panel is always shown and
+uses `known` only to dim its LED, rather than gating itself on having a value.) Present only while
+the AS3935 is; an unknown token is ignored. CCCD gotcha still applies (the `8000` above) for the
+notify half.
 
 The **Hokan** characteristic is added by `specs/zokyo/hokan.md` — the **second BLE-half
 addition** (after Metsuke's binary grid) and the only *string* characteristic beyond the
@@ -259,6 +265,43 @@ strike is a *world* event and a tag read is a *deliberate* one.) The Operator co
 full `UID + type`; the Glass HUD surfaces the **UID alone** — the lean-surface rule: the identity
 is the heads-up, the RF family is console detail.
 
+### Pane Control (writable)
+
+The **Pane Control** characteristic is the **second app→board path** (after Lightning Control) and
+the first that drives an *output* surface rather than tuning a sensor. It pages the tertiary OLED
+pane (SSD1306 @ `0x3D`) — the same carousel the APDS9960's swipe gesture drives on-body.
+
+A central **writes** one token:
+
+| Token | Effect |
+| --- | --- |
+| `next` / `prev` | step the carousel one pane, wrapping |
+| `home` · `nav` · `env` · `prox` · `therm` | jump straight to that pane |
+
+It **notifies** the resulting state as `pane=<n>/<count> <NAME>` (e.g. `pane=2/5 NAV`) after every
+change — including when the **gesture** pages the pane, not only on a write. The board is the single
+source of truth for which pane is showing, so a console that only tracked its own writes would drift
+out of sync the moment someone swiped.
+
+It also notifies **once per telemetry cycle**, like the sensor channels. That is not redundancy: a
+change-only channel gives a central no way to learn the *initial* state — nothing notifies on
+connect, and the Android client subscribes without ever issuing a GATT read — so a console gating
+its paging control on "have I seen a pane?" would wait forever for a value that needed the control
+to exist first.
+
+When **no panel** answered at `0x3D` the payload is `pane=none`, not a pane number: reporting `HOME`
+for a screen that doesn't exist would repeat the mistake the GPS channel used to make. Consumers
+parse `pane=none` as unknown and hide the paging control. The characteristic itself is always built,
+and a write is a no-op without a panel — the same present-gating Lightning Control uses for a
+missing AS3935.
+
+An unknown token is ignored, but the board still re-asserts the true state afterwards: the BLE stack
+stores written bytes into the characteristic, so without that a rejected token would be left sitting
+there and the next read would return the token instead of the pane.
+
+Note this channel is **per-pod**, not merged like a sensor: each pod drives its own panel, and a
+central writing it addresses every pod it is connected to.
+
 A characteristic only notifies when its sensor is present and has data (e.g. Climate
 warms up ~5 s and updates every ~5 s; Thermal needs the MLX90640 attached; Hokan needs the IMU;
 Particulate needs the PMSA003I; Fuda notifies only when the PN532 reads a tag).
@@ -267,15 +310,18 @@ Particulate needs the PMSA003I; Fuda notifies only when the PN532 reads a tag).
 differently by design (see `android/`):
 
 - **Operator** (`com.saboteur.shintaioperator`, the phone field console) subscribes to
-  the **twelve string** characteristics, Environment, Hokan, Lightning, Particulate and Fuda
-  included — the complete readout —
+  the **thirteen string** characteristics, Environment, Hokan, Lightning, Particulate, Fuda and
+  Pane Control included — the complete readout —
   **plus Thermal Grid and Rear Depth Grid** (the Metsuke heat panel + the Zanshin rear depth panel).
-  Fourteen channels: the full-fidelity console. It renders the full Enrai readout (distance · energy ·
+  Fifteen channels: the full-fidelity console. It renders the full Enrai readout (distance · energy ·
   count) and flashes on each new strike, the full Enmu triad (PM1.0 · PM2.5 · PM10), and Fuda's
   `UID + type` in a dedicated **Identity** panel — its own category, being the first channel that
   reports *who/what* rather than a physical scalar.
-- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **all twelve string
-  channels plus Thermal Grid and Rear Depth Grid** (fourteen, same as Operator), but treats **Environment** (`abcdc0de`,
+- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **twelve string
+  channels plus Thermal Grid and Rear Depth Grid** (fourteen). This is the first place the two apps'
+  *subscription* sets genuinely differ rather than just their rendering: Glass omits **Pane Control**
+  (`abcd1306`), because paging the board's OLED is a console action and the HUD has no panel to
+  drive. It also treats **Environment** (`abcdc0de`,
   BME688 pressure + gas) specially: it takes the channel **only to derive Kyūkaku's smell SPIKE
   badge** from `gas_ohms` (`:core` `Kyukaku.kt`), and does **not** render the raw pressure/VOC
   readout — that full clean/taint/foul readout stays on the phone. The overlay keeps its *displayed*

@@ -41,6 +41,39 @@ class UnitsTest {
     }
 
     @Test
+    fun paneStateParsesBoardPayloadAsZeroBased() {
+        val p = PaneState.parse("pane=2/5 NAV")
+        assertEquals(1, p.index)      // board reports 1-based; we keep it 0-based
+        assertEquals(5, p.count)
+        assertEquals("NAV", p.name)
+        assertEquals(true, p.known)
+    }
+
+    @Test
+    fun paneStateHandlesFirstPaneWithoutUnderflow() {
+        val p = PaneState.parse("pane=1/5 HOME")
+        assertEquals(0, p.index)
+        assertEquals("HOME", p.name)
+    }
+
+    @Test
+    fun paneStateTreatsNoPanelAsUnknown() {
+        // "pane=none" is what a board with nothing at 0x3D reports. It must parse as
+        // unknown so the console hides the paging control instead of offering to page
+        // a screen that isn't there.
+        assertEquals(false, PaneState.parse("pane=none").known)
+    }
+
+    @Test
+    fun paneStateStaysUnknownOnMalformedOrAbsentPayload() {
+        // Unknown is what makes the console hide the pane control on a board with no panel.
+        assertEquals(false, PaneState.parse("").known)
+        assertEquals(false, PaneState.parse("—").known)
+        assertEquals(false, PaneState.parse("pane=2/5").known)   // no name
+        assertEquals(false, PaneState.parse("garbage").known)
+    }
+
+    @Test
     fun formatFudaFallsBackToBlankPairWhenNoTagRead() {
         assertEquals("—" to "—", formatFuda("—"))   // event-driven: no scan yet
         assertEquals("—" to "—", formatFuda(""))
