@@ -156,6 +156,9 @@ private fun AirPanel(r: ShintaiReadings, units: Units) {
         Spacer(Modifier.height(8.dp))
         ReadoutRow("Climate", formatClimate(r.climate, units))
         ReadoutRow("Environment", formatEnvironment(r.environment, units))
+        // Enmu: particulate (µg/m³ — unit-agnostic, rendered raw). The full PM1.0/2.5/10
+        // triad on the console; the glasses show only the health-relevant PM2.5.
+        ReadoutRow("Particulate", r.particulate)
         ReadoutRow(
             "Nose", r.kyukaku.smell.label.uppercase(), "r ${"%.2f".format(r.kyukaku.ratio)}",
             valueColor = when (r.kyukaku.smell) {
@@ -353,6 +356,7 @@ private fun channelLabel(ch: Channel): String = when (ch) {
     Channel.Gps -> "GPS"
     Channel.Hokan -> "Steps"
     Channel.Lightning -> "Lightning"
+    Channel.Particulate -> "Particulate"
 }
 
 /** Milliseconds the Lightning LED stays lit after a strike. */

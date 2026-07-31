@@ -9,6 +9,7 @@
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_APDS9960.h>
 #include <SparkFun_AS3935.h>   // Enrai lightning sense (specs/zokyo/enrai.md): AS3935 Franklin detector
+#include <Adafruit_PM25AQI.h>  // Enmu particulate sense (specs/zokyo/enmu.md): PMSA003I PM1.0/2.5/10 over I2C 0x12
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -42,6 +43,7 @@
 #define ZANSHIN_GRID_UUID   "abcd5c88-ab12-ab12-ab12-abcdef123456"  // Zanshin: binary rear depth grid ("5c88" = 53L5CX 8x8)
 #define LIGHTNING_UUID      "abcda535-ab12-ab12-ab12-abcdef123456"  // Enrai: lightning km/energy/strikes ("a535" = AS3935)
 #define LIGHTNING_CTRL_UUID "abcda53c-ab12-ab12-ab12-abcdef123456"  // Enrai: WRITABLE AS3935 tuning control ("a53c" = AS3935 ctrl)
+#define PARTICULATE_UUID    "abcdd057-ab12-ab12-ab12-abcdef123456"  // Enmu: PM1.0/2.5/10 ug/m3 ("d057" = dust)
 
 const int NEAR_MM  = 200;
 const int FAR_MM   = 2000;   // Kehai-Hikari Approach/Clear boundary (was reserved)
@@ -100,6 +102,7 @@ Adafruit_GPS GPS(&Wire);
 Adafruit_MLX90640 mlx;
 SensirionI2cScd4x scd4x;   // SCD-40: CO2 + ambient air temp + humidity (I2C 0x62)
 Adafruit_BME680 bme;       // BME688: gas + pressure, plus authoritative air temp/RH (I2C 0x77)
+Adafruit_PM25AQI pmsa;     // PMSA003I: particulate PM1.0/2.5/10 (Enmu, I2C 0x12)
 
 // Tertiary info pane — 1.3" 128x64 mono OLED (Adafruit #938) on the STEMMA QT bus at
 // 0x3D. A flare / secondary-readout surface, distinct from Aizu's single-pixel
@@ -183,6 +186,7 @@ BLECharacteristic *thermalGridChar;   // Metsuke: binary 16x12 heat grid
 BLECharacteristic *hokanChar;         // Hokan: "steps heading cadence" string (live PDR breadcrumb)
 BLECharacteristic *lightningChar;     // Enrai: "km=.. e=.. n=.." lightning string (event-driven notify)
 BLECharacteristic *lightningCtrlChar; // Enrai: WRITABLE AS3935 tuning control (app→board) + config notify
+BLECharacteristic *particulateChar;   // Enmu: "PM1.0:.. PM2.5:.. PM10:.. ug/m3" string
 BLE2902           *thermalGridCccd = nullptr;   // its CCCD — emit only while subscribed
 BLECharacteristic *zanshinGridChar;             // Zanshin: binary 8x8 rear depth grid
 BLE2902           *zanshinGridCccd = nullptr;   // its CCCD — emit only while subscribed
@@ -307,6 +311,17 @@ float bmeHum      = 0;   // %RH
 float bmePressure = 0;   // hPa
 float bmeGas      = 0;   // ohms
 
+// Enmu (煙霧) — particulate / AQI sense. The PMSA003I reports PM1.0 / PM2.5 / PM10
+// mass concentration (µg/m³) over I2C at 0x12 (plain bus, no mux). Present set at
+// boot; read() is non-blocking (the sensor free-runs ~1 Hz), so we poll each loop
+// and cache the last good frame. We take the sensor's ATMOSPHERIC ("_env") values —
+// correct for ambient air — not the "_standard" reference-condition set.
+bool     pmsaPresent = false;
+bool     pmsaHasData = false;
+uint16_t pm1_0 = 0;   // PM1.0 µg/m³ (PMSA003I pm10_env)
+uint16_t pm2_5 = 0;   // PM2.5 µg/m³ (PMSA003I pm25_env)
+uint16_t pm10  = 0;   // PM10  µg/m³ (PMSA003I pm100_env)
+
 // Kyūkaku (嗅覚) — sense of smell. Watches bmeGas against an adaptive clean-air
 // baseline (calibration-free, KY-1): a fast drop of the ratio = a violet→red Spike
 // ("the air just changed", transient ALERT), a sustained low ratio = a violet
@@ -344,9 +359,11 @@ const char* CSV_HEADER =
   "accel_x,accel_y,accel_z,gps_fix,lat,lon,alt_m,speed_kmh,"
   "sats,thermal_min,thermal_ctr,thermal_max,thermal_mean,"
   "hotspot_delta,co2_ppm,air_temp_c,humidity_pct,pressure_hpa,gas_ohms,"
-  "steps,lightning_km,lightning_energy,lightning_strikes,board";
+  "steps,lightning_km,lightning_energy,lightning_strikes,"
+  "pm1_0_ugm3,pm2_5_ugm3,pm10_ugm3,board";
   // steps: Hokan pedometer · lightning_*: Enrai AS3935 last-strike snapshot + count ·
-  // board: Bunshin pod role (fwd/aft) — board stays terminal; lightning cols inserted before it
+  // pm*_ugm3: Enmu PMSA003I particulate · board: Bunshin pod role (fwd/aft) — board stays
+  // terminal; every later column (lightning, then particulate) is inserted before it
 
 // Onboard flash logging (FFat) — autonomous field capture, pulled over USB.
 // Each power-up writes a new sequential file (/shtNNNN.csv). Rows are logged
@@ -642,6 +659,12 @@ void setup() {
     Serial.println("[WARN] BME688 not found — pressure/gas disabled, air T/RH falls back to SCD-40");
   }
 
+  // Enmu (煙霧) — PMSA003I particulate (PM1.0/2.5/10) at 0x12, plain bus (no mux) —
+  // non-fatal. begin_I2C() probes, so a missing sensor just disables the channel.
+  pmsaPresent = pmsa.begin_I2C();
+  Serial.println(pmsaPresent ? "[OK] PMSA003I Particulate (Enmu — PM1.0/2.5/10)"
+                             : "[WARN] PMSA003I not found @ 0x12 — particulate disabled");
+
   // Enrai (遠雷) — AS3935 lightning detector, direct on the main bus at 0x03 — non-fatal.
   // No IRQ pin is wired, so serviceEnrai() polls the interrupt-source register. Config
   // mirrors the bench bring-up that caught the storm: INDOOR gain (most sensitive),
@@ -707,6 +730,7 @@ void setup() {
   environmentChar = makeChar(ENVIRONMENT_UUID, "Environment (P/gas/T/RH)");
   hokanChar       = makeChar(HOKAN_UUID,       "Hokan (steps/heading/cadence)");
   lightningChar   = makeChar(LIGHTNING_UUID,   "Lightning (km/energy/n)");
+  particulateChar = makeChar(PARTICULATE_UUID, "Particulate (ug/m3)");   // Enmu
   // Enrai control — the one WRITABLE characteristic (READ|WRITE|NOTIFY). A central writes a
   // tuning token; onWrite applies it and notifies the config back. Built directly (not via
   // makeChar) for the WRITE property + the write callback.
@@ -1391,6 +1415,19 @@ void loop() {
     bmeHasData  = true;
   }
 
+  // ── Enmu (煙霧): PMSA003I particulate. read() is non-blocking — it returns false
+  // when no complete frame has arrived yet (the sensor free-runs ~1 Hz, slower than
+  // our loop), so we keep the last good frame rather than blanking between frames.
+  if (pmsaPresent) {
+    PM25_AQI_Data pm;
+    if (pmsa.read(&pm)) {
+      pm1_0 = pm.pm10_env;    // PM1.0
+      pm2_5 = pm.pm25_env;    // PM2.5 (health-relevant fraction)
+      pm10  = pm.pm100_env;   // PM10
+      pmsaHasData = true;
+    }
+  }
+
   // ── Kyūkaku (嗅覚): fold the fresh gas reading into the rolling baseline/ratio and
   // express it as an Aizu cue. A fresh Spike latches a short hold (the startle); while
   // held we post the violet→red pulse, otherwise the resolved Foul/Taint band (Clean
@@ -1522,6 +1559,14 @@ void loop() {
         Serial.println("BARO     : trend filling (" + String(fillH, 1) + " h to go)");
       }
     }
+    // Enmu (煙霧): the particulate triad. Distinguishes "no sensor" from "sensor
+    // present, first frame not in yet" — the PMSA003I free-runs slower than the loop.
+    if (pmsaHasData) {
+      Serial.println("AQI      : PM1.0 " + String(pm1_0) + "  PM2.5 " + String(pm2_5)
+                   + "  PM10 " + String(pm10) + " ug/m3");
+    } else if (pmsaPresent) {
+      Serial.println("AQI      : waiting for first frame");
+    }
     Serial.println();
   }
 
@@ -1559,7 +1604,10 @@ void loop() {
     row += ',';  row += (hasEnrai ? String(lightningKm)      : String(""));  // Enrai last-strike km (0=none)
     row += ',';  row += (hasEnrai ? String(lightningEnergy)  : String(""));  // Enrai last-strike energy
     row += ',';  row += (hasEnrai ? String(lightningStrikes) : String(""));  // Enrai cumulative strikes
-    row += ',';  row += podRole;   // Bunshin: which pod (fwd/aft) produced this row
+    row += ',';  row += (pmsaHasData ? String(pm1_0) : String(""));   // Enmu PM1.0
+    row += ',';  row += (pmsaHasData ? String(pm2_5) : String(""));   // Enmu PM2.5
+    row += ',';  row += (pmsaHasData ? String(pm10)  : String(""));   // Enmu PM10
+    row += ',';  row += podRole;   // Bunshin: which pod (fwd/aft) produced this row — stays terminal
 
     // Persist to onboard flash only while untethered (no USB host). close() on a
     // row cadence (and on host-connect, below) commits the directory entry so a
@@ -1661,6 +1709,15 @@ void loop() {
                     + String(bmeHum, 0) + "%RH";
       environmentChar->setValue(envStr.c_str());
       environmentChar->notify();
+    }
+    // Enmu (煙霧): the three particulate concentrations — the BLE-live twin of the
+    // pm*_ugm3 CSV columns. Labeled tokens so the consumer just splits; ASCII "ug/m3"
+    // (no µ) because the payload is a GATT string read by two Kotlin apps and Python.
+    if (pmsaHasData) {
+      String pmStr = "PM1.0:" + String(pm1_0) + " PM2.5:" + String(pm2_5)
+                   + " PM10:" + String(pm10) + " ug/m3";
+      particulateChar->setValue(pmStr.c_str());
+      particulateChar->notify();
     }
     // Hokan (歩勘): "steps heading cadence" — the live PDR breadcrumb the apps
     // integrate into a dead-reckoned mini-map. Space-separated so the consumer just

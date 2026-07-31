@@ -133,16 +133,17 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
         /** Bunshin: the two pods the HUD federates, by role. */
         private val POD_ADDRESSES = mapOf(Role.Fwd to FWD_ADDRESS, Role.Aft to AFT_ADDRESS)
 
-        /** The channels the HUD renders: eight string readouts (Hokan's PDR
-         *  breadcrumb included) plus Metsuke's binary THERMAL_GRID (the heat panel),
-         *  and ENVIRONMENT — taken not for its raw readout (that's the Operator's) but
-         *  to derive Kyūkaku's smell SPIKE badge from its gas_ohms. See CONTRACT.md
+        /** The channels the HUD renders: the string readouts (Hokan's PDR breadcrumb
+         *  included) plus Metsuke's binary THERMAL_GRID (the heat panel), and
+         *  ENVIRONMENT — taken not for its raw readout (that's the Operator's) but
+         *  to derive Kyūkaku's smell SPIKE badge from its gas_ohms. PARTICULATE is
+         *  taken whole but rendered lean: PM2.5 alone. See CONTRACT.md
          *  "Consumer coverage". */
         private val GLASS_SUBSCRIPTIONS = listOf(
             ShintaiGatt.DISTANCE, ShintaiGatt.ALERT, ShintaiGatt.HEADING, ShintaiGatt.ACCEL,
             ShintaiGatt.GPS, ShintaiGatt.CLIMATE, ShintaiGatt.THERMAL, ShintaiGatt.HOKAN,
             ShintaiGatt.ENVIRONMENT, ShintaiGatt.THERMAL_GRID, ShintaiGatt.REAR_DEPTH_GRID,
-            ShintaiGatt.LIGHTNING,
+            ShintaiGatt.LIGHTNING, ShintaiGatt.PARTICULATE,
         )
 
         private const val KEY_IPD = "ipd_nudge"

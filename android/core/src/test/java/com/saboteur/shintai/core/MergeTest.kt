@@ -145,6 +145,45 @@ class MergeTest {
         assertEquals("—", merged.gps)
     }
 
+    // ── Enmu: particulate is an ordinary string channel (aft → fwd, air chem rides the pack).
+
+    @Test
+    fun defaultPrecedenceAftWinsParticulate() {
+        val merged = mergeReadings(
+            mapOf(
+                Role.Fwd to ShintaiReadings(
+                    connection = ConnectionState.Live, particulate = "PM1.0:1 PM2.5:2 PM10:3 ug/m3",
+                ),
+                Role.Aft to ShintaiReadings(
+                    connection = ConnectionState.Live, particulate = "PM1.0:9 PM2.5:8 PM10:7 ug/m3",
+                ),
+            ),
+        )
+        assertEquals("PM1.0:9 PM2.5:8 PM10:7 ug/m3", merged.particulate)
+    }
+
+    @Test
+    fun particulateFallsBackToFwdWhenAftLacksTheSensor() {
+        val merged = mergeReadings(
+            mapOf(
+                Role.Fwd to ShintaiReadings(
+                    connection = ConnectionState.Live, particulate = "PM1.0:1 PM2.5:2 PM10:3 ug/m3",
+                ),
+                Role.Aft to withHeading("10.0° N"),   // no PMSA003I on this pod
+            ),
+        )
+        assertEquals("PM1.0:1 PM2.5:2 PM10:3 ug/m3", merged.particulate)
+    }
+
+    @Test
+    fun particulateBlankWhenNoPodSupplies() {
+        assertEquals("—", mergeReadings(mapOf(Role.Aft to withHeading("10.0° N"))).particulate)
+        assertTrue(
+            Channel.Particulate in
+                ShintaiReadings(particulate = "PM1.0:1 PM2.5:2 PM10:3 ug/m3").suppliedChannels(),
+        )
+    }
+
     @Test
     fun emptyMapYieldsDefaults() {
         val merged = mergeReadings(emptyMap())

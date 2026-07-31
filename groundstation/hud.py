@@ -94,7 +94,8 @@ SENSORS = [("distance_l_mm", "REAR-L mm"), ("distance_r_mm", "REAR-R mm"),
            ("co2_ppm", "CO₂ ppm"), ("accel_mag", "ACCEL |g|"),
            ("hotspot_delta", "THERMAL Δ"), ("humidity_pct", "HUMID %"),
            ("air_temp_c", "TEMP °C"), ("pressure_hpa", "PRESS hPa"),
-           ("gas_kohm", "GAS kΩ")]
+           ("gas_kohm", "GAS kΩ"),
+           ("pm2_5_ugm3", "PM2.5 µg/m³"), ("pm10_ugm3", "PM10 µg/m³")]   # Enmu particulate
 SENSORS = [s for s in SENSORS if s[0] in df.columns]   # drop fields a log lacks (pre-BME688, or pre-dual-arc distance_mm)
 
 # --- try to bake a DarkMatter basemap; fall back to tileless if offline ----

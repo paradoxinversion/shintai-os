@@ -61,6 +61,7 @@ import com.saboteur.shintai.core.Units
 import com.saboteur.shintai.core.distanceParts
 import com.saboteur.shintai.core.formatClimate
 import com.saboteur.shintai.core.formatGps
+import com.saboteur.shintai.core.formatPm25
 import com.saboteur.shintai.core.formatThermal
 
 /** Width:height above which we treat the surface as a side-by-side stereo display.
@@ -285,16 +286,7 @@ private fun EyePane(
                 HairRule()
                 Spacer(Modifier.height(12.dp))
 
-                // Supporting channels — dotted-leader rows on black, strokes only.
-                ReadoutRow("HEADING", r.heading)
-                ReadoutRow("ACCEL", r.accel)
-                ReadoutRow("GPS", formatGps(r.gps, units))
-                ReadoutRow("CLIMATE", formatClimate(r.climate, units))
-                ReadoutRow("THERMAL", formatThermal(r.thermal, units))
-                // Hokan: cumulative steps + cadence (the pedometer readout). Always
-                // shown so the row layout is stable; the PDR mini-map below appears
-                // only once there's a walked path.
-                ReadoutRow("STEPS", r.hokan?.let { "${it.steps}  ${it.cadence}/min" } ?: "—")
+                SupportingReadouts(r, units)
 
                 // Metsuke: the live 8×8 heat panel — Shikai's one *image* surface.
                 // Only present once the first grid frame arrives (MLX90640 attached
@@ -434,6 +426,26 @@ private fun TapChip(label: String, onClick: () -> Unit) {
     ) {
         Text(label, color = G.Phosphor, fontFamily = G.Mono, fontSize = 17.sp)
     }
+}
+
+/**
+ * The supporting-channel stack under the rear-arc hero — dotted-leader rows on black,
+ * strokes only. Split out of `EyePane` so the HUD's scalar readouts live in one place
+ * and adding a channel doesn't grow the pane's layout body.
+ */
+@Composable
+private fun SupportingReadouts(r: ShintaiReadings, units: Units) {
+    ReadoutRow("HEADING", r.heading)
+    ReadoutRow("ACCEL", r.accel)
+    ReadoutRow("GPS", formatGps(r.gps, units))
+    ReadoutRow("CLIMATE", formatClimate(r.climate, units))
+    ReadoutRow("THERMAL", formatThermal(r.thermal, units))
+    // Enmu: the health-relevant PM2.5 fraction only — the lean HUD's air-quality
+    // heads-up; the full PM1.0/2.5/10 triad stays on the Operator console.
+    ReadoutRow("AIR PM2.5", formatPm25(r.particulate))
+    // Hokan: cumulative steps + cadence (the pedometer readout). Always shown so the
+    // row layout is stable; the PDR mini-map below appears only once there's a walked path.
+    ReadoutRow("STEPS", r.hokan?.let { "${it.steps}  ${it.cadence}/min" } ?: "—")
 }
 
 /** LABEL · dotted leader · VALUE — the ledger row, strokes only (style.md §5.3). */

@@ -45,6 +45,10 @@ object ShintaiGatt {
      *  ("gain=out spike=2 wdog=1 tune=0"). See CONTRACT.md "Lightning Control". */
     val LIGHTNING_CTRL: UUID = UUID.fromString("abcda53c-ab12-ab12-ab12-abcdef123456")
 
+    /** Enmu's particulate readout: "PM1.0:12 PM2.5:34 PM10:56 ug/m3" (string).
+     *  The BLE-live twin of the pm*_ugm3 CSV columns. See CONTRACT.md. */
+    val PARTICULATE: UUID = UUID.fromString("abcdd057-ab12-ab12-ab12-abcdef123456")
+
     /** Metsuke's binary heat grid (packed bytes, not a string). See [BINARY]. */
     val THERMAL_GRID: UUID = UUID.fromString("abcd7890-ab12-ab12-ab12-abcdef123456")
 
@@ -67,5 +71,5 @@ object ShintaiGatt {
      *  nothing forces an app to take them all (the Glass HUD skips [ENVIRONMENT]). */
     val ALL: List<UUID> =
         listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT, HOKAN,
-            LIGHTNING, LIGHTNING_CTRL)
+            LIGHTNING, LIGHTNING_CTRL, PARTICULATE)
 }

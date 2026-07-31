@@ -117,6 +117,10 @@ def dashboard(vals, samples, csv_name):
     press, gas = _num(g("pressure_hpa")), _num(g("gas_ohms"), 0)
     if press or gas:
         out.append(b._row("ENV", f"{press or '—'}hPa  {f'{float(gas)/1000:.0f}kΩ' if gas else '—'}", b.PHOSPHOR))
+    pm25 = _num(g("pm2_5_ugm3"), 0)      # Enmu particulate — PM2.5 the headline, PM1.0/PM10 alongside
+    if pm25:
+        out.append(b._row("AQI", f"PM2.5 {pm25}  PM10 {_num(g('pm10_ugm3'), 0)}  "
+                                 f"PM1.0 {_num(g('pm1_0_ugm3'), 0)} µg/m³", b.PHOSPHOR))
     if g("gps_fix") == "1":
         out.append(b._row("GPS", f"{_num(g('lat'), 4)},{_num(g('lon'), 4)} {_num(g('speed_kmh'))}km/h", b.PHOSPHOR))
     else:

@@ -24,6 +24,7 @@ data class ShintaiReadings(
     val climate: String = "—",         // e.g. "23.0C 41%RH 750ppm" (SCD-40, warms up ~5s)
     val thermal: String = "—",         // e.g. "Ctr:23.1 Min:22.6 Max:31.4C" (MLX90640)
     val environment: String = "—",     // e.g. "1007.2hPa 84200ohm 22.8C 39%RH" (BME688)
+    val particulate: String = "—",     // e.g. "PM1.0:12 PM2.5:34 PM10:56 ug/m3" (Enmu, PMSA003I)
     val kyukaku: KyukakuState = KyukakuState(),  // Kyūkaku's smell state, derived from environment's gas_ohms
     val thermalGrid: ThermalGrid? = null,  // Metsuke's 32×24 heat grid, null until the first frame
     val rearDepthGrid: DepthGrid? = null,  // Zanshin's 8×8 rear depth field, null until the first notify
@@ -371,6 +372,8 @@ fun ShintaiReadings.fold(uuid: UUID, value: String): ShintaiReadings {
         ShintaiGatt.ENVIRONMENT -> base.copy(environment = value, kyukaku = base.kyukaku.fold(value))
         ShintaiGatt.HOKAN -> base.copy(hokan = HokanPdr.fold(base.hokan, value))
         ShintaiGatt.LIGHTNING -> base.copy(lightning = LightningState.fold(base.lightning, value))
+        // Enmu: particulate readout, stored raw for display (µg/m³ needs no unit conversion).
+        ShintaiGatt.PARTICULATE -> base.copy(particulate = value)
         ShintaiGatt.LIGHTNING_CTRL -> base.copy(lightningConfig = LightningConfig.parse(value))
         else -> base
     }

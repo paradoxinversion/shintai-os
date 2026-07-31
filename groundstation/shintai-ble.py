@@ -44,13 +44,15 @@ CH = {
     "environment": "abcdc0de-ab12-ab12-ab12-abcdef123456",
     "hokan":       "abcdf007-ab12-ab12-ab12-abcdef123456",
     "lightning":   "abcda535-ab12-ab12-ab12-abcdef123456",
+    "particulate": "abcdd057-ab12-ab12-ab12-abcdef123456",
 }
 
 # Reconstructed CSV columns — the firmware schema, so console.py/hud.py read it unchanged.
 COLS = ("timestamp_ms,distance_l_mm,distance_r_mm,alert,heading_deg,cardinal,accel_x,accel_y,"
         "accel_z,gps_fix,lat,lon,alt_m,speed_kmh,sats,thermal_min,thermal_ctr,thermal_max,"
         "thermal_mean,hotspot_delta,co2_ppm,air_temp_c,humidity_pct,pressure_hpa,gas_ohms,"
-        "steps,lightning_km,lightning_energy,lightning_strikes,board").split(",")
+        "steps,lightning_km,lightning_energy,lightning_strikes,"
+        "pm1_0_ugm3,pm2_5_ugm3,pm10_ugm3,board").split(",")
 
 
 class State:
@@ -121,6 +123,12 @@ class State:
             m = re.search(r"km=(-?\d+)\s+e=(\d+)\s+n=(\d+)", text)
             if m:
                 d["lightning_km"], d["lightning_energy"], d["lightning_strikes"] = m.group(1), m.group(2), m.group(3)
+        elif key == "particulate":
+            # Enmu: "PM1.0:12 PM2.5:34 PM10:56 ug/m3" — the char sends ASCII "ug/m3",
+            # which we drop; the CSV columns already carry the unit in their names.
+            m = re.search(r"PM1\.0:(\d+)\s+PM2\.5:(\d+)\s+PM10:(\d+)", text)
+            if m:
+                d["pm1_0_ugm3"], d["pm2_5_ugm3"], d["pm10_ugm3"] = m.group(1), m.group(2), m.group(3)
 
 
 async def find_board(name):
