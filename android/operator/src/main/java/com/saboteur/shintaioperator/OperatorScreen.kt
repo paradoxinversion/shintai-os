@@ -269,14 +269,6 @@ private fun Console(
     // only once a tag has been read (then it persists the last one).
     if (r.fuda != "—") IdentityPanel(r)
 
-    // Enrai AS3935 tuning — writes tokens to the board over the Lightning Control char.
-    LightningTuningPanel(r.lightningConfig, vm::sendLightningCommand)
-
-    // OLED PANE — page the board's tertiary panel from the console, the twin of the
-    // on-body APDS swipe. Shown only once a board has reported a pane: a rig with no
-    // panel at 0x3D never notifies one, so the control would have nothing to drive.
-    if (r.pane.known) PanePanel(r.pane, vm::sendPaneCommand)
-
     // TREND — rolling history the glasses don't keep.
     Panel("Trend") {
         Text("RANGE", color = T.Bone, fontFamily = T.Mono, fontSize = 11.sp, letterSpacing = 2.sp)
@@ -288,6 +280,19 @@ private fun Console(
 
     // Bunshin: per-channel source precedence — appears only when two pods are linked.
     MultiPodSources(vm)
+
+    // ── CONTROLS ────────────────────────────────────────────────────────────────────
+    // Everything above reads the board; everything below acts on it. The board-actuating
+    // panels sit together here rather than beside the readouts they relate to, so the
+    // console has one control zone instead of two separated by a readout.
+
+    // Enrai AS3935 tuning — writes tokens to the board over the Lightning Control char.
+    LightningTuningPanel(r.lightningConfig, vm::sendLightningCommand)
+
+    // OLED PANE — page the board's tertiary panel from the console, the twin of the
+    // on-body APDS swipe. Shown only once a board has reported a pane: a rig with no
+    // panel at 0x3D never notifies one, so the control would have nothing to drive.
+    if (r.pane.known) PanePanel(r.pane, vm::sendPaneCommand)
 
     // Bunshin: return to the pair screen to link the OTHER pod — until both are in.
     if (r.perBoard.size < 2) {
