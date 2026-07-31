@@ -53,6 +53,12 @@ object ShintaiGatt {
      *  notifies only when the PN532 actually reads a tag, not on a cycle. See CONTRACT.md. */
     val FUDA: UUID = UUID.fromString("abcdfada-ab12-ab12-ab12-abcdef123456")
 
+    /** The OLED pane's WRITABLE paging control (READ|WRITE|NOTIFY) — the second app→board
+     *  path, and the first driving an output surface. Write "next"/"prev" or a pane name
+     *  ("home"/"nav"/"env"/"prox"/"therm"); notifies "pane=2/5 NAV". Notifies on an on-body
+     *  swipe too, not just on a write. `:glass` does NOT subscribe — see CONTRACT.md. */
+    val PANE_CTRL: UUID = UUID.fromString("abcd1306-ab12-ab12-ab12-abcdef123456")
+
     /** Metsuke's binary heat grid (packed bytes, not a string). See [BINARY]. */
     val THERMAL_GRID: UUID = UUID.fromString("abcd7890-ab12-ab12-ab12-abcdef123456")
 
@@ -75,5 +81,5 @@ object ShintaiGatt {
      *  nothing forces an app to take them all (the Glass HUD skips [ENVIRONMENT]). */
     val ALL: List<UUID> =
         listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT, HOKAN,
-            LIGHTNING, LIGHTNING_CTRL, PARTICULATE, FUDA)
+            LIGHTNING, LIGHTNING_CTRL, PARTICULATE, FUDA, PANE_CTRL)
 }

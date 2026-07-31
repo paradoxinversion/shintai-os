@@ -37,6 +37,7 @@ import kotlinx.coroutines.delay
 import com.saboteur.shintai.core.HokanPdr
 import com.saboteur.shintai.core.LightningConfig
 import com.saboteur.shintai.core.LightningState
+import com.saboteur.shintai.core.PaneState
 import com.saboteur.shintai.core.Precedence
 import com.saboteur.shintai.core.Role
 import com.saboteur.shintai.core.NEAR_MM
@@ -271,6 +272,11 @@ private fun Console(
     // Enrai AS3935 tuning — writes tokens to the board over the Lightning Control char.
     LightningTuningPanel(r.lightningConfig, vm::sendLightningCommand)
 
+    // OLED PANE — page the board's tertiary panel from the console, the twin of the
+    // on-body APDS swipe. Shown only once a board has reported a pane: a rig with no
+    // panel at 0x3D never notifies one, so the control would have nothing to drive.
+    if (r.pane.known) PanePanel(r.pane, vm::sendPaneCommand)
+
     // TREND — rolling history the glasses don't keep.
     Panel("Trend") {
         Text("RANGE", color = T.Bone, fontFamily = T.Mono, fontSize = 11.sp, letterSpacing = 2.sp)
@@ -363,6 +369,37 @@ private fun channelLabel(ch: Channel): String = when (ch) {
     Channel.Lightning -> "Lightning"
     Channel.Particulate -> "Particulate"
     Channel.Fuda -> "NFC Tag"
+}
+
+/** The board's OLED pane — the console twin of the on-body APDS swipe, over the writable
+ *  Pane Control characteristic. PREV/NEXT mirror exactly what a swipe does (the firmware
+ *  also accepts direct pane-name tokens; deliberately not surfaced here, so the pane
+ *  vocabulary lives only in the firmware and CONTRACT.md and can't drift into the app).
+ *
+ *  The readout is whatever the BOARD last reported, never what we asked for — it notifies
+ *  on a swipe as well as on a write, so this stays correct when someone pages by hand. */
+@Composable
+private fun PanePanel(pane: PaneState, onCmd: (String) -> Unit) {
+    Panel("OLED Pane", ledColor = if (pane.known) T.Phosphor else T.PhosphorDim) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        ) {
+            ConsoleButton("< PREV", { onCmd("prev") })
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    pane.name, color = T.Phosphor, fontFamily = T.Mono, fontSize = 15.sp,
+                    letterSpacing = 2.sp,
+                )
+                Text(
+                    "${pane.index + 1} / ${pane.count}",
+                    color = T.BoneDim, fontFamily = T.Mono, fontSize = 11.sp,
+                )
+            }
+            ConsoleButton("NEXT >", { onCmd("next") })
+        }
+    }
 }
 
 /** Fuda's NFC readout — the last tag's UID and RF family. Its own panel category rather

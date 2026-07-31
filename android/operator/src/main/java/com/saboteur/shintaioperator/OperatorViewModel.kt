@@ -192,6 +192,17 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
         log("LGT $token")
     }
 
+    /** Page the board's OLED pane over the writable Pane Control characteristic — "next",
+     *  "prev", or a pane name ("home"/"nav"/"env"/"prox"/"therm"). The same carousel the
+     *  APDS9960 swipe drives on-body; the board notifies the resulting pane back either way,
+     *  so the UI never has to assume a write landed. Sent to every connected pod, since each
+     *  drives its own panel. See CONTRACT.md "Pane Control". */
+    fun sendPaneCommand(token: String) {
+        val bytes = token.toByteArray(Charsets.UTF_8)
+        clients.values.forEach { it.write(ShintaiGatt.PANE_CTRL, bytes) }
+        log("PANE $token")
+    }
+
     // --- recording ---------------------------------------------------------
 
     fun toggleRecording() = if (recorder.active) stopRecording() else startRecording()

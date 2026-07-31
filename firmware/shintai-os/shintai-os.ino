@@ -46,6 +46,7 @@
 #define LIGHTNING_CTRL_UUID "abcda53c-ab12-ab12-ab12-abcdef123456"  // Enrai: WRITABLE AS3935 tuning control ("a53c" = AS3935 ctrl)
 #define PARTICULATE_UUID    "abcdd057-ab12-ab12-ab12-abcdef123456"  // Enmu: PM1.0/2.5/10 ug/m3 ("d057" = dust)
 #define FUDA_UUID           "abcdfada-ab12-ab12-ab12-abcdef123456"  // Fuda: NFC tag UID+type ("fada" = fuda/tag)
+#define PANE_CTRL_UUID      "abcd1306-ab12-ab12-ab12-abcdef123456"  // OLED pane: WRITABLE paging control ("1306" = SSD1306)
 
 const int NEAR_MM  = 200;
 const int FAR_MM   = 2000;   // Kehai-Hikari Approach/Clear boundary (was reserved)
@@ -202,6 +203,7 @@ BLECharacteristic *lightningChar;     // Enrai: "km=.. e=.. n=.." lightning stri
 BLECharacteristic *lightningCtrlChar; // Enrai: WRITABLE AS3935 tuning control (app→board) + config notify
 BLECharacteristic *particulateChar;   // Enmu: "PM1.0:.. PM2.5:.. PM10:.. ug/m3" string
 BLECharacteristic *fudaChar;          // Fuda: "UID:<hex> <type>" NFC tag string (event-driven)
+BLECharacteristic *paneCtrlChar;      // OLED pane: WRITABLE paging control (app→board) + state notify
 BLE2902           *thermalGridCccd = nullptr;   // its CCCD — emit only while subscribed
 BLECharacteristic *zanshinGridChar;             // Zanshin: binary 8x8 rear depth grid
 BLE2902           *zanshinGridCccd = nullptr;   // its CCCD — emit only while subscribed
@@ -263,6 +265,15 @@ uint8_t EnraiBus::depth = 0;
 void applyEnraiConfig();                    // push all of the above to the sensor
 void enraiConfigStr(char *buf, size_t n);   // "gain=out spike=2 wdog=1 tune=0"
 void applyEnraiCommand(const char *cmd);    // one control token -> update + apply + notify
+
+// OLED pane paging — the SECOND app→board path, and the first driving an OUTPUT surface.
+// Both inputs (APDS swipe on-body, Pane Control write from the console) funnel through
+// setPane(), so the board stays the single source of truth for which pane is showing and
+// a swipe notifies the console exactly like a write does.
+void paneStateStr(char *buf, size_t n);     // "pane=2/5 NAV"
+void publishPaneState(bool doNotify);       // push true state into the char (+ optional notify)
+void setPane(uint8_t page);                 // set + mark dirty + notify state
+void applyPaneCommand(const char *cmd);     // one control token -> setPane
 uint32_t enraiDisturbers  = 0;       // man-made disturbers seen (diagnostic, 'K')
 uint32_t enraiNoise       = 0;       // noise-floor-high events seen (diagnostic, 'K')
 unsigned long lastEnraiMs = 0;       // poll timer — throttles the AS3935 read (see serviceEnrai)
@@ -570,6 +581,20 @@ class EnraiCtrlCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
+// The OLED pane's writable control — a central writes "next"/"prev" or a pane name and
+// the panel pages, the same carousel the APDS swipe drives.
+class PaneCtrlCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *c) override {
+    String v = c->getValue();
+    if (v.length() > 0) applyPaneCommand(v.c_str());
+    // The stack stores the WRITTEN bytes in the characteristic, so an ignored token would
+    // otherwise be left there and the next read would return "bogus" instead of the pane
+    // (confirmed on hardware). Re-assert the true state after every write; no notify —
+    // setPane() already sent one if anything actually changed.
+    publishPaneState(false);
+  }
+};
+
 void setup() {
   Serial.begin(115200);
   unsigned long serialWait = millis();
@@ -790,6 +815,20 @@ void setup() {
   }
   lightningCtrlChar->setCallbacks(new EnraiCtrlCallbacks());
   { char cfg[48]; enraiConfigStr(cfg, sizeof(cfg)); lightningCtrlChar->setValue(cfg); }
+  // OLED pane control — the SECOND writable characteristic (READ|WRITE|NOTIFY). Built
+  // directly (not via makeChar) for the WRITE property + the write callback, exactly like
+  // Lightning Control above. Always created, even with no panel at 0x3D: the console can
+  // then show "no panel" rather than a channel that silently never appears.
+  paneCtrlChar = service->createCharacteristic(PANE_CTRL_UUID,
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY);
+  paneCtrlChar->addDescriptor(new BLE2902());
+  {
+    BLEDescriptor *pd = new BLEDescriptor(BLEUUID((uint16_t)0x2901));
+    pd->setValue("Pane Control (OLED paging)");
+    paneCtrlChar->addDescriptor(pd);
+  }
+  paneCtrlChar->setCallbacks(new PaneCtrlCallbacks());
+  { char ps[32]; paneStateStr(ps, sizeof(ps)); paneCtrlChar->setValue(ps); }
   // Metsuke: the one BINARY characteristic (68-byte packed heat grid). Built
   // directly (not via makeChar) so we KEEP the BLE2902 pointer — we gate emission
   // on the client having subscribed (getNotifications, AC-4), and on this stack
@@ -1231,6 +1270,48 @@ void applyEnraiCommand(const char *cmd) {
   }
 }
 
+// ── OLED pane paging ────────────────────────────────────────────────────────────────
+// The pane names the console shows and the write tokens it sends are the SAME strings,
+// so the token vocabulary and the readout can't drift apart.
+static const char *PANE_NAMES[PANE_COUNT] = { "HOME", "NAV", "ENV", "PROX", "THERM" };
+
+void paneStateStr(char *buf, size_t n) {
+  snprintf(buf, n, "pane=%u/%u %s",
+           (unsigned)(oledPage + 1), (unsigned)PANE_COUNT, PANE_NAMES[oledPage]);
+}
+
+// Push the true pane into the characteristic. The value must ALWAYS be the board's state,
+// never the token a central wrote — the stack stores written bytes automatically, so every
+// write path has to overwrite them or a read returns the token back.
+void publishPaneState(bool doNotify) {
+  if (!paneCtrlChar) return;
+  char ps[32]; paneStateStr(ps, sizeof(ps));
+  paneCtrlChar->setValue(ps);
+  if (doNotify && deviceConnected) paneCtrlChar->notify();
+}
+
+// The ONE place oledPage changes. Both the swipe gesture and a Pane Control write land
+// here, so the notify fires either way — a console that only echoed its own writes would
+// go stale the moment someone paged the panel by hand.
+void setPane(uint8_t page) {
+  if (page >= PANE_COUNT) return;
+  oledPage  = page;
+  oledDirty = true;                 // repaint from the fast loop section, not the 1.5 s cycle
+  publishPaneState(true);
+}
+
+void applyPaneCommand(const char *cmd) {
+  if (!oledPresent) return;         // no panel answered at 0x3D — same gate Enrai uses
+  if      (!strcmp(cmd, "next"))  setPane((oledPage + 1) % PANE_COUNT);
+  else if (!strcmp(cmd, "prev"))  setPane((oledPage + PANE_COUNT - 1) % PANE_COUNT);
+  else {
+    for (uint8_t p = 0; p < PANE_COUNT; p++) {
+      if (!strcasecmp(cmd, PANE_NAMES[p])) { setPane(p); return; }
+    }
+    return;                         // unknown token — ignore, as Lightning Control does
+  }
+}
+
 // Enrai lightning poll — the sole AS3935 read site. No IRQ pin is wired, so we poll the
 // interrupt-source register, but THROTTLED to ENRAI_POLL_MS: polling every loop iteration
 // read-and-clears the register inside its ~2 ms post-event settle window and loses strikes
@@ -1338,8 +1419,10 @@ void loop() {
     uint8_t g = apds.readGesture();   // 0 = none; resolves once a swipe completes
     // Mapping calibrated on-glass: a physical L->R swipe should page FORWARD. If it
     // pages the wrong way (or the swipe axis reads as UP/DOWN), swap these directions.
-    if      (g == APDS9960_RIGHT) { oledPage = (oledPage + 1) % PANE_COUNT;             oledDirty = true; }
-    else if (g == APDS9960_LEFT)  { oledPage = (oledPage + PANE_COUNT - 1) % PANE_COUNT; oledDirty = true; }
+    // Through setPane() so a swipe notifies Pane Control exactly like a console write —
+    // the board is the source of truth for which pane is up, and both inputs agree.
+    if      (g == APDS9960_RIGHT) setPane((oledPage + 1) % PANE_COUNT);
+    else if (g == APDS9960_LEFT)  setPane((oledPage + PANE_COUNT - 1) % PANE_COUNT);
     // APDS9960_UP / _DOWN reserved.
   }
   if (oledPresent) {

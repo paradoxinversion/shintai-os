@@ -26,6 +26,7 @@ data class ShintaiReadings(
     val environment: String = "—",     // e.g. "1007.2hPa 84200ohm 22.8C 39%RH" (BME688)
     val particulate: String = "—",     // e.g. "PM1.0:12 PM2.5:34 PM10:56 ug/m3" (Enmu, PMSA003I)
     val fuda: String = "—",            // e.g. "UID:04A1B2C3 ISO14443A" (Fuda, PN532) — event-driven
+    val pane: PaneState = PaneState(),  // the board's OLED pane (Pane Control char) — per-pod, not merged
     val kyukaku: KyukakuState = KyukakuState(),  // Kyūkaku's smell state, derived from environment's gas_ohms
     val thermalGrid: ThermalGrid? = null,  // Metsuke's 32×24 heat grid, null until the first frame
     val rearDepthGrid: DepthGrid? = null,  // Zanshin's 8×8 rear depth field, null until the first notify
@@ -305,6 +306,36 @@ data class LightningState(
 }
 
 /**
+ * The board's OLED pane state, from the writable Pane Control characteristic
+ * (`pane=2/5 NAV`). The console drives its paging UI from this and writes tokens back.
+ *
+ * [name] doubles as the write token for jumping straight to this pane (lowercased) — the
+ * firmware matches pane names case-insensitively, so the readout and the token vocabulary
+ * are the same strings and cannot drift apart.
+ *
+ * [known] is false until the board's first state notify arrives — which also covers the
+ * no-panel case, since a board with nothing at 0x3D never reports a pane.
+ */
+data class PaneState(
+    val index: Int = 0,        // 0-based pane index
+    val count: Int = 0,        // how many panes the carousel has
+    val name: String = "—",    // e.g. "NAV"
+    val known: Boolean = false,
+) {
+    companion object {
+        /** Parse the board's pane payload, e.g. "pane=2/5 NAV". Malformed input stays unknown. */
+        fun parse(value: String): PaneState {
+            val m = Regex("""pane=(\d+)/(\d+)\s+(\S+)""").find(value) ?: return PaneState()
+            val (n, total, label) = m.destructured
+            val idx = n.toIntOrNull() ?: return PaneState()
+            val cnt = total.toIntOrNull() ?: return PaneState()
+            // The board reports 1-based for humans; keep it 0-based internally.
+            return PaneState(index = (idx - 1).coerceAtLeast(0), count = cnt, name = label, known = true)
+        }
+    }
+}
+
+/**
  * Enrai's AS3935 tuning, from the writable Lightning Control characteristic
  * (specs/zokyo/enrai.md). The app drives its tuning UI from this and writes tokens back;
  * [known] is false until the board's first config notify arrives.
@@ -379,6 +410,9 @@ fun ShintaiReadings.fold(uuid: UUID, value: String): ShintaiReadings {
         // the last tag persists until the next notify.
         ShintaiGatt.FUDA -> base.copy(fuda = value)
         ShintaiGatt.LIGHTNING_CTRL -> base.copy(lightningConfig = LightningConfig.parse(value))
+        // Pane Control notifies on a console write AND on an on-body swipe, so this is the
+        // board telling us what it's showing — never an echo of what we asked for.
+        ShintaiGatt.PANE_CTRL -> base.copy(pane = PaneState.parse(value))
         else -> base
     }
 }
