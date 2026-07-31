@@ -67,7 +67,8 @@ class TelemetryRecorder(private val dir: File) {
             if (r.alertActive) "1" else "0", r.heading, r.accel,
             r.gps, r.climate, r.thermal, r.environment,
             r.lightning.km.toString(), r.lightning.energy.toString(), r.lightning.strikes.toString(),
-            role?.name?.lowercase().orEmpty(),   // board: fwd / aft
+            r.particulate,                       // Enmu: the raw "PM1.0:.. PM2.5:.. PM10:.." triad
+            role?.name?.lowercase().orEmpty(),   // board: fwd / aft — stays terminal
         )
         try {
             w.write(cells.joinToString(",") { quote(it) })
@@ -98,6 +99,6 @@ class TelemetryRecorder(private val dir: File) {
         private const val TAG = "ShintaiRec"
         const val HEADER =
             "wall_ms,distance_l,distance_r,alert,heading,accel,gps,climate,thermal,environment," +
-                "lightning_km,lightning_energy,lightning_strikes,board"
+                "lightning_km,lightning_energy,lightning_strikes,particulate,board"
     }
 }

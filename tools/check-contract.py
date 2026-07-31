@@ -43,6 +43,7 @@ CHAR_TO_KOTLIN = {
     "Hokan": "HOKAN",
     "Lightning": "LIGHTNING",
     "Lightning Control": "LIGHTNING_CTRL",
+    "Particulate": "PARTICULATE",
     "Thermal Grid": "THERMAL_GRID",
 }
 # Characteristics the Android app is documented NOT to expose (CONTRACT.md "Consumer
@@ -186,7 +187,7 @@ def check_groundstation(valid_cols: set[str]):
             if lit in local_valid:
                 continue
             if lit in {"lat", "lon", "alert", "cardinal", "sats"} or re.search(
-                    r"_(mm|deg|ms|kmh|ppm|pct|hpa|ohms|fix|delta|mean|min|max|ctr|x|y|z|m|c)$", lit):
+                    r"_(mm|deg|ms|kmh|ppm|pct|hpa|ohms|ugm3|fix|delta|mean|min|max|ctr|x|y|z|m|c)$", lit):
                 phantom.setdefault(py.name, []).append(lit)
     for fname, cols in phantom.items():
         uniq = sorted(set(cols))

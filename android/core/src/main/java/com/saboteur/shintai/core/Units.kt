@@ -46,6 +46,15 @@ fun formatGps(raw: String, u: Units): String {
     return s
 }
 
+/** Enmu particulate raw "PM1.0:12 PM2.5:34 PM10:56 ug/m3" -> just the PM2.5 fraction as
+ *  "34 µg/m³" — the one health-relevant number the lean glasses HUD surfaces (the full
+ *  triad stays on the Operator console). µg/m³ is unit-agnostic, so no metric/imperial
+ *  split. Returns "—" when the payload hasn't arrived or can't be parsed. */
+fun formatPm25(raw: String): String {
+    val v = Regex("""PM2\.5:(\d+)""").find(raw)?.groupValues?.get(1) ?: return "—"
+    return "$v µg/m³"
+}
+
 /** A single temperature for a label: "31.4°C" (metric) or "88.5°F" (imperial).
  *  Used by Metsuke's thermal-grid panel to show the auto-range endpoints. */
 fun formatTemp(c: Float, u: Units): String =

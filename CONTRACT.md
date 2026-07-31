@@ -37,6 +37,9 @@ Consumers key off `line.startswith("timestamp_ms")` (header) and `line[0].isdigi
 | `lightning_km` | km (0 = none yet) | **Enrai** — most recent lightning strike's estimated distance (AS3935); `1` = overhead, `63` = detected-but-out-of-range, blank when the sensor is absent |
 | `lightning_energy` | raw (blank = none) | **Enrai** — most recent strike's raw energy value (AS3935 lightning-energy register; relative, not a physical unit) |
 | `lightning_strikes` | count (cumulative) | **Enrai** — cumulative validated strikes since boot (blank when the sensor is absent) |
+| `pm1_0_ugm3` | µg/m³ (blank = none) | **Enmu** — PM1.0 mass concentration (PMSA003I, ambient/`_env` scale) |
+| `pm2_5_ugm3` | µg/m³ (blank = none) | **Enmu** — PM2.5 mass concentration; the health-relevant fraction, and the one the glasses surface |
+| `pm10_ugm3` | µg/m³ (blank = none) | **Enmu** — PM10 mass concentration |
 | `board` | `fwd` / `aft` | **Bunshin** — which pod (role) produced this row; the terminal role discriminator for two-host federation. Absent in pre-Bunshin logs |
 
 `thermal_*` are *surface* temps (the IR camera); `air_temp_c`/`humidity_pct`/`co2_ppm`
@@ -86,6 +89,15 @@ recent strike and the running total, not an instantaneous reading. They are **ap
 interrupt-source register every loop (no IRQ pin wired); a validated strike also notifies the
 live **Lightning** characteristic (below). Blank when the AS3935 is absent.
 
+`pm1_0_ugm3` / `pm2_5_ugm3` / `pm10_ugm3` are added by **Enmu (煙霧)**
+(`specs/zokyo/enmu.md`) — a **PMSA003I** laser particulate counter direct on the main I²C bus
+at `0x12` (no mux). Unlike Enrai these are ordinary periodic scalars: three mass
+concentrations in µg/m³, sampled like any other air channel. They report the sensor's
+**ambient** (`_env`) values rather than the standard-particle (`_standard`) set — the
+atmospheric figures, which is what an on-body reading means. Like Enrai's, they are
+**appended before `board`** (which stays the terminal Bunshin discriminator), so pre-Enmu
+logs still parse and name-keyed consumers are unaffected. Blank when the PMSA003I is absent.
+
 Serial output modes (toggle live by sending a byte): `h` human · `c` CSV · `b` both
 (default; the logger requests `b`). Onboard-flash control bytes: `L` list · `P` dump · `E` erase.
 
@@ -109,6 +121,7 @@ and **Rear Depth Grid**, which carry packed **binary** payloads (see
 | Climate | `abcdba98-ab12-ab12-ab12-abcdef123456` | `23.0C 41%RH 750ppm` |
 | Environment | `abcdc0de-ab12-ab12-ab12-abcdef123456` | `1007.2hPa 84200ohm 22.8C 39%RH` |
 | Hokan | `abcdf007-ab12-ab12-ab12-abcdef123456` | `1240 98.5 112` (cumulative `steps` · `heading_deg` · `cadence` steps/min) |
+| Particulate | `abcdd057-ab12-ab12-ab12-abcdef123456` | `PM1.0:12 PM2.5:34 PM10:56 ug/m3` (**Enmu** — the three mass concentrations; `d057` = "dust") |
 | Lightning | `abcda535-ab12-ab12-ab12-abcdef123456` | `km=1 e=227467 n=8` (last strike distance km · raw energy · cumulative count) |
 | Lightning Control | `abcda53c-ab12-ab12-ab12-abcdef123456` | **WRITE** a token → applies AS3935 tuning; notifies `gain=out spike=2 wdog=1 tune=0` (see below) |
 | Thermal Grid | `abcd7890-ab12-ab12-ab12-abcdef123456` | chunked **binary** 32×24 heat grid (see below) |
@@ -229,18 +242,21 @@ warms up ~5 s and updates every ~5 s; Thermal needs the MLX90640 attached; Hokan
 differently by design (see `android/`):
 
 - **Operator** (`com.saboteur.shintaioperator`, the phone field console) subscribes to
-  the **ten string** characteristics, Environment, Hokan and Lightning included — the complete numeric readout —
+  the **eleven string** characteristics, Environment, Hokan, Lightning and Particulate included — the
+  complete numeric readout —
   **plus Thermal Grid and Rear Depth Grid** (the Metsuke heat panel + the Zanshin rear depth panel).
-  Twelve channels: the full-fidelity console. It renders the full Enrai readout (distance · energy ·
-  count) and flashes on each new strike.
-- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **all ten string
-  channels plus Thermal Grid and Rear Depth Grid** (twelve, same as Operator), but treats **Environment** (`abcdc0de`,
+  Thirteen channels: the full-fidelity console. It renders the full Enrai readout (distance · energy ·
+  count) and flashes on each new strike, and the full Enmu triad (PM1.0 · PM2.5 · PM10).
+- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **all eleven string
+  channels plus Thermal Grid and Rear Depth Grid** (thirteen, same as Operator), but treats **Environment** (`abcdc0de`,
   BME688 pressure + gas) specially: it takes the channel **only to derive Kyūkaku's smell SPIKE
   badge** from `gas_ohms` (`:core` `Kyukaku.kt`), and does **not** render the raw pressure/VOC
   readout — that full clean/taint/foul readout stays on the phone. The overlay keeps its *displayed*
   surface lean; a transient chemical spike is a heads-up worth the waveguide, the numbers aren't.
   **Lightning** it surfaces lean too: the nearest-strike distance with a flash on the edge — a
-  storm overhead is worth the waveguide.
+  storm overhead is worth the waveguide. **Particulate** gets the same treatment: the HUD shows
+  **PM2.5 alone** — the health-relevant fraction — while the full PM1.0/2.5/10 triad stays on
+  the phone.
 
 Both apps render the Metsuke heat panel (`THERMAL_GRID`) — the one binary channel — from the
 shared `:core` parse + ironbow palette; only the surrounding surface differs (waveguide HUD vs
@@ -283,6 +299,7 @@ precedence order**. This table is the **default**, shared by every consumer (the
 | `thermal_*` + Thermal Grid | **fwd** → aft | Forward-looking thermal |
 | `co2_ppm` / `air_temp_c` / `humidity_pct` / `pressure_hpa` / `gas_ohms` | **aft** → fwd | Air chem rides the pack |
 | `lightning_*` + Lightning (Enrai) | **aft** → fwd | Ambient storm sense; rides the pack with air chem (direction-agnostic) |
+| `pm*_ugm3` + Particulate (Enmu) | **aft** → fwd | Air chem rides the pack; the air you breathe is direction-agnostic |
 | `gps_fix` / `lat` / `lon` / `alt_m` / `speed_kmh` / `sats` | **fwd** → aft (fix-gated) | A pod with no fix supplies nothing — but it still *notifies* `no fix sats=N`, so consumers must gate on the payload, not on silence |
 | `steps` (Hokan) | **aft** → fwd | Torso pedometer beats head-bob |
 

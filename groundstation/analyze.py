@@ -42,7 +42,8 @@ AUTHORITY = [
     (["heading_deg", "cardinal"], ["fwd", "aft"]),
     (["accel_x", "accel_y", "accel_z"], ["fwd", "aft"]),
     (["thermal_min", "thermal_ctr", "thermal_max", "thermal_mean", "hotspot_delta"], ["fwd", "aft"]),
-    (["co2_ppm", "air_temp_c", "humidity_pct", "pressure_hpa", "gas_ohms"], ["aft", "fwd"]),
+    (["co2_ppm", "air_temp_c", "humidity_pct", "pressure_hpa", "gas_ohms",
+      "pm1_0_ugm3", "pm2_5_ugm3", "pm10_ugm3"], ["aft", "fwd"]),   # + Enmu particulate
     (["gps_fix", "lat", "lon", "alt_m", "speed_kmh", "sats"], ["fwd", "aft"]),
     (["steps"], ["aft", "fwd"]),
 ]
@@ -214,7 +215,10 @@ def main():
               f"(climb {fix['alt_m'].max()-fix['alt_m'].min():.0f} m)")
     for col, unit in [("co2_ppm", "ppm"), ("air_temp_c", "°C"),
                       ("humidity_pct", "%RH"), ("thermal_max", "°C surface"),
-                      ("hotspot_delta", "°C")]:
+                      ("hotspot_delta", "°C"),
+                      ("pm2_5_ugm3", "µg/m³ PM2.5"), ("pm10_ugm3", "µg/m³ PM10")]:  # Enmu
+        if col not in combined.columns:      # e.g. pm* only in Enmu-era logs — skip cleanly
+            continue
         s = pd.to_numeric(combined[col], errors="coerce").dropna()
         if len(s):
             print(f"  {col}: {s.min():.1f}–{s.max():.1f} {unit} (median {s.median():.1f})")

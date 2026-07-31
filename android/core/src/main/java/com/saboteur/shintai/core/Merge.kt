@@ -21,7 +21,9 @@ enum class Role { Fwd, Aft }
  * the same pod together (e.g. [Distance] carries the packed text, the parsed arcs, and
  * the alert latch; [Environment] carries the raw readout and its derived Kyūkaku state).
  */
-enum class Channel { Distance, Heading, Accel, Thermal, Climate, Environment, Gps, Hokan, Lightning }
+enum class Channel {
+    Distance, Heading, Accel, Thermal, Climate, Environment, Gps, Hokan, Lightning, Particulate
+}
 
 /** Per-channel precedence order, highest-priority pod first. */
 typealias Precedence = Map<Channel, List<Role>>
@@ -41,6 +43,7 @@ val DEFAULT_PRECEDENCE: Precedence = mapOf(
     Channel.Gps to listOf(Role.Fwd, Role.Aft),           // fix-gated (a no-fix pod supplies nothing)
     Channel.Hokan to listOf(Role.Aft, Role.Fwd),         // torso pedometer beats head-bob
     Channel.Lightning to listOf(Role.Aft, Role.Fwd),     // ambient storm sense rides the pack
+    Channel.Particulate to listOf(Role.Aft, Role.Fwd),   // Enmu: the air you breathe is direction-agnostic
 )
 
 /** The blank sentinel a string channel carries until its sensor supplies a value. */
@@ -66,6 +69,7 @@ private fun ShintaiReadings.supplies(ch: Channel): Boolean = when (ch) {
     Channel.Gps -> gps != BLANK && !gps.startsWith(GPS_NO_FIX_PREFIX)
     Channel.Hokan -> hokan != null
     Channel.Lightning -> lightning.hasStrike
+    Channel.Particulate -> particulate != BLANK
 }
 
 /** The channels this pod currently supplies a valid value for. The Operator uses this
@@ -126,6 +130,7 @@ fun mergeReadings(
             ?: perPod.values.map { it.gps }.firstOrNull { it != BLANK }
             ?: BLANK,
         climate = winner(Channel.Climate)?.climate ?: BLANK,
+        particulate = winner(Channel.Particulate)?.particulate ?: BLANK,
         thermal = thermal?.thermal ?: BLANK,
         environment = environment?.environment ?: BLANK,
         kyukaku = environment?.kyukaku ?: KyukakuState(),
