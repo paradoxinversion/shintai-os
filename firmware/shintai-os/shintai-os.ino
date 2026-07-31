@@ -1248,6 +1248,11 @@ void applyEnraiConfig() {
 }
 
 void enraiConfigStr(char *buf, size_t n) {
+  // No AS3935 answered at 0x03: say so, rather than reporting the defaults these globals
+  // happen to hold. A plausible config for hardware that isn't there lights the console's
+  // tuning LED and offers knobs that do nothing — the same absent-vs-idle mistake GPS made
+  // before "no fix" and Pane Control avoids with "pane=none".
+  if (!hasEnrai) { snprintf(buf, n, "enrai=none"); return; }
   snprintf(buf, n, "gain=%s spike=%u wdog=%u tune=%u",
            enraiOutdoor ? "out" : "in", enraiSpike, enraiWatchdog, enraiTuneCap);
 }
@@ -1918,6 +1923,12 @@ void loop() {
     // control to exist first. Pushing it each cycle breaks that circle (and a board with
     // no panel keeps reporting "pane=none", so the control correctly stays hidden).
     publishPaneState(true);
+    // Enrai's config rides the cycle for the same reason as the pane: it otherwise only
+    // notifies on a WRITE, and nothing notifies on connect while ShintaiBleClient never
+    // reads — so a console gating its tuning panel on "have I seen a config?" would wait
+    // for a value that needed the panel to exist. A board with no AS3935 keeps reporting
+    // "enrai=none", so that panel correctly stays hidden instead of offering dead knobs.
+    publishEnraiConfig(true);
     // Hokan (歩勘): "steps heading cadence" — the live PDR breadcrumb the apps
     // integrate into a dead-reckoned mini-map. Space-separated so the consumer just
     // splits; heading is the same value reported to the Heading char (0 if no mag).

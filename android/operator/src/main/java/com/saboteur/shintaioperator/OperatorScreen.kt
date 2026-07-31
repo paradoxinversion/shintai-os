@@ -287,7 +287,13 @@ private fun Console(
     // console has one control zone instead of two separated by a readout.
 
     // Enrai AS3935 tuning — writes tokens to the board over the Lightning Control char.
-    LightningTuningPanel(r.lightningConfig, vm::sendLightningCommand)
+    // Shown only once a board reports a real config: a rig with nothing at 0x03 sends
+    // "enrai=none", so the knobs don't appear for a sensor that isn't there. Safe to gate
+    // now that the config rides the telemetry cycle — when it only notified on a write,
+    // hiding the panel would have hidden the very control needed to produce one.
+    if (r.lightningConfig.known) {
+        LightningTuningPanel(r.lightningConfig, vm::sendLightningCommand)
+    }
 
     // OLED PANE — page the board's tertiary panel from the console, the twin of the
     // on-body APDS swipe. Shown only once a board has reported a pane: a rig with no

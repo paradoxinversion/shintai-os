@@ -337,8 +337,11 @@ data class PaneState(
 
 /**
  * Enrai's AS3935 tuning, from the writable Lightning Control characteristic
- * (specs/zokyo/enrai.md). The app drives its tuning UI from this and writes tokens back;
- * [known] is false until the board's first config notify arrives.
+ * (specs/zokyo/enrai.md). The app drives its tuning UI from this and writes tokens back.
+ *
+ * [known] is false until the board reports a real config — which also covers the
+ * no-sensor case: a board with nothing at 0x03 reports `enrai=none`, so the console hides
+ * the tuning panel rather than offering knobs that drive nothing.
  */
 data class LightningConfig(
     val outdoor: Boolean = false,   // AFE gain: false = INDOOR (high), true = OUTDOOR (lower)
@@ -348,8 +351,15 @@ data class LightningConfig(
     val known: Boolean = false,     // a config notify has been seen
 ) {
     companion object {
-        /** Parse the board's config payload, e.g. "gain=out spike=2 wdog=1 tune=0". */
+        /** The payload a board with no AS3935 reports — an explicit absence, not a config. */
+        private const val ABSENT = "enrai=none"
+
+        /** Parse the board's config payload, e.g. "gain=out spike=2 wdog=1 tune=0".
+         *  [ABSENT] and anything unparseable yield a default with `known = false`. */
         fun parse(value: String): LightningConfig {
+            // Checked explicitly rather than left to the gain regex failing to match, so
+            // the absent case is intentional behaviour and not an accident of the pattern.
+            if (value.startsWith(ABSENT)) return LightningConfig()
             fun intOf(k: String, d: Int) =
                 Regex("""$k=(\d+)""").find(value)?.groupValues?.get(1)?.toIntOrNull() ?: d
             val gain = Regex("""gain=(\w+)""").find(value)?.groupValues?.get(1)
