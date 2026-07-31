@@ -238,9 +238,14 @@ firmware's serial knobs (`o`/`s`/`S`/`w`/`W`/`y`/`Y`/`x`).
 | `clear` | clear the storm statistics (reset the distance estimate) |
 
 **Read / notify payload** — the current config as space-separated `key=value`:
-`gain=out spike=2 wdog=1 tune=0` (`gain` ∈ `in`/`out`). Notified on connect, on read, and after
-every applied write. Present only while the AS3935 is; an unknown token is ignored. CCCD gotcha
-still applies (the `8000` above) for the notify half.
+`gain=out spike=2 wdog=1 tune=0` (`gain` ∈ `in`/`out`). **Readable** at any time (the value is
+seeded at boot and kept current), and **notified after every applied write** — but *not* on connect:
+nothing pushes it when a central links, so a consumer that only subscribes sees nothing until the
+first write lands. (The Android client never issues a GATT read, so in practice its config stays
+unknown until the operator touches a control — which is why the tuning panel is always shown and
+uses `known` only to dim its LED, rather than gating itself on having a value.) Present only while
+the AS3935 is; an unknown token is ignored. CCCD gotcha still applies (the `8000` above) for the
+notify half.
 
 The **Hokan** characteristic is added by `specs/zokyo/hokan.md` — the **second BLE-half
 addition** (after Metsuke's binary grid) and the only *string* characteristic beyond the
@@ -273,13 +278,26 @@ A central **writes** one token:
 | `next` / `prev` | step the carousel one pane, wrapping |
 | `home` · `nav` · `env` · `prox` · `therm` | jump straight to that pane |
 
-It **notifies** the resulting state as `pane=<n>/<count> <NAME>` (e.g. `pane=2/5 NAV`), on connect,
-on read, and after every change. Crucially the notify also fires when the **gesture** pages the
-pane, not only on a write — the board is the single source of truth for which pane is showing, so a
-console that only tracked its own writes would drift out of sync the moment someone swiped. An
-unknown token is ignored. Present regardless of the OLED (the characteristic is always built), but
-a write is a no-op when no panel answered at `0x3D` — the same present-gating Lightning Control
-uses for a missing AS3935.
+It **notifies** the resulting state as `pane=<n>/<count> <NAME>` (e.g. `pane=2/5 NAV`) after every
+change — including when the **gesture** pages the pane, not only on a write. The board is the single
+source of truth for which pane is showing, so a console that only tracked its own writes would drift
+out of sync the moment someone swiped.
+
+It also notifies **once per telemetry cycle**, like the sensor channels. That is not redundancy: a
+change-only channel gives a central no way to learn the *initial* state — nothing notifies on
+connect, and the Android client subscribes without ever issuing a GATT read — so a console gating
+its paging control on "have I seen a pane?" would wait forever for a value that needed the control
+to exist first.
+
+When **no panel** answered at `0x3D` the payload is `pane=none`, not a pane number: reporting `HOME`
+for a screen that doesn't exist would repeat the mistake the GPS channel used to make. Consumers
+parse `pane=none` as unknown and hide the paging control. The characteristic itself is always built,
+and a write is a no-op without a panel — the same present-gating Lightning Control uses for a
+missing AS3935.
+
+An unknown token is ignored, but the board still re-asserts the true state afterwards: the BLE stack
+stores written bytes into the characteristic, so without that a rejected token would be left sitting
+there and the next read would return the token instead of the pane.
 
 Note this channel is **per-pod**, not merged like a sensor: each pod drives its own panel, and a
 central writing it addresses every pod it is connected to.

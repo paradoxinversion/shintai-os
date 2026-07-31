@@ -57,6 +57,14 @@ class UnitsTest {
     }
 
     @Test
+    fun paneStateTreatsNoPanelAsUnknown() {
+        // "pane=none" is what a board with nothing at 0x3D reports. It must parse as
+        // unknown so the console hides the paging control instead of offering to page
+        // a screen that isn't there.
+        assertEquals(false, PaneState.parse("pane=none").known)
+    }
+
+    @Test
     fun paneStateStaysUnknownOnMalformedOrAbsentPayload() {
         // Unknown is what makes the console hide the pane control on a board with no panel.
         assertEquals(false, PaneState.parse("").known)

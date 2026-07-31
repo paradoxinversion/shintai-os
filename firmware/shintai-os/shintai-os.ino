@@ -1276,6 +1276,10 @@ void applyEnraiCommand(const char *cmd) {
 static const char *PANE_NAMES[PANE_COUNT] = { "HOME", "NAV", "ENV", "PROX", "THERM" };
 
 void paneStateStr(char *buf, size_t n) {
+  // No panel answered at 0x3D: say so, rather than reporting HOME for a screen that
+  // doesn't exist. Consumers parse this as "unknown" and hide the paging control — the
+  // same absent-vs-idle distinction the GPS channel draws with "no fix".
+  if (!oledPresent) { snprintf(buf, n, "pane=none"); return; }
   snprintf(buf, n, "pane=%u/%u %s",
            (unsigned)(oledPage + 1), (unsigned)PANE_COUNT, PANE_NAMES[oledPage]);
 }
@@ -1892,6 +1896,13 @@ void loop() {
       fudaChar->setValue(fudaStr.c_str());
       fudaChar->notify();
     }
+    // Pane state rides the telemetry cycle like every other channel. It would otherwise
+    // only ever notify on a CHANGE, and a central has no way to learn the initial state:
+    // ShintaiBleClient subscribes but never reads, and nothing notifies on connect — so
+    // the console's paging control stayed hidden waiting for a value that needed the
+    // control to exist first. Pushing it each cycle breaks that circle (and a board with
+    // no panel keeps reporting "pane=none", so the control correctly stays hidden).
+    publishPaneState(true);
     // Hokan (歩勘): "steps heading cadence" — the live PDR breadcrumb the apps
     // integrate into a dead-reckoned mini-map. Space-separated so the consumer just
     // splits; heading is the same value reported to the Heading char (0 if no mag).
