@@ -57,6 +57,25 @@ class UnitsTest {
     }
 
     @Test
+    fun lightningConfigParsesARealConfig() {
+        val c = LightningConfig.parse("gain=out spike=3 wdog=2 tune=5")
+        assertEquals(true, c.outdoor)
+        assertEquals(3, c.spike)
+        assertEquals(2, c.watchdog)
+        assertEquals(5, c.tune)
+        assertEquals(true, c.known)
+    }
+
+    @Test
+    fun lightningConfigTreatsNoSensorAsUnknown() {
+        // "enrai=none" is what a board with nothing at 0x03 reports. It must parse as
+        // unknown so the console hides the tuning panel instead of offering dead knobs.
+        assertEquals(false, LightningConfig.parse("enrai=none").known)
+        assertEquals(false, LightningConfig.parse("").known)
+        assertEquals(false, LightningConfig.parse("bogus").known)
+    }
+
+    @Test
     fun paneStateTreatsNoPanelAsUnknown() {
         // "pane=none" is what a board with nothing at 0x3D reports. It must parse as
         // unknown so the console hides the paging control instead of offering to page

@@ -238,14 +238,19 @@ firmware's serial knobs (`o`/`s`/`S`/`w`/`W`/`y`/`Y`/`x`).
 | `clear` | clear the storm statistics (reset the distance estimate) |
 
 **Read / notify payload** — the current config as space-separated `key=value`:
-`gain=out spike=2 wdog=1 tune=0` (`gain` ∈ `in`/`out`). **Readable** at any time (the value is
-seeded at boot and kept current), and **notified after every applied write** — but *not* on connect:
-nothing pushes it when a central links, so a consumer that only subscribes sees nothing until the
-first write lands. (The Android client never issues a GATT read, so in practice its config stays
-unknown until the operator touches a control — which is why the tuning panel is always shown and
-uses `known` only to dim its LED, rather than gating itself on having a value.) Present only while
-the AS3935 is; an unknown token is ignored. CCCD gotcha still applies (the `8000` above) for the
-notify half.
+`gain=out spike=2 wdog=1 tune=0` (`gain` ∈ `in`/`out`). Notified after every applied write **and
+once per telemetry cycle**, like Pane Control — a change-only channel gives a central no way to
+learn the initial config, since nothing notifies on connect and the Android client subscribes
+without ever issuing a GATT read.
+
+When **no AS3935** answered at `0x03` the payload is `enrai=none`, not a config: reporting the
+defaults these globals happen to hold would light the console's tuning LED and offer knobs that
+drive nothing. Consumers parse `enrai=none` as unknown and hide the tuning panel.
+
+An unknown token is ignored, and the board re-asserts the true config afterwards — the BLE stack
+stores written bytes into the characteristic, so without that a rejected token would be left there
+and the next read would return the token instead of the config. CCCD gotcha still applies (the
+`8000` above) for the notify half.
 
 The **Hokan** characteristic is added by `specs/zokyo/hokan.md` — the **second BLE-half
 addition** (after Metsuke's binary grid) and the only *string* characteristic beyond the
