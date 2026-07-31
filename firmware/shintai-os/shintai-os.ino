@@ -264,6 +264,7 @@ uint8_t EnraiBus::depth = 0;
 // serial ('o' gain · 's'/'S' spike · 'x' clear-stats · 'y'/'Y' tune-cap · 'z' recalibrate). One apply path:
 void applyEnraiConfig();                    // push all of the above to the sensor
 void enraiConfigStr(char *buf, size_t n);   // "gain=out spike=2 wdog=1 tune=0"
+void publishEnraiConfig(bool doNotify);     // push true config into the char (+ optional notify)
 void applyEnraiCommand(const char *cmd);    // one control token -> update + apply + notify
 
 // OLED pane paging — the SECOND app→board path, and the first driving an OUTPUT surface.
@@ -578,6 +579,13 @@ class EnraiCtrlCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *c) override {
     String v = c->getValue();
     if (v.length() > 0) applyEnraiCommand(v.c_str());
+    // Re-assert the true config after EVERY write. applyEnraiCommand has two early
+    // returns — no AS3935, and an unknown token — and the stack has already stored the
+    // written bytes in the characteristic by now, so without this a rejected token is
+    // left there and the next read returns "bogus" instead of the config. That parses
+    // to known=false, which dims the tuning panel's LED. No notify: applyEnraiCommand
+    // already sent one if anything actually changed.
+    publishEnraiConfig(false);
   }
 };
 
@@ -1264,10 +1272,17 @@ void applyEnraiCommand(const char *cmd) {
   applyEnraiConfig();
   char cfg[48]; enraiConfigStr(cfg, sizeof(cfg));
   Serial.printf("[enrai] %s\n", cfg);
-  if (lightningCtrlChar) {
-    lightningCtrlChar->setValue(cfg);
-    if (deviceConnected) lightningCtrlChar->notify();
-  }
+  publishEnraiConfig(true);
+}
+
+// Push the true AS3935 config into the characteristic. The value must ALWAYS be the
+// board's config, never the token a central wrote — the BLE stack stores written bytes
+// automatically, so every write path has to overwrite them or a read hands the token back.
+void publishEnraiConfig(bool doNotify) {
+  if (!lightningCtrlChar) return;
+  char cfg[48]; enraiConfigStr(cfg, sizeof(cfg));
+  lightningCtrlChar->setValue(cfg);
+  if (doNotify && deviceConnected) lightningCtrlChar->notify();
 }
 
 // ── OLED pane paging ────────────────────────────────────────────────────────────────
