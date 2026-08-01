@@ -46,8 +46,8 @@ import com.saboteur.shintai.core.Smell
 import com.saboteur.shintai.core.Units
 import com.saboteur.shintai.core.distanceParts
 import com.saboteur.shintai.core.label
-import com.saboteur.shintai.core.formatClimate
-import com.saboteur.shintai.core.formatEnvironment
+import com.saboteur.shintai.core.AirReadout
+
 import com.saboteur.shintai.core.formatFuda
 import com.saboteur.shintai.core.formatGps
 import com.saboteur.shintai.core.formatTemp
@@ -145,7 +145,8 @@ private fun TopBar(r: ShintaiReadings, rec: RecordingUi) {
  *  environment's gas_ohms; violet is its identity, distinct from the CO₂ green→red ramp. */
 @Composable
 private fun AirPanel(r: ShintaiReadings, units: Units) {
-    val ppm = co2Ppm(r.climate)
+    val air = AirReadout.resolve(r.climate, r.environment)
+    val ppm = air.co2Ppm
     Panel("Air") {
         ReadoutRow("CO₂", ppm?.let { "$it" } ?: "—", "ppm", valueColor = co2Color(ppm))
         Spacer(Modifier.height(6.dp))
@@ -156,8 +157,17 @@ private fun AirPanel(r: ShintaiReadings, units: Units) {
             alarm = Bands.CO2_ALARM_PPM.toFloat(),
         )
         Spacer(Modifier.height(8.dp))
-        ReadoutRow("Climate", formatClimate(r.climate, units))
-        ReadoutRow("Environment", formatEnvironment(r.environment, units))
+        // Quantity-first, not source-first. CONTRACT.md makes air temp / humidity SHARED
+        // slots (BME688 → SCD-40), which the CSV honours; rendering the raw Climate and
+        // Environment payloads instead showed an empty Climate row on a BME-only board
+        // while the same temperature and humidity sat inside the Environment blob. These
+        // rows mirror the CSV columns, so what the console shows and what gets logged
+        // finally agree. AirReadout owns the precedence rule for both apps.
+        val (tVal, tUnit) = air.tempParts(units)
+        ReadoutRow("Temperature", tVal, tUnit)
+        ReadoutRow("Humidity", air.humidityPct?.let { "%.0f".format(it) } ?: "—", "%RH")
+        ReadoutRow("Pressure", air.pressureHpa?.let { "%.1f".format(it) } ?: "—", "hPa")
+        ReadoutRow("Gas", air.gasKohm?.let { "%.1f".format(it) } ?: "—", "kΩ")
         // Enmu: particulate (µg/m³ — unit-agnostic, rendered raw). The full PM1.0/2.5/10
         // triad on the console; the glasses show only the health-relevant PM2.5.
         ReadoutRow("Particulate", r.particulate)
