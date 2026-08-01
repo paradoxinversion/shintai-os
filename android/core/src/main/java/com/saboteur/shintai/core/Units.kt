@@ -5,9 +5,9 @@ import java.util.Locale
 /** Display unit system. The board always reports metric; we convert at render. */
 enum class Units { METRIC, IMPERIAL }
 
-private fun f1(x: Double) = String.format(Locale.US, "%.1f", x)
+internal fun f1(x: Double) = String.format(Locale.US, "%.1f", x)
 private fun f0(x: Double) = String.format(Locale.US, "%.0f", x)
-private fun cToF(c: Double) = c * 9.0 / 5.0 + 32.0
+internal fun cToF(c: Double) = c * 9.0 / 5.0 + 32.0
 
 /** Climate raw: "23.4C 21%RH 908ppm" -> the "<n>C" temp becomes Fahrenheit. */
 fun formatClimate(raw: String, u: Units): String =
