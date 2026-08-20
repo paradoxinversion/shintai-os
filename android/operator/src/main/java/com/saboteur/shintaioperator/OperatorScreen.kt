@@ -52,6 +52,8 @@ import com.saboteur.shintai.core.formatFuda
 import com.saboteur.shintai.core.formatGps
 import com.saboteur.shintai.core.formatTemp
 import com.saboteur.shintai.core.formatThermal
+import com.saboteur.shintai.core.parseRadarPeaks
+import com.saboteur.shintaioperator.ui.AScope
 import com.saboteur.shintaioperator.ui.AlertBanner
 import com.saboteur.shintaioperator.ui.ConsoleButton
 import com.saboteur.shintaioperator.ui.DepthField
@@ -60,6 +62,7 @@ import com.saboteur.shintaioperator.ui.HokanMap
 import com.saboteur.shintaioperator.ui.LogTerminal
 import com.saboteur.shintaioperator.ui.Panel
 import com.saboteur.shintaioperator.ui.ReadoutRow
+import com.saboteur.shintaioperator.ui.ScopeBlip
 import com.saboteur.shintaioperator.ui.SegmentBar
 import com.saboteur.shintaioperator.ui.Sparkline
 import com.saboteur.shintaioperator.ui.StatusLed
@@ -139,6 +142,26 @@ private fun TopBar(r: ShintaiReadings, rec: RecordingUi) {
     }
 }
 
+/** DIAGNOSTIC TEMP — Hitokage's multi-peak A-scope panel (specs/zokyo/hitokage.md HK-4),
+ *  not part of CONTRACT.md. `HITOKAGE_DIAG_RANGE_END_MM` (5000mm) is the firmware's own
+ *  configured span — kept in sync by hand since this channel isn't in the contract to
+ *  check against. The raw payload stays visible below the scope for bench debugging.
+ *  Strip alongside the rest of "DIAGNOSTIC TEMP". */
+private const val DIAG_RADAR_MAX_RANGE_MM = 5000
+
+@Composable
+private fun RadarDiagPanel(presenceDiag: String, units: Units) {
+    // distColor is the SAME near=red/far=green language TrackerGauge's Proximity panel
+    // uses — reusing it (rather than a scope-local palette) means a blip's colour needs
+    // no separate legend to read.
+    val blips = parseRadarPeaks(presenceDiag).map { ScopeBlip(it.distanceMm, it.strengthRaw, distColor(it.distanceMm)) }
+    Panel("Radar (diag)", ledColor = T.Amber) {
+        AScope(blips, DIAG_RADAR_MAX_RANGE_MM, units, modifier = Modifier.fillMaxWidth().height(130.dp))
+        Spacer(Modifier.height(6.dp))
+        ReadoutRow("Peaks", presenceDiag)
+    }
+}
+
 /** AIR — the climate + environment cluster plus Kyūkaku's derived smell. ENVIRONMENT
  *  is the channel the glasses take only for the smell spike; the Operator shows it in
  *  full. Kyūkaku (no BLE channel of its own — see :core Kyukaku.kt) is folded from the
@@ -171,6 +194,9 @@ private fun AirPanel(r: ShintaiReadings, units: Units) {
         // Enmu: particulate (µg/m³ — unit-agnostic, rendered raw). The full PM1.0/2.5/10
         // triad on the console; the glasses show only the health-relevant PM2.5.
         ReadoutRow("Particulate", r.particulate)
+        // Hitokage: radar presence/range, rendered raw — no derived/lean split, both apps
+        // show the same payload (there's no PM2.5-style "one number that matters" here).
+        ReadoutRow("Presence", r.presence)
         ReadoutRow(
             "Nose", r.kyukaku.smell.label.uppercase(), "r ${"%.2f".format(r.kyukaku.ratio)}",
             valueColor = when (r.kyukaku.smell) {
@@ -267,6 +293,13 @@ private fun Console(
             DepthField(grid)
         }
     }
+
+    // RADAR (diag) — DIAGNOSTIC TEMP, Hitokage's multi-peak A-scope (specs/zokyo/hitokage.md
+    // HK-4), not in CONTRACT.md. Present only once the board has actually notified
+    // presenceDiag (parses to a non-empty peak list is NOT the gate — "n=0, no peaks in
+    // range" is a valid live reading; gate on the raw payload having arrived at all, same
+    // idiom as thermalGrid/rearDepthGrid above). Strip alongside the rest of the tag.
+    if (r.presenceDiag != "—") RadarDiagPanel(r.presenceDiag, units)
 
     // AIR — climate + environment + Kyūkaku's derived smell. Its own composable so
     // Console stays within the method-length/complexity budget (same as NavigationPanel).
@@ -390,6 +423,7 @@ private fun channelLabel(ch: Channel): String = when (ch) {
     Channel.Lightning -> "Lightning"
     Channel.Particulate -> "Particulate"
     Channel.Fuda -> "NFC Tag"
+    Channel.Presence -> "Presence"
 }
 
 /** The board's OLED pane — the console twin of the on-body APDS swipe, over the writable

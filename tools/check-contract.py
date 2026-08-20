@@ -45,6 +45,7 @@ CHAR_TO_KOTLIN = {
     "Lightning Control": "LIGHTNING_CTRL",
     "Particulate": "PARTICULATE",
     "Fuda": "FUDA",
+    "Presence": "PRESENCE",
     "Pane Control": "PANE_CTRL",
     "Thermal Grid": "THERMAL_GRID",
 }

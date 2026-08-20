@@ -69,6 +69,7 @@ class TelemetryRecorder(private val dir: File) {
             r.lightning.km.toString(), r.lightning.energy.toString(), r.lightning.strikes.toString(),
             r.particulate,                       // Enmu: the raw "PM1.0:.. PM2.5:.. PM10:.." triad
             r.fuda,                              // Fuda: the raw "UID:<hex> <type>" tag readout
+            r.presence,                          // Hitokage: the raw "present=.. dist=.." readout
             role?.name?.lowercase().orEmpty(),   // board: fwd / aft — stays terminal
         )
         try {
@@ -100,6 +101,6 @@ class TelemetryRecorder(private val dir: File) {
         private const val TAG = "ShintaiRec"
         const val HEADER =
             "wall_ms,distance_l,distance_r,alert,heading,accel,gps,climate,thermal,environment," +
-                "lightning_km,lightning_energy,lightning_strikes,particulate,fuda,board"
+                "lightning_km,lightning_energy,lightning_strikes,particulate,fuda,presence,board"
     }
 }

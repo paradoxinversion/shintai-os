@@ -31,10 +31,12 @@ profiles:
       - SparkFun AS3935 Lightning Detector Arduino Library (1.4.9)   # Enrai lightning sense (specs/zokyo/enrai.md); AS3935 @ 0x03, polled
       - Adafruit PM25 AQI Sensor (1.1.0)    # Enmu particulate sense (specs/zokyo/enmu.md); PMSA003I @ 0x12, plain bus
       - Adafruit PN532 (1.3.4)              # Fuda identity sense (specs/zokyo/fuda.md); PN532 @ 0x24 7-bit, plain bus
+      - SparkFun XM125 Arduino Library (2.0.0)   # Hitokage presence sense (specs/zokyo/hitokage.md); XM125 @ 0x52, plain bus
       # transitive deps (profiles use an isolated lib set — must be explicit)
       - Sensirion Core (0.7.3)
       - Adafruit BusIO (1.17.4)
       - Adafruit Unified Sensor (1.1.15)
       - Adafruit GFX Library (1.12.6)   # SH110X renders through Adafruit_GFX
+      - SparkFun Toolkit (1.2.0)        # SparkFun XM125 Arduino Library's transitive dep
 
 default_profile: qtpy

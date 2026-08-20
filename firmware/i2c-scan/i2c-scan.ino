@@ -32,6 +32,7 @@ const KnownDev KNOWN[] = {
   {0x3F, "Andon LED Matrix   [output] (Modulino ABX00152, readdressed off its 0x39 default)"},
   {0x3D, "OLED (SSD1306/SH1106) [phase1, output] (128x64 default; alt 0x3C)"},
   {0x40, "INA260 power       [phase1]"},
+  {0x52, "XM125 radar        [Hitokage, presence detector fw]"},
   {0x5A, "DRV2605L haptic    [known-good sanity check]"},
   {0x62, "SCD-40 climate     [spine]"},
   {0x6A, "LSM6DSOX IMU       [spine] (alt 0x6B)"},
