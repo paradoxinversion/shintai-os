@@ -447,6 +447,9 @@ private fun SupportingReadouts(r: ShintaiReadings, units: Units) {
     // Fuda: the tag UID alone — the identity is the heads-up, the RF family is console
     // detail. Event-driven, so this holds the last scan rather than a live value.
     ReadoutRow("TAG", formatFuda(r.fuda).first)
+    // Hitokage: the same raw readout as the console — no raw-vs-derived split to lean
+    // out of (unlike PM2.5/UID, there's no "one number that matters" subset here).
+    ReadoutRow("RADAR", r.presence)
     // Hokan: cumulative steps + cadence (the pedometer readout). Always shown so the
     // row layout is stable; the PDR mini-map below appears only once there's a walked path.
     ReadoutRow("STEPS", r.hokan?.let { "${it.steps}  ${it.cadence}/min" } ?: "—")

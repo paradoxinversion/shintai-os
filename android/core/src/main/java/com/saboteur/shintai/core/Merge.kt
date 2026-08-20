@@ -23,7 +23,7 @@ enum class Role { Fwd, Aft }
  */
 enum class Channel {
     Distance, Heading, Accel, Thermal, Climate, Environment, Gps, Hokan, Lightning, Particulate,
-    Fuda,
+    Fuda, Presence,
 }
 
 /** Per-channel precedence order, highest-priority pod first. */
@@ -46,6 +46,7 @@ val DEFAULT_PRECEDENCE: Precedence = mapOf(
     Channel.Lightning to listOf(Role.Aft, Role.Fwd),     // ambient storm sense rides the pack
     Channel.Particulate to listOf(Role.Aft, Role.Fwd),   // Enmu: the air you breathe is direction-agnostic
     Channel.Fuda to listOf(Role.Fwd, Role.Aft),          // Fuda: you scan the tag you're facing — head-side
+    Channel.Presence to listOf(Role.Fwd, Role.Aft),      // Hitokage: forward presence rides the head
 )
 
 /** The blank sentinel a string channel carries until its sensor supplies a value. */
@@ -73,6 +74,7 @@ private fun ShintaiReadings.supplies(ch: Channel): Boolean = when (ch) {
     Channel.Lightning -> lightning.hasStrike
     Channel.Particulate -> particulate != BLANK
     Channel.Fuda -> fuda != BLANK
+    Channel.Presence -> presence != BLANK
 }
 
 /** The channels this pod currently supplies a valid value for. The Operator uses this
@@ -114,6 +116,24 @@ private fun ConnectionState.rank(): Int = when (this) {
 private fun pickPane(perPod: Map<Role, ShintaiReadings>): PaneState =
     perPod.values.firstOrNull { it.pane.known }?.pane ?: PaneState()
 
+/**
+ * GPS: a fix beats everything; with no fix anywhere, fall back to any pod's no-fix report
+ * so the UI shows "searching" rather than the dash that means "no receiver at all".
+ * Split out of [mergeReadings] for the same complexity-ceiling reason as [pickPane].
+ */
+private fun pickGps(perPod: Map<Role, ShintaiReadings>, winner: ShintaiReadings?): String =
+    winner?.gps
+        ?: perPod.values.map { it.gps }.firstOrNull { it != BLANK }
+        ?: BLANK
+
+/**
+ * DIAGNOSTIC TEMP — first pod supplying a non-blank [sel] value, no precedence table
+ * entry needed (single-pod bench use). Split out for the same complexity-ceiling
+ * reason as [pickPane]/[pickGps]. Strip alongside ShintaiGatt.PRESENCE_DIAG.
+ */
+private fun pickFirst(perPod: Map<Role, ShintaiReadings>, sel: (ShintaiReadings) -> String): String =
+    perPod.values.map(sel).firstOrNull { it != BLANK } ?: BLANK
+
 fun mergeReadings(
     perPod: Map<Role, ShintaiReadings>,
     precedence: Precedence = DEFAULT_PRECEDENCE,
@@ -138,14 +158,12 @@ fun mergeReadings(
         alertActive = distance?.alertActive ?: false,
         heading = winner(Channel.Heading)?.heading ?: BLANK,
         accel = winner(Channel.Accel)?.accel ?: BLANK,
-        // A fix beats everything; with no fix anywhere, fall back to any pod's no-fix report
-        // so the UI shows "searching" rather than the dash that means "no receiver at all".
-        gps = winner(Channel.Gps)?.gps
-            ?: perPod.values.map { it.gps }.firstOrNull { it != BLANK }
-            ?: BLANK,
+        gps = pickGps(perPod, winner(Channel.Gps)),
         climate = winner(Channel.Climate)?.climate ?: BLANK,
         particulate = winner(Channel.Particulate)?.particulate ?: BLANK,
         fuda = winner(Channel.Fuda)?.fuda ?: BLANK,
+        presence = winner(Channel.Presence)?.presence ?: BLANK,
+        presenceDiag = pickFirst(perPod) { it.presenceDiag },
         pane = pickPane(perPod),
         thermal = thermal?.thermal ?: BLANK,
         environment = environment?.environment ?: BLANK,

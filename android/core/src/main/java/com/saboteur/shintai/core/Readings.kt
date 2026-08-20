@@ -26,6 +26,8 @@ data class ShintaiReadings(
     val environment: String = "—",     // e.g. "1007.2hPa 84200ohm 22.8C 39%RH" (BME688)
     val particulate: String = "—",     // e.g. "PM1.0:12 PM2.5:34 PM10:56 ug/m3" (Enmu, PMSA003I)
     val fuda: String = "—",            // e.g. "UID:04A1B2C3 ISO14443A" (Fuda, PN532) — event-driven
+    val presence: String = "—",        // e.g. "present=1 dist=260mm" (Hitokage, XM125 radar)
+    val presenceDiag: String = "—",    // DIAGNOSTIC TEMP — "n=2 0:2230/-2774 1:432/-17711" (not in CONTRACT.md)
     val pane: PaneState = PaneState(),  // the board's OLED pane (Pane Control char) — per-pod, not merged
     val kyukaku: KyukakuState = KyukakuState(),  // Kyūkaku's smell state, derived from environment's gas_ohms
     val thermalGrid: ThermalGrid? = null,  // Metsuke's 32×24 heat grid, null until the first frame
@@ -375,6 +377,27 @@ data class LightningConfig(
 }
 
 /**
+ * Parse the packed dual-arc Distance payload "L:1234 R:1180 mm" (per-arc "--" = no
+ * target). The nearer arc drives the single-value proximity UI + alert latch, so an
+ * app that shows one distance still sees the closest object. See CONTRACT.md.
+ * Split out of [fold] to keep that function's `when` under detekt's complexity ceiling.
+ */
+private fun ShintaiReadings.foldDistance(value: String): ShintaiReadings {
+    fun arc(tag: String) =
+        Regex("""$tag:(\d+)""").find(value)?.groupValues?.get(1)?.toIntOrNull()
+    val l = arc("L")
+    val r = arc("R")
+    val near = listOfNotNull(l, r).minOrNull()
+    return copy(
+        distanceText = value,
+        distanceMm = near,
+        distanceLMm = l,
+        distanceRMm = r,
+        alertActive = if (near != null && near > NEAR_MM) false else alertActive,
+    )
+}
+
+/**
  * Fold one characteristic notification into a new snapshot. Parsing lives here,
  * not in the BLE layer, so [ShintaiBleClient] stays a dumb transport and BOTH
  * view models share one source of truth for how a payload becomes state.
@@ -386,23 +409,7 @@ data class LightningConfig(
 fun ShintaiReadings.fold(uuid: UUID, value: String): ShintaiReadings {
     val base = copy(packets = packets + 1) // heartbeat: every notification counts
     return when (uuid) {
-        ShintaiGatt.DISTANCE -> {
-            // Packed dual-arc payload "L:1234 R:1180 mm" (per-arc "--" = no target).
-            // The nearer arc drives the single-value proximity UI + alert latch, so
-            // an app that shows one distance still sees the closest object. See CONTRACT.md.
-            fun arc(tag: String) =
-                Regex("""$tag:(\d+)""").find(value)?.groupValues?.get(1)?.toIntOrNull()
-            val l = arc("L")
-            val r = arc("R")
-            val near = listOfNotNull(l, r).minOrNull()
-            base.copy(
-                distanceText = value,
-                distanceMm = near,
-                distanceLMm = l,
-                distanceRMm = r,
-                alertActive = if (near != null && near > NEAR_MM) false else base.alertActive,
-            )
-        }
+        ShintaiGatt.DISTANCE -> base.foldDistance(value)
         ShintaiGatt.ALERT -> base.copy(alertActive = true)
         ShintaiGatt.HEADING -> base.copy(heading = value)
         ShintaiGatt.ACCEL -> base.copy(accel = value)
@@ -419,6 +426,10 @@ fun ShintaiReadings.fold(uuid: UUID, value: String): ShintaiReadings {
         // Fuda: the last tag read. Event-driven, so this value only ever arrives on a scan;
         // the last tag persists until the next notify.
         ShintaiGatt.FUDA -> base.copy(fuda = value)
+        // Hitokage: periodic radar readout, stored raw for display like Particulate.
+        ShintaiGatt.PRESENCE -> base.copy(presence = value)
+        // DIAGNOSTIC TEMP — see ShintaiGatt.PRESENCE_DIAG.
+        ShintaiGatt.PRESENCE_DIAG -> base.copy(presenceDiag = value)
         ShintaiGatt.LIGHTNING_CTRL -> base.copy(lightningConfig = LightningConfig.parse(value))
         // Pane Control notifies on a console write AND on an on-body swipe, so this is the
         // board telling us what it's showing — never an echo of what we asked for.

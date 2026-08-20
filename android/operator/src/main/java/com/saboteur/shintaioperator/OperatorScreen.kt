@@ -171,6 +171,12 @@ private fun AirPanel(r: ShintaiReadings, units: Units) {
         // Enmu: particulate (µg/m³ — unit-agnostic, rendered raw). The full PM1.0/2.5/10
         // triad on the console; the glasses show only the health-relevant PM2.5.
         ReadoutRow("Particulate", r.particulate)
+        // Hitokage: radar presence/range, rendered raw — no derived/lean split, both apps
+        // show the same payload (there's no PM2.5-style "one number that matters" here).
+        ReadoutRow("Presence", r.presence)
+        // DIAGNOSTIC TEMP — XM125 multi-peak investigation (specs/zokyo/hitokage.md
+        // HK-4), not in CONTRACT.md. Strip alongside the rest of "DIAGNOSTIC TEMP".
+        ReadoutRow("Peaks (diag)", r.presenceDiag)
         ReadoutRow(
             "Nose", r.kyukaku.smell.label.uppercase(), "r ${"%.2f".format(r.kyukaku.ratio)}",
             valueColor = when (r.kyukaku.smell) {
@@ -390,6 +396,7 @@ private fun channelLabel(ch: Channel): String = when (ch) {
     Channel.Lightning -> "Lightning"
     Channel.Particulate -> "Particulate"
     Channel.Fuda -> "NFC Tag"
+    Channel.Presence -> "Presence"
 }
 
 /** The board's OLED pane — the console twin of the on-body APDS swipe, over the writable

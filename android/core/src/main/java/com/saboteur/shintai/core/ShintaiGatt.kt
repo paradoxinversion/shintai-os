@@ -53,6 +53,16 @@ object ShintaiGatt {
      *  notifies only when the PN532 actually reads a tag, not on a cycle. See CONTRACT.md. */
     val FUDA: UUID = UUID.fromString("abcdfada-ab12-ab12-ab12-abcdef123456")
 
+    /** Hitokage's radar presence readout: "present=1 dist=260mm" / "present=0 dist=--" (string).
+     *  PERIODIC — notifies every telemetry cycle, like Particulate, not event-driven.
+     *  See CONTRACT.md. */
+    val PRESENCE: UUID = UUID.fromString("abcd0125-ab12-ab12-ab12-abcdef123456")
+
+    /** DIAGNOSTIC TEMP — XM125 distance-mode multi-peak readout, "n=<count> i:mm/strength ..."
+     *  (string). NOT part of CONTRACT.md — a bench-investigation channel for
+     *  specs/zokyo/hitokage.md HK-4 (multi-peak/reflector-geometry). Strip once done. */
+    val PRESENCE_DIAG: UUID = UUID.fromString("abcdd1a6-ab12-ab12-ab12-abcdef123456")
+
     /** The OLED pane's WRITABLE paging control (READ|WRITE|NOTIFY) — the second app→board
      *  path, and the first driving an output surface. Write "next"/"prev" or a pane name
      *  ("home"/"nav"/"env"/"prox"/"therm"); notifies "pane=2/5 NAV". Notifies on an on-body
@@ -81,5 +91,5 @@ object ShintaiGatt {
      *  nothing forces an app to take them all (the Glass HUD skips [ENVIRONMENT]). */
     val ALL: List<UUID> =
         listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT, HOKAN,
-            LIGHTNING, LIGHTNING_CTRL, PARTICULATE, FUDA, PANE_CTRL)
+            LIGHTNING, LIGHTNING_CTRL, PARTICULATE, FUDA, PRESENCE, PANE_CTRL)
 }

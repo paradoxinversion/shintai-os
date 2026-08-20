@@ -166,9 +166,14 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
         log("CONNECT ${role.tag} $address")
         // Operator takes EVERY string channel (ENVIRONMENT included) plus Metsuke's
         // binary thermal grid, on BOTH pods; the merge decides what each channel shows.
+        // PRESENCE_DIAG: DIAGNOSTIC TEMP (specs/zokyo/hitokage.md HK-4), not in
+        // ShintaiGatt.ALL / CONTRACT.md — appended explicitly like the binary grids.
+        // Strip alongside the rest of the "DIAGNOSTIC TEMP" tagged code.
         clients[role] = ShintaiBleClient(
             getApplication(), address,
-            ShintaiGatt.ALL + ShintaiGatt.THERMAL_GRID + ShintaiGatt.REAR_DEPTH_GRID, listenerFor(role),
+            ShintaiGatt.ALL + ShintaiGatt.THERMAL_GRID + ShintaiGatt.REAR_DEPTH_GRID +
+                ShintaiGatt.PRESENCE_DIAG,
+            listenerFor(role),
         ).also { it.connect() }
         podReadings[role] = ShintaiReadings(connection = ConnectionState.Connecting)
         _pairingOpen.value = false       // linked → return to the console

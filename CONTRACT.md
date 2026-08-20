@@ -42,6 +42,8 @@ Consumers key off `line.startswith("timestamp_ms")` (header) and `line[0].isdigi
 | `pm10_ugm3` | µg/m³ (blank = none) | **Enmu** — PM10 mass concentration |
 | `nfc_uid` | hex string (blank = no tag) | **Fuda** — UID of the ISO14443A tag last read by the PN532 (e.g. `04A1B2C3`); held ~5 s after a read, then blank |
 | `nfc_type` | string (blank = no tag) | **Fuda** — RF family of that tag (`ISO14443A`); blank alongside `nfc_uid` when no tag |
+| `presence_detected` | 0 / 1 (blank = sensor absent) | **Hitokage** — 1 when the XM125 radar currently reads a person in its configured range, else 0 |
+| `presence_distance_mm` | mm (blank = not detected / absent) | **Hitokage** — the detected presence's range (200–2000 mm); blank when `presence_detected` is 0 |
 | `board` | `fwd` / `aft` | **Bunshin** — which pod (role) produced this row; the terminal role discriminator for two-host federation. Absent in pre-Bunshin logs |
 
 `thermal_*` are *surface* temps (the IR camera); `air_temp_c`/`humidity_pct`/`co2_ppm`
@@ -112,6 +114,18 @@ consumers are unaffected. They are **string** columns — like `cardinal` and `b
 numeric-row framing (`line[0].isdigit()`, which only tests `timestamp_ms`) is untouched. Fuda is
 the platform's first *identity* sense: it reports *who/what*, not a physical scalar.
 
+`presence_detected` / `presence_distance_mm` are added by **Hitokage (人影)**
+(`specs/zokyo/hitokage.md`) — an **Acconeer XM125** pulsed coherent radar
+([SparkFun SEN-24540](REGISTRY.md#sensors), I²C `0x52`, plain bus, no mux) running its onboard
+**I2C Presence Detector** application. Unlike every other sense here, the XM125 does its own DSP
+on a co-packaged MCU; the firmware is a register-protocol I²C client, not a raw-sensor driver —
+`presence_detected` and `presence_distance_mm` are simply that register's result, not derived from
+a lower-level signal. It reports **one** detected/not-detected flag and, when detected, **one**
+range (200–2000 mm, the configured zone) — it cannot count or distinguish multiple people (see
+[Decisions](specs/zokyo/hitokage.md#decisions)). Like `nfc_uid`/`nfc_type` they are **appended
+before `board`**, so pre-Hitokage logs still parse and name-keyed consumers are unaffected. Blank
+when the XM125 is absent.
+
 Serial output modes (toggle live by sending a byte): `h` human · `c` CSV · `b` both
 (default; the logger requests `b`). Onboard-flash control bytes: `L` list · `P` dump · `E` erase.
 
@@ -137,6 +151,7 @@ and **Rear Depth Grid**, which carry packed **binary** payloads (see
 | Hokan | `abcdf007-ab12-ab12-ab12-abcdef123456` | `1240 98.5 112` (cumulative `steps` · `heading_deg` · `cadence` steps/min) |
 | Particulate | `abcdd057-ab12-ab12-ab12-abcdef123456` | `PM1.0:12 PM2.5:34 PM10:56 ug/m3` (**Enmu** — the three mass concentrations; `d057` = "dust") |
 | Fuda | `abcdfada-ab12-ab12-ab12-abcdef123456` | `UID:04A1B2C3 ISO14443A` (**Fuda** — the NFC tag last read; **event-driven**, notifies only on a read) |
+| Presence | `abcd0125-ab12-ab12-ab12-abcdef123456` | `present=1 dist=260mm` / `present=0 dist=--` (**Hitokage** — the XM125's detected/not-detected flag + range; `0125` = XM125) |
 | Pane Control | `abcd1306-ab12-ab12-ab12-abcdef123456` | **WRITE** a token → pages the OLED pane; notifies `pane=2/5 NAV` (see below; `1306` = SSD1306) |
 | Lightning | `abcda535-ab12-ab12-ab12-abcdef123456` | `km=1 e=227467 n=8` (last strike distance km · raw energy · cumulative count) |
 | Lightning Control | `abcda53c-ab12-ab12-ab12-abcdef123456` | **WRITE** a token → applies AS3935 tuning; notifies `gain=out spike=2 wdog=1 tune=0` (see below) |
@@ -309,21 +324,22 @@ central writing it addresses every pod it is connected to.
 
 A characteristic only notifies when its sensor is present and has data (e.g. Climate
 warms up ~5 s and updates every ~5 s; Thermal needs the MLX90640 attached; Hokan needs the IMU;
-Particulate needs the PMSA003I; Fuda notifies only when the PN532 reads a tag).
+Particulate needs the PMSA003I; Fuda notifies only when the PN532 reads a tag; Presence needs
+the XM125).
 
 **Consumer coverage.** There are two Android consumers, and they cover the GATT table
 differently by design (see `android/`):
 
 - **Operator** (`com.saboteur.shintaioperator`, the phone field console) subscribes to
-  the **thirteen string** characteristics, Environment, Hokan, Lightning, Particulate, Fuda and
-  Pane Control included — the complete readout —
+  the **fourteen string** characteristics, Environment, Hokan, Lightning, Particulate, Fuda,
+  Presence and Pane Control included — the complete readout —
   **plus Thermal Grid and Rear Depth Grid** (the Metsuke heat panel + the Zanshin rear depth panel).
-  Fifteen channels: the full-fidelity console. It renders the full Enrai readout (distance · energy ·
-  count) and flashes on each new strike, the full Enmu triad (PM1.0 · PM2.5 · PM10), and Fuda's
+  Sixteen channels: the full-fidelity console. It renders the full Enrai readout (distance · energy ·
+  count) and flashes on each new strike, the full Enmu triad (PM1.0 · PM2.5 · PM10), Fuda's
   `UID + type` in a dedicated **Identity** panel — its own category, being the first channel that
-  reports *who/what* rather than a physical scalar.
-- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **twelve string
-  channels plus Thermal Grid and Rear Depth Grid** (fourteen). This is the first place the two apps'
+  reports *who/what* rather than a physical scalar — and Hitokage's detected/not-detected + range.
+- **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **thirteen string
+  channels plus Thermal Grid and Rear Depth Grid** (fifteen). This is the first place the two apps'
   *subscription* sets genuinely differ rather than just their rendering: Glass omits **Pane Control**
   (`abcd1306`), because paging the board's OLED is a console action and the HUD has no panel to
   drive. It also treats **Environment** (`abcdc0de`,
@@ -334,7 +350,9 @@ differently by design (see `android/`):
   **Lightning** it surfaces lean too: the nearest-strike distance with a flash on the edge — a
   storm overhead is worth the waveguide. **Particulate** gets the same treatment: the HUD shows
   **PM2.5 alone** — the health-relevant fraction — while the full PM1.0/2.5/10 triad stays on
-  the phone. **Fuda** likewise: the tag **UID alone**, without the RF family.
+  the phone. **Fuda** likewise: the tag **UID alone**, without the RF family. **Presence**
+  (Hitokage) it renders too — a single-line detected/range readout, the same payload as the
+  console since there's no raw-vs-derived split to lean out of.
 
 Both apps render the Metsuke heat panel (`THERMAL_GRID`) — the one binary channel — from the
 shared `:core` parse + ironbow palette; only the surrounding surface differs (waveguide HUD vs
@@ -379,6 +397,7 @@ precedence order**. This table is the **default**, shared by every consumer (the
 | `lightning_*` + Lightning (Enrai) | **aft** → fwd | Ambient storm sense; rides the pack with air chem (direction-agnostic) |
 | `pm*_ugm3` + Particulate (Enmu) | **aft** → fwd | Air chem rides the pack; the air you breathe is direction-agnostic |
 | `nfc_uid` / `nfc_type` + Fuda | **fwd** → aft | You scan the tag you're facing — head-side |
+| `presence_detected` / `presence_distance_mm` + Presence (Hitokage) | **fwd** → aft | Forward presence rides the head — you face what you're scanning for |
 | `gps_fix` / `lat` / `lon` / `alt_m` / `speed_kmh` / `sats` | **fwd** → aft (fix-gated) | A pod with no fix supplies nothing — but it still *notifies* `no fix sats=N`, so consumers must gate on the payload, not on silence |
 | `steps` (Hokan) | **aft** → fwd | Torso pedometer beats head-bob |
 
