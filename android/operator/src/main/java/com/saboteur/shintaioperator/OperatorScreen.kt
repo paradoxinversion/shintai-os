@@ -142,23 +142,22 @@ private fun TopBar(r: ShintaiReadings, rec: RecordingUi) {
     }
 }
 
-/** DIAGNOSTIC TEMP — Hitokage's multi-peak A-scope panel (specs/zokyo/hitokage.md HK-4),
- *  not part of CONTRACT.md. `HITOKAGE_DIAG_RANGE_END_MM` (5000mm) is the firmware's own
- *  configured span — kept in sync by hand since this channel isn't in the contract to
- *  check against. The raw payload stays visible below the scope for bench debugging.
- *  Strip alongside the rest of "DIAGNOSTIC TEMP". */
-private const val DIAG_RADAR_MAX_RANGE_MM = 5000
+/** Hitokage's multi-peak A-scope panel (specs/zokyo/hitokage.md). `RADAR_MAX_RANGE_MM`
+ *  (5000mm) is the firmware's own `HITOKAGE_DIST_RANGE_END_MM` — kept in sync by hand
+ *  since the peak list's range span isn't itself a contract field to check against.
+ *  The raw payload stays visible below the scope for reference. */
+private const val RADAR_MAX_RANGE_MM = 5000
 
 @Composable
-private fun RadarDiagPanel(presenceDiag: String, units: Units) {
+private fun RadarPeaksPanel(radarPeaks: String, units: Units) {
     // distColor is the SAME near=red/far=green language TrackerGauge's Proximity panel
     // uses — reusing it (rather than a scope-local palette) means a blip's colour needs
     // no separate legend to read.
-    val blips = parseRadarPeaks(presenceDiag).map { ScopeBlip(it.distanceMm, it.strengthRaw, distColor(it.distanceMm)) }
-    Panel("Radar (diag)", ledColor = T.Amber) {
-        AScope(blips, DIAG_RADAR_MAX_RANGE_MM, units, modifier = Modifier.fillMaxWidth().height(130.dp))
+    val blips = parseRadarPeaks(radarPeaks).map { ScopeBlip(it.distanceMm, it.strengthRaw, distColor(it.distanceMm)) }
+    Panel("Radar Peaks", ledColor = T.Amber) {
+        AScope(blips, RADAR_MAX_RANGE_MM, units, modifier = Modifier.fillMaxWidth().height(130.dp))
         Spacer(Modifier.height(6.dp))
-        ReadoutRow("Peaks", presenceDiag)
+        ReadoutRow("Peaks", radarPeaks)
     }
 }
 
@@ -294,12 +293,12 @@ private fun Console(
         }
     }
 
-    // RADAR (diag) — DIAGNOSTIC TEMP, Hitokage's multi-peak A-scope (specs/zokyo/hitokage.md
-    // HK-4), not in CONTRACT.md. Present only once the board has actually notified
-    // presenceDiag (parses to a non-empty peak list is NOT the gate — "n=0, no peaks in
-    // range" is a valid live reading; gate on the raw payload having arrived at all, same
-    // idiom as thermalGrid/rearDepthGrid above). Strip alongside the rest of the tag.
-    if (r.presenceDiag != "—") RadarDiagPanel(r.presenceDiag, units)
+    // RADAR PEAKS — Hitokage's multi-peak A-scope (specs/zokyo/hitokage.md). Present
+    // only once the board has actually notified radarPeaks — a parsed empty peak list
+    // is NOT the gate ("n=0, no peaks in range" is a valid live reading); gate on the
+    // raw payload having arrived at all, same idiom as thermalGrid/rearDepthGrid above.
+    // Stays absent when the module's on the presence-mode fallback (no peak list there).
+    if (r.radarPeaks != "—") RadarPeaksPanel(r.radarPeaks, units)
 
     // AIR — climate + environment + Kyūkaku's derived smell. Its own composable so
     // Console stays within the method-length/complexity budget (same as NavigationPanel).
@@ -424,6 +423,7 @@ private fun channelLabel(ch: Channel): String = when (ch) {
     Channel.Particulate -> "Particulate"
     Channel.Fuda -> "NFC Tag"
     Channel.Presence -> "Presence"
+    Channel.RadarPeaks -> "Radar Peaks"
 }
 
 /** The board's OLED pane — the console twin of the on-body APDS swipe, over the writable

@@ -46,6 +46,7 @@ CHAR_TO_KOTLIN = {
     "Particulate": "PARTICULATE",
     "Fuda": "FUDA",
     "Presence": "PRESENCE",
+    "Radar Peaks": "RADAR_PEAKS",
     "Pane Control": "PANE_CTRL",
     "Thermal Grid": "THERMAL_GRID",
 }

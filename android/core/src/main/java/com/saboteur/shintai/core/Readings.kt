@@ -27,7 +27,7 @@ data class ShintaiReadings(
     val particulate: String = "—",     // e.g. "PM1.0:12 PM2.5:34 PM10:56 ug/m3" (Enmu, PMSA003I)
     val fuda: String = "—",            // e.g. "UID:04A1B2C3 ISO14443A" (Fuda, PN532) — event-driven
     val presence: String = "—",        // e.g. "present=1 dist=260mm" (Hitokage, XM125 radar)
-    val presenceDiag: String = "—",    // DIAGNOSTIC TEMP — "n=2 0:2230/-2774 1:432/-17711" (not in CONTRACT.md)
+    val radarPeaks: String = "—",      // e.g. "n=2 0:2230/-2774 1:4809/-3865" (Hitokage, distance mode only)
     val pane: PaneState = PaneState(),  // the board's OLED pane (Pane Control char) — per-pod, not merged
     val kyukaku: KyukakuState = KyukakuState(),  // Kyūkaku's smell state, derived from environment's gas_ohms
     val thermalGrid: ThermalGrid? = null,  // Metsuke's 32×24 heat grid, null until the first frame
@@ -428,8 +428,7 @@ fun ShintaiReadings.fold(uuid: UUID, value: String): ShintaiReadings {
         ShintaiGatt.FUDA -> base.copy(fuda = value)
         // Hitokage: periodic radar readout, stored raw for display like Particulate.
         ShintaiGatt.PRESENCE -> base.copy(presence = value)
-        // DIAGNOSTIC TEMP — see ShintaiGatt.PRESENCE_DIAG.
-        ShintaiGatt.PRESENCE_DIAG -> base.copy(presenceDiag = value)
+        ShintaiGatt.RADAR_PEAKS -> base.copy(radarPeaks = value)
         ShintaiGatt.LIGHTNING_CTRL -> base.copy(lightningConfig = LightningConfig.parse(value))
         // Pane Control notifies on a console write AND on an on-body swipe, so this is the
         // board telling us what it's showing — never an echo of what we asked for.
