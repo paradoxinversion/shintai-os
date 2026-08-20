@@ -16,11 +16,11 @@ import com.saboteur.shintai.core.formatRangeM
 import com.saboteur.shintaioperator.T
 
 /**
- * DIAGNOSTIC TEMP — Hitokage's multi-peak A-scope (specs/zokyo/hitokage.md HK-4), not
- * part of CONTRACT.md. The XM125 is a single-beam radar with no angle/azimuth data in
- * either onboard app, so a rotating-sweep PPI display (like [TrackerGauge]) would have
- * to fake a direction that doesn't exist. An A-scope — the pre-PPI radar display,
- * amplitude vs. range along one axis — is what the sensor actually measures.
+ * Hitokage's multi-peak A-scope (specs/zokyo/hitokage.md). The XM125 is a single-beam
+ * radar with no angle/azimuth data in either onboard app, so a rotating-sweep PPI
+ * display (like [TrackerGauge]) would have to fake a direction that doesn't exist. An
+ * A-scope — the pre-PPI radar display, amplitude vs. range along one axis — is what the
+ * sensor actually measures.
  *
  * First pass (raw spikes, no labels) tested as genuinely hard to read: no way to tell
  * what the axis meant or what a spike's height represented. This version reads the way
@@ -28,8 +28,6 @@ import com.saboteur.shintaioperator.T
  * contact, and the SAME near=red/far=green proximity language [TrackerGauge] uses, so a
  * blip's colour is legible without decoding an unlabeled scale first. [ScopeBlip.color]
  * is resolved by the caller (this file stays UI-primitive, no proximity-band knowledge).
- *
- * Strip alongside the rest of "DIAGNOSTIC TEMP".
  */
 @Composable
 fun AScope(blips: List<ScopeBlip>, maxRangeMm: Int, units: Units, modifier: Modifier = Modifier) {

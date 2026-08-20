@@ -48,7 +48,7 @@
 #define PARTICULATE_UUID    "abcdd057-ab12-ab12-ab12-abcdef123456"  // Enmu: PM1.0/2.5/10 ug/m3 ("d057" = dust)
 #define FUDA_UUID           "abcdfada-ab12-ab12-ab12-abcdef123456"  // Fuda: NFC tag UID+type ("fada" = fuda/tag)
 #define PRESENCE_UUID       "abcd0125-ab12-ab12-ab12-abcdef123456"  // Hitokage: "present=.. dist=.." string ("0125" = XM125)
-#define PRESENCE_DIAG_UUID  "abcdd1a6-ab12-ab12-ab12-abcdef123456"  // DIAGNOSTIC TEMP — XM125 distance-mode multi-peak, NOT in CONTRACT.md
+#define RADAR_PEAKS_UUID    "abcdd1a6-ab12-ab12-ab12-abcdef123456"  // Hitokage: "n=.. i:mm/strength .." multi-peak string, distance mode only
 #define PANE_CTRL_UUID      "abcd1306-ab12-ab12-ab12-abcdef123456"  // OLED pane: WRITABLE paging control ("1306" = SSD1306)
 
 const int NEAR_MM  = 200;
@@ -122,31 +122,29 @@ Adafruit_PM25AQI pmsa;     // PMSA003I: particulate PM1.0/2.5/10 (Enmu, I2C 0x12
 #define PN532_RESET A2
 Adafruit_PN532 pn532(PN532_IRQ, PN532_RESET, &Wire);
 
-// Hitokage (人影) — Acconeer XM125 pulsed coherent radar, running its onboard
-// I2C Presence Detector application (I2C 0x52, plain bus, no mux). The XM125
-// does its own DSP on a co-packaged MCU; this is a register-protocol client,
-// not a raw-sensor driver — busyWait()+getDistanceValuemm() reads that
-// register directly. One detected/not-detected flag + one range in the
-// configured zone — it cannot count or distinguish multiple people. See
-// specs/zokyo/hitokage.md.
-SparkFunXM125Presence hitokage;
-#define HITOKAGE_RANGE_START_MM 200
-#define HITOKAGE_RANGE_END_MM   2000
-bool     hitokagePresent    = false;   // XM125 answered + detectorStart() succeeded at boot
-uint32_t hitokageDistanceMm = 0;       // last read range; 0 = no presence detected
-
-// DIAGNOSTIC — TEMPORARY (multi-peak/reflector-geometry investigation, see
-// specs/zokyo/hitokage.md Decisions HK-4). The XM125 can only run ONE onboard
-// firmware at a time, so this only produces data when the module happens to
-// be flashed to i2c_distance_detector.bin — Hitokage's presence code above
-// will report absent in that case, and vice versa; never both live together.
-// NOT part of CONTRACT.md — strip this block back out once the investigation
-// is done (search "DIAGNOSTIC TEMP").
-SparkFunXM125Distance hitokageDistDiag;
-bool hitokageDiagPresent = false;
-String hitokageDiagStr = "n=0";   // last poll's "n=<count> i:mm/strength ..." readout
-#define HITOKAGE_DIAG_RANGE_START_MM 500
-#define HITOKAGE_DIAG_RANGE_END_MM   5000
+// Hitokage (人影) — Acconeer XM125 pulsed coherent radar (I2C 0x52, plain bus, no
+// mux). The XM125 does its own DSP on a co-packaged MCU running ONE of two onboard
+// applications; this firmware is a register-protocol client to whichever is
+// flashed, not a raw-sensor driver. DISTANCE mode is tried first and is the real
+// default: it reports up to 9 simultaneous reflection peaks (range + relative
+// signal strength), so "detected + nearest range" (presence_detected /
+// presence_distance_mm, the Presence characteristic) is the NEAREST peak, and the
+// full list streams live on the Radar Peaks characteristic. PRESENCE mode
+// (one flag + one range, no peak list) is a fallback for a module still flashed
+// with the older i2c_presence_detector.bin — only attempted if distance setup
+// fails, CONFIRMED mutually exclusive (specs/zokyo/hitokage.md HK-4): running
+// both against the same module corrupts whichever is actually configured.
+SparkFunXM125Distance hitokageDist;     // primary: distance detector, multi-peak
+SparkFunXM125Presence hitokage;         // fallback: presence detector, single-target
+#define HITOKAGE_DIST_RANGE_START_MM 500
+#define HITOKAGE_DIST_RANGE_END_MM   5000
+#define HITOKAGE_PRES_RANGE_START_MM 200   // presence mode's own bench-tuned zone —
+#define HITOKAGE_PRES_RANGE_END_MM   2000  // kept distinct; it's a fallback, not primary
+bool hitokageDistancePresent = false;   // distance-mode setup succeeded (primary)
+bool hitokagePresencePresent = false;   // presence-mode setup succeeded (fallback only)
+bool     hitokageDetected  = false;     // resolved "something's there", either mode
+uint32_t hitokageRangeMm   = 0;         // resolved nearest range; 0 when not detected
+String   hitokagePeaksStr  = "n=0";     // "n=<count> i:mm/strength ..." — distance mode only
 
 // Tertiary info pane — 1.3" 128x64 mono OLED (Adafruit #938) on the STEMMA QT bus at
 // 0x3D. A flare / secondary-readout surface, distinct from Aizu's single-pixel
@@ -233,7 +231,7 @@ BLECharacteristic *lightningCtrlChar; // Enrai: WRITABLE AS3935 tuning control (
 BLECharacteristic *particulateChar;   // Enmu: "PM1.0:.. PM2.5:.. PM10:.. ug/m3" string
 BLECharacteristic *fudaChar;          // Fuda: "UID:<hex> <type>" NFC tag string (event-driven)
 BLECharacteristic *presenceChar;      // Hitokage: "present=.. dist=.." radar string
-BLECharacteristic *presenceDiagChar;  // DIAGNOSTIC TEMP — XM125 distance-mode multi-peak string
+BLECharacteristic *radarPeaksChar;    // Hitokage: multi-peak string, distance mode only
 BLECharacteristic *paneCtrlChar;      // OLED pane: WRITABLE paging control (app→board) + state notify
 BLE2902           *thermalGridCccd = nullptr;   // its CCCD — emit only while subscribed
 BLECharacteristic *zanshinGridChar;             // Zanshin: binary 8x8 rear depth grid
@@ -671,35 +669,28 @@ void setup() {
   Wire.setClock(BUS_I2C_HZ);
   delay(100);
 
-  // DIAGNOSTIC TEMP — probed FIRST of ALL sensors, specs/zokyo/hitokage.md HK-4.
-  // The two onboard XM125 apps' register maps overlap in address but not in
-  // meaning, so letting hitokage.detectorStart() (presence protocol) run first
-  // against a module actually on distance firmware risks writing config the
-  // distance app misreads — even though distanceSetup() itself opens with a
-  // RESET_MODULE. Probing distance before ANYTHING else (not just before
-  // presence) sidesteps both that question and any power-on-timing sensitivity
-  // isolation test. distanceSetup() applies default config (CFAR threshold
-  // sensitivity 500 — see xm125-bringup-distance's Decisions comment on why
-  // that's left at default).
-  hitokageDiagPresent = hitokageDistDiag.begin(SFE_XM125_I2C_ADDRESS, Wire) &&
-                        (hitokageDistDiag.distanceSetup(HITOKAGE_DIAG_RANGE_START_MM, HITOKAGE_DIAG_RANGE_END_MM) == 0);
-  Serial.println(hitokageDiagPresent ? "[OK] XM125 Distance DIAGNOSTIC (multi-peak) @ 0x52"
-                                     : "[WARN] XM125 distance-mode diagnostic unavailable (presence fw or absent)");
+  // Hitokage (人影) — DISTANCE mode tried FIRST, specs/zokyo/hitokage.md HK-4. The
+  // two onboard XM125 apps' register maps overlap in address but not in meaning, so
+  // letting hitokage.detectorStart() (presence protocol) run against a module
+  // actually on distance firmware corrupts distance measurement for the rest of
+  // boot — CONFIRMED, not assumed. Probing distance first and skipping presence
+  // entirely when it succeeds sidesteps that. distanceSetup() applies default
+  // config (CFAR threshold sensitivity 500 — see xm125-bringup-distance's
+  // Decisions comment on why that's left at default).
+  hitokageDistancePresent = hitokageDist.begin(SFE_XM125_I2C_ADDRESS, Wire) &&
+                            (hitokageDist.distanceSetup(HITOKAGE_DIST_RANGE_START_MM, HITOKAGE_DIST_RANGE_END_MM) == 0);
+  Serial.println(hitokageDistancePresent ? "[OK] XM125 Radar Distance (Hitokage, multi-peak) @ 0x52"
+                                         : "[WARN] XM125 distance mode unavailable (presence fw or absent)");
 
-  // Hitokage (人影) — XM125 pulsed coherent radar at 0x52, plain bus (no mux) — non-fatal.
-  // detectorStart() both applies the configuration and starts the onboard presence-detector
-  // firmware in one call; the 200-2000mm range mirrors the bench bring-up
-  // (firmware/xm125-bringup). MUTUALLY EXCLUSIVE with the diagnostic block above — CONFIRMED
-  // (specs/zokyo/hitokage.md HK-4), not assumed: letting both onboard-app clients touch the
-  // module corrupts whichever one is actually running. If the diagnostic already got a clean
-  // distance-mode setup, this presence attempt is skipped entirely rather than also probing —
-  // running it anyway (relying on it merely "failing harmlessly" against the wrong firmware)
-  // was measured to instead break every subsequent distance-mode reading for the rest of boot.
-  if (!hitokageDiagPresent) {
-    hitokagePresent = hitokage.begin(SFE_XM125_I2C_ADDRESS, Wire) &&
-                      (hitokage.detectorStart(HITOKAGE_RANGE_START_MM, HITOKAGE_RANGE_END_MM) == 0);
-    Serial.println(hitokagePresent ? "[OK] XM125 Radar Presence (Hitokage) @ 0x52"
-                                   : "[WARN] XM125 not found @ 0x52 — presence sense disabled");
+  // PRESENCE mode — fallback only, for a module still flashed with the older
+  // i2c_presence_detector.bin. Skipped entirely once distance mode succeeds, not
+  // merely allowed to "fail harmlessly" against the wrong firmware — that was
+  // measured to break distance mode instead (HK-4).
+  if (!hitokageDistancePresent) {
+    hitokagePresencePresent = hitokage.begin(SFE_XM125_I2C_ADDRESS, Wire) &&
+                              (hitokage.detectorStart(HITOKAGE_PRES_RANGE_START_MM, HITOKAGE_PRES_RANGE_END_MM) == 0);
+    Serial.println(hitokagePresencePresent ? "[OK] XM125 Radar Presence (Hitokage, fallback) @ 0x52"
+                                           : "[WARN] XM125 not found @ 0x52 — radar presence disabled");
   }
 
   // GPS — ACK-probe 0x10 first (the same non-fatal test the ToF mux and the OLED use).
@@ -874,7 +865,7 @@ void setup() {
   particulateChar = makeChar(PARTICULATE_UUID, "Particulate (ug/m3)");   // Enmu
   fudaChar        = makeChar(FUDA_UUID,        "Fuda (NFC tag)");        // Fuda
   presenceChar    = makeChar(PRESENCE_UUID,    "Presence (radar)");      // Hitokage
-  presenceDiagChar = makeChar(PRESENCE_DIAG_UUID, "Presence Diag (multi-peak, TEMP)");  // DIAGNOSTIC TEMP
+  radarPeaksChar = makeChar(RADAR_PEAKS_UUID, "Radar Peaks (multi-peak)");  // Hitokage
   // Enrai control — the one WRITABLE characteristic (READ|WRITE|NOTIFY). A central writes a
   // tuning token; onWrite applies it and notifies the config back. Built directly (not via
   // makeChar) for the WRITE property + the write callback.
@@ -1673,50 +1664,53 @@ void loop() {
     }
   }
 
-  // ── Hitokage (人影): XM125 radar. busyWait() blocks until the onboard detector's
-  // last measurement is ready — worst case ~1/12Hz (the detector's default frame
-  // rate) — short enough to run here in the 1.5 s telemetry block, like Fuda's
-  // bounded RF read. distance > 0 means presence is currently detected (the
-  // register itself clears to 0 between detections).
-  if (hitokagePresent) {
-    hitokage.busyWait();
-    uint32_t d = 0;
-    if (hitokage.getDistanceValuemm(d) == 0) hitokageDistanceMm = d;
-  }
-
-  // ── DIAGNOSTIC TEMP — XM125 distance-mode multi-peak readout (multi-peak/
-  // reflector-geometry investigation, specs/zokyo/hitokage.md HK-4). Builds
-  // "n=<count> i:distMm/strength ..." for up to 9 peaks. Strip this block
-  // back out once the investigation is done.
-  if (hitokageDiagPresent) {
-    // detectorReadingSetup()'s return code was previously ignored — on
-    // failure (calibration needed, measurement error) it does NOT take a
-    // fresh reading, so getNumberDistances() would silently return stale/zero
-    // data forever with no visible reason. Surfacing the code instead.
-    int32_t rdErr = hitokageDistDiag.detectorReadingSetup();
+  // ── Hitokage (人影): XM125 radar. DISTANCE mode (primary) builds the full peak
+  // list AND resolves hitokageDetected/hitokageRangeMm from the NEAREST peak, so
+  // presence_detected/presence_distance_mm and the Presence characteristic mean
+  // the same thing regardless of which onboard app is actually running. PRESENCE
+  // mode (fallback) resolves the same two fields from its own single reading.
+  if (hitokageDistancePresent) {
+    // detectorReadingSetup()'s return code matters — on failure (calibration
+    // needed, measurement error) it does NOT take a fresh reading, so
+    // getNumberDistances() would silently return stale/zero data forever with
+    // no visible reason. Surfaced in the peaks string for bench debugging.
+    int32_t rdErr = hitokageDist.detectorReadingSetup();
     uint32_t n = 0;
-    hitokageDistDiag.getNumberDistances(n);
+    hitokageDist.getNumberDistances(n);
     String s = "n=" + String(n);
     if (rdErr != 0) {
-      s += " rdErr=" + String(rdErr);
       // Raw status bits, not just the summarized code — rdErr=5
       // (MEASURE_DISTANCE_ERROR) doesn't say WHY it's set.
       uint32_t errStatus = 0, calNeeded = 0, measErr = 0;
-      hitokageDistDiag.getDetectorErrorStatus(errStatus);
-      hitokageDistDiag.getCalibrationNeeded(calNeeded);
-      hitokageDistDiag.getMeasureDistanceError(measErr);
-      s += " errStat=0x" + String(errStatus, HEX)
+      hitokageDist.getDetectorErrorStatus(errStatus);
+      hitokageDist.getCalibrationNeeded(calNeeded);
+      hitokageDist.getMeasureDistanceError(measErr);
+      s += " rdErr=" + String(rdErr) + " errStat=0x" + String(errStatus, HEX)
          + " cal=" + String(calNeeded) + " measErr=" + String(measErr);
     }
+    uint32_t nearestMm = 0;
     for (uint32_t i = 0; i < n && i < 9; i++) {
       uint32_t pd = 0;
       int32_t  ps = 0;
-      if (hitokageDistDiag.getPeakDistance(i, pd) == 0) {
-        hitokageDistDiag.getPeakStrength(i, ps);
+      if (hitokageDist.getPeakDistance(i, pd) == 0) {
+        hitokageDist.getPeakStrength(i, ps);
         s += " " + String(i) + ":" + String(pd) + "/" + String(ps);
+        if (nearestMm == 0 || pd < nearestMm) nearestMm = pd;
       }
     }
-    hitokageDiagStr = s;
+    hitokagePeaksStr = s;
+    hitokageDetected = (nearestMm > 0);
+    hitokageRangeMm  = nearestMm;
+  } else if (hitokagePresencePresent) {
+    // busyWait() blocks until the onboard detector's last measurement is ready —
+    // worst case ~1/12Hz (the detector's default frame rate) — short enough to
+    // run here in the 1.5 s telemetry block, like Fuda's bounded RF read.
+    hitokage.busyWait();
+    uint32_t d = 0;
+    if (hitokage.getDistanceValuemm(d) == 0) {
+      hitokageDetected = (d > 0);
+      hitokageRangeMm  = d;
+    }
   }
 
   // ── Kyūkaku (嗅覚): fold the fresh gas reading into the rolling baseline/ratio and
@@ -1865,13 +1859,14 @@ void loop() {
     } else if (pn532Present) {
       Serial.println("NFC      : no tag");
     }
-    // Hitokage: the radar's detected/not-detected + range, mirroring AQI/NFC's
-    // present-vs-absent distinction.
-    if (hitokagePresent) {
-      if (hitokageDistanceMm > 0) {
-        Serial.println("RADAR    : presence YES @ " + String(hitokageDistanceMm) + " mm");
+    // Hitokage: the radar's detected/not-detected + nearest range, mirroring
+    // AQI/NFC's present-vs-absent distinction.
+    if (hitokageDistancePresent || hitokagePresencePresent) {
+      if (hitokageDetected) {
+        Serial.println("RADAR    : detected YES @ " + String(hitokageRangeMm) + " mm"
+                      + (hitokageDistancePresent ? " (distance)" : " (presence)"));
       } else {
-        Serial.println("RADAR    : presence no");
+        Serial.println("RADAR    : detected no");
       }
     }
     Serial.println();
@@ -1916,8 +1911,9 @@ void loop() {
     row += ',';  row += (pmsaHasData ? String(pm10)  : String(""));   // Enmu PM10
     row += ',';  row += nfcUid;    // Fuda NFC tag UID (hex; "" = no tag held)
     row += ',';  row += nfcType;   // Fuda NFC tag type ("" alongside nfcUid)
-    row += ',';  row += (hitokagePresent ? String(hitokageDistanceMm > 0 ? 1 : 0) : String(""));  // Hitokage presence_detected
-    row += ',';  row += (hitokagePresent && hitokageDistanceMm > 0 ? String(hitokageDistanceMm) : String(""));  // Hitokage presence_distance_mm
+    bool hitokageActive = hitokageDistancePresent || hitokagePresencePresent;
+    row += ',';  row += (hitokageActive ? String(hitokageDetected ? 1 : 0) : String(""));  // Hitokage presence_detected
+    row += ',';  row += (hitokageActive && hitokageDetected ? String(hitokageRangeMm) : String(""));  // Hitokage presence_distance_mm
     row += ',';  row += podRole;   // Bunshin: which pod (fwd/aft) produced this row — stays terminal
 
     // Persist to onboard flash only while untethered (no USB host). close() on a
@@ -2040,17 +2036,19 @@ void loop() {
     }
     // Hitokage (人影): periodic, every telemetry cycle — like Particulate, not
     // event-driven like Fuda/Lightning, since presence is a continuous scalar.
-    if (hitokagePresent) {
-      String presStr = hitokageDistanceMm > 0
-        ? "present=1 dist=" + String(hitokageDistanceMm) + "mm"
+    // Resolved from whichever onboard mode is active (see the loop() block above).
+    if (hitokageDistancePresent || hitokagePresencePresent) {
+      String presStr = hitokageDetected
+        ? "present=1 dist=" + String(hitokageRangeMm) + "mm"
         : "present=0 dist=--";
       presenceChar->setValue(presStr.c_str());
       presenceChar->notify();
     }
-    // DIAGNOSTIC TEMP — see Hitokage diagnostic globals above.
-    if (hitokageDiagPresent) {
-      presenceDiagChar->setValue(hitokageDiagStr.c_str());
-      presenceDiagChar->notify();
+    // Radar Peaks: the full multi-peak list — distance mode only, since presence
+    // mode's onboard app has no concept of multiple peaks.
+    if (hitokageDistancePresent) {
+      radarPeaksChar->setValue(hitokagePeaksStr.c_str());
+      radarPeaksChar->notify();
     }
     // Pane state rides the telemetry cycle like every other channel. It would otherwise
     // only ever notify on a CHANGE, and a central has no way to learn the initial state:

@@ -58,10 +58,11 @@ object ShintaiGatt {
      *  See CONTRACT.md. */
     val PRESENCE: UUID = UUID.fromString("abcd0125-ab12-ab12-ab12-abcdef123456")
 
-    /** DIAGNOSTIC TEMP — XM125 distance-mode multi-peak readout, "n=<count> i:mm/strength ..."
-     *  (string). NOT part of CONTRACT.md — a bench-investigation channel for
-     *  specs/zokyo/hitokage.md HK-4 (multi-peak/reflector-geometry). Strip once done. */
-    val PRESENCE_DIAG: UUID = UUID.fromString("abcdd1a6-ab12-ab12-ab12-abcdef123456")
+    /** Hitokage's full multi-peak list, "n=<count> i:mm/strength ..." (string) — the live
+     *  companion to [PRESENCE]'s nearest-peak summary. Notifies only while distance mode
+     *  is active (the presence-mode fallback has no peak-list concept). `:glass` does NOT
+     *  subscribe — no HUD-appropriate rendering for a peak list. See CONTRACT.md. */
+    val RADAR_PEAKS: UUID = UUID.fromString("abcdd1a6-ab12-ab12-ab12-abcdef123456")
 
     /** The OLED pane's WRITABLE paging control (READ|WRITE|NOTIFY) — the second app→board
      *  path, and the first driving an output surface. Write "next"/"prev" or a pane name
@@ -91,5 +92,5 @@ object ShintaiGatt {
      *  nothing forces an app to take them all (the Glass HUD skips [ENVIRONMENT]). */
     val ALL: List<UUID> =
         listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT, HOKAN,
-            LIGHTNING, LIGHTNING_CTRL, PARTICULATE, FUDA, PRESENCE, PANE_CTRL)
+            LIGHTNING, LIGHTNING_CTRL, PARTICULATE, FUDA, PRESENCE, RADAR_PEAKS, PANE_CTRL)
 }
