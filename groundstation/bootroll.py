@@ -64,6 +64,18 @@ def states_from_addresses(found):
             for tag, name, addrs in ROSTER]
 
 
+def present_tags(found):
+    """The roster tags that answered the scan, stripped — e.g. {"REAR", "AIR", "GPS"}.
+
+    The live panel gates rows on this so an absent module renders NOTHING rather than a
+    placeholder. Note what this can and cannot see: the scan walks the MAIN bus, so a
+    part behind the PCA9546 is invisible and only the mux itself (0x70) answers — which
+    is why REAR maps both 0x70 and 0x29. Channels whose part may sit behind the mux
+    should gate on their own DATA, not on this.
+    """
+    return {tag.strip() for tag, _name, addrs in ROSTER if any(a in found for a in addrs)}
+
+
 def _row(left, right, right_rgb):
     """A dotted-leader row (§3): BONE label · GRID dots · colored right value, to WIDTH."""
     dots = "·" * max(3, WIDTH - len(left) - len(right) - 2)

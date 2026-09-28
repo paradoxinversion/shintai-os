@@ -52,13 +52,23 @@ def _num(v, dec=1):
         return None
 
 
-def dashboard(vals, samples, csv_name):
+def dashboard(vals, samples, csv_name, present=None):
     """Build the live cassette-futurism console (docs/style.md): a header, alert banners on
     breach, pulse-rifle segmented meters for the thresholded channels (range / CO₂ / thermal /
-    lightning), then dotted-leader readout rows — one list of ANSI lines, redrawn in place."""
+    lightning), then dotted-leader readout rows — one list of ANSI lines, redrawn in place.
+
+    [present] is the boot roll-call's set of module tags (bootroll.present_tags). A handful
+    of rows have to distinguish "no hardware" from "hardware present, no value yet" — GPS
+    searching for a fix, the SCD-40 warming up — so they cannot simply gate on a blank
+    column, and historically rendered a placeholder unconditionally. On a partial rig that
+    is most of the panel. With [present] they render only when the part answered the scan;
+    pass None (unknown — probe failed, or the multi-pod path where no roll-call runs) to
+    keep the old always-render behaviour rather than hiding a channel that may be live.
+    """
     b = bootroll
     g = vals.get
     W = b.WIDTH
+    have = lambda tag: present is None or tag in present
 
     pod = g("board")                                   # Bunshin: which pod this stream is
     title = "SHINTAI-OS — LIVE" + (f" [{pod}]" if pod else "")
@@ -80,7 +90,7 @@ def dashboard(vals, samples, csv_name):
         frac = (far - d) / (far - near)                 # closer -> fuller
         band = "near" if d <= near else ("mid" if d <= 1000 else "far")
         out.append(b.meter("RANGE", frac, f"{d/1000:.2f} M", band))
-    else:
+    elif have("REAR"):               # field fitted but seeing nothing — worth a row
         out.append(b.meter("RANGE", 0, "no reading", "far"))
 
     if co2:
@@ -113,13 +123,16 @@ def dashboard(vals, samples, csv_name):
                           f"{pdist} mm" if pres == "1" and pdist else "clear",
                           b.PHOSPHOR if pres == "1" else b.PHOSPHOR_DIM))
     hd = _num(g("heading_deg"), 0)
-    out.append(b._row("HEADING", f"{hd}° {g('cardinal')}" if hd else "—", b.PHOSPHOR))
+    if hd or have("MAG"):
+        out.append(b._row("HEADING", f"{hd}° {g('cardinal')}" if hd else "—", b.PHOSPHOR))
     ax = _num(g("accel_x"), 2)
     if ax:
         out.append(b._row("ACCEL", f"X{ax} Y{_num(g('accel_y'), 2)} Z{_num(g('accel_z'), 2)}", b.PHOSPHOR))
     air = _num(g("air_temp_c"))
-    out.append(b._row("CLIMATE", f"{air}°C  {_num(g('humidity_pct'), 0)}%RH" if air else "warming up…",
-                      b.PHOSPHOR if air else b.AMBER))
+    # air_temp_c is a SHARED slot — BME688 first, else SCD-40 — so either part earns the row.
+    if air or have("AIR") or have("NOSE"):
+        out.append(b._row("CLIMATE", f"{air}°C  {_num(g('humidity_pct'), 0)}%RH" if air else "warming up…",
+                          b.PHOSPHOR if air else b.AMBER))
     press, gas = _num(g("pressure_hpa")), _num(g("gas_ohms"), 0)
     if press or gas:
         out.append(b._row("ENV", f"{press or '—'}hPa  {f'{float(gas)/1000:.0f}kΩ' if gas else '—'}", b.PHOSPHOR))
@@ -135,8 +148,8 @@ def dashboard(vals, samples, csv_name):
         out.append(b._row("NFC", f"{uid}  {g('nfc_type')}", b.PHOSPHOR))
     if g("gps_fix") == "1":
         out.append(b._row("GPS", f"{_num(g('lat'), 4)},{_num(g('lon'), 4)} {_num(g('speed_kmh'))}km/h", b.PHOSPHOR))
-    else:
-        out.append(b._row("GPS", "no fix", b.AMBER))
+    elif have("GPS"):                # receiver fitted but searching — the distinction
+        out.append(b._row("GPS", "no fix", b.AMBER))   # CONTRACT.md calls out explicitly
     steps = g("steps")
     if steps not in (None, ""):
         out.append(b._row("STEPS", steps, b.PHOSPHOR))
@@ -183,10 +196,12 @@ def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status, emi
         # board's live 'I' scan and type out each module's presence before the capture
         # dashboard takes over. Non-fatal: a missing module or an unresponsive scan just
         # skips the ritual (the two-pod path stays a plain log).
+        present = None        # None = roll-call unavailable; the panel then renders every row
         if live_panel:
             try:
-                bootroll.play(bootroll.states_from_addresses(bootroll.probe_addresses(ser)),
-                              out=sys.stderr)
+                found = bootroll.probe_addresses(ser)
+                bootroll.play(bootroll.states_from_addresses(found), out=sys.stderr)
+                present = bootroll.present_tags(found)
             except Exception:  # noqa: BLE001 — never block capture on the flourish
                 pass
         # Ask the sketch for both human + CSV output and a fresh CSV header, so we
@@ -228,7 +243,7 @@ def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status, emi
                         if not dash_on:
                             sys.stderr.write("\x1b[2J")        # clear once on first frame
                             dash_on = True
-                        frame = dashboard(dict(zip(header, row)), samples, csv_name)
+                        frame = dashboard(dict(zip(header, row)), samples, csv_name, present)
                         sys.stderr.write("\x1b[H" + "\n".join(l + "\x1b[K" for l in frame) + "\x1b[J")
                         sys.stderr.flush()
                     elif not emit_data:
