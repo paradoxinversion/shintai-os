@@ -46,7 +46,7 @@ Consumers key off `line.startswith("timestamp_ms")` (header) and `line[0].isdigi
 | `presence_distance_mm` | mm (blank = not detected / absent) | **Hitokage** — the NEAREST detected range (500–5000 mm in distance mode, 200–2000 mm in presence-mode fallback); blank when `presence_detected` is 0 |
 | `light_lux` | lux (blank = none) | **Hizashi** — ambient illuminance computed by the TSL2591 from its visible + IR channels |
 | `light_ir` | raw counts (blank = none) | **Hizashi** — the TSL2591's raw **infrared** channel; paired with `light_lux` it separates daylight from artificial light |
-| `board` | `fwd` / `aft` | **Bunshin** — which pod (role) produced this row; the terminal role discriminator for two-host federation. Absent in pre-Bunshin logs |
+| `board` | `fwd` / `aft` / `gnd` | **Bunshin** — which producer (role) emitted this row; the terminal role discriminator. `fwd`/`aft` are the two **body** pods; `gnd` is a stationary **desk station** that is deliberately NOT merged with them (see below). Absent in pre-Bunshin logs |
 
 `thermal_*` are *surface* temps (the IR camera); `air_temp_c`/`humidity_pct`/`co2_ppm`
 are *air*. `air_temp_c` and `humidity_pct` are **shared semantic slots**: whichever
@@ -454,12 +454,28 @@ already specified above). The additions are **identity** and a **merge rule**.
 
 ### Pods & identity
 
-Two roles: **`fwd`** (forward / head-side) and **`aft`** (pack-side). Each pod stores its
-role in NVS and advertises as **`ShintaiOS-<role>`** (`ShintaiOS-fwd` / `ShintaiOS-aft`);
-the BLE **service UUID is identical** on both — a central tells the pods apart by the
-**name**, never by service. In the CSV / flash log each row carries its origin in the
-appended **`board`** column. A pod's role is set live over serial (`'R'`) and applied at
-its next boot.
+Three roles: **`fwd`** (forward / head-side), **`aft`** (pack-side), and **`gnd`** (a
+stationary desk station). Each stores its role in NVS and advertises as
+**`ShintaiOS-<role>`** (`ShintaiOS-fwd` / `ShintaiOS-aft` / `ShintaiOS-gnd`); the BLE
+**service UUID is identical** on all — a central tells them apart by the **name**, never
+by service. In the CSV / flash log each row carries its origin in the appended **`board`**
+column. A role is set live over serial (`'R'`, which cycles `fwd → aft → gnd`) and applied
+at the next boot. (`'G'` is *not* the ground command — that byte is the thermal-grid probe.)
+
+**`gnd` is a producer, not a pod.** It runs the identical firmware and fills the same
+channels, but it senses a **different place**: the room, not the wearer. Bunshin's merge
+is only meaningful because `fwd` and `aft` observe the *same* environment from two mount
+points — folding a desk station in would assert the room's CO₂, light or temperature as
+the body's. So **`gnd` is excluded from the authority table and from every merged
+channel**, including the GPS no-fix fallback and the packet heartbeat. It remains visible
+as a connected producer (`perBoard` in the Kotlin merge) so a consumer can render it on
+its own surface, and its rows are logged under `board=gnd` like any other. The Operator
+console shows it in a dedicated **Ground Station** panel with no precedence controls; the
+Glass HUD ignores it entirely.
+
+Consumers must key the role off the three-letter **token** (`fwd`/`aft`/`gnd`), never a
+Kotlin enum name — `Role.Ground.name.lowercase()` is `"ground"`, which is not the wire
+value. `:core` exposes `Role.token` and `roleFromToken()` for exactly this.
 
 ### Authority table (default precedence)
 
@@ -483,7 +499,7 @@ precedence order**. This table is the **default**, shared by every consumer (the
 | `light_lux` / `light_ir` + Hizashi | **fwd** → aft | Light is *not* direction-agnostic the way air chem is: a pack sensor reads the wearer's own shadow, the head reads the light actually being looked at |
 | `steps` (Hokan) | **aft** → fwd | Torso pedometer beats head-bob |
 
-**Merge rule (one sentence):** for each channel, filter to the pods currently supplying a
+**Merge rule (one sentence):** for each **body** pod (`gnd` is filtered out first), filter to those currently supplying a
 **valid** value (non-blank / GPS fix / non-null), then take the highest in that channel's
 precedence order — so a preferred-but-absent pod never wins over a present one.
 

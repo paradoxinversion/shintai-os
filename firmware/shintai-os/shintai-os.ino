@@ -478,7 +478,9 @@ const char* CSV_HEADER =
 // only while UNtethered (no USB host), so tethered live sessions are unaffected.
 Preferences prefs;
 
-// Bunshin (分身): this pod's role — "fwd" (forward / head-side) or "aft" (pack-side).
+// Bunshin (分身): this pod's role — "fwd" (forward / head-side), "aft" (pack-side), or
+// "gnd" (a stationary desk station; same firmware, different PLACE, so consumers keep it
+// out of the body merge).
 // The SAME binary runs on both pods; role is data (NVS key "role"), not a build flag.
 // It names the BLE device ShintaiOS-<role> so a central can tell the two pods apart.
 // Set/cycled live with the 'R' serial command; applied at boot (the BLE name is fixed
@@ -1560,8 +1562,12 @@ void loop() {
     else if (cmd == 'U' || cmd == 'u') { reportUnits(); lastUpdate = millis(); }
     else if (cmd == 'T' || cmd == 't') { probeTof();  lastUpdate = millis(); }
     else if (cmd == 'G' || cmd == 'g') { probeGrid(); lastUpdate = millis(); }
-    else if (cmd == 'R' || cmd == 'r') {   // Bunshin: cycle this pod's role fwd<->aft
-      podRole = (podRole == "fwd") ? "aft" : "fwd";
+    else if (cmd == 'R' || cmd == 'r') {   // Bunshin: cycle this pod's role fwd -> aft -> gnd
+      // Three producers now: two BODY pods (fwd/aft) that Bunshin federates, and "gnd" —
+      // a desk station running the identical firmware. Ground is NOT merged with the body
+      // pods: it senses the room, not the wearer (see CONTRACT.md's multi-producer model).
+      // Cycles rather than taking a direct token because 'G' is already probeGrid.
+      podRole = (podRole == "fwd") ? "aft" : (podRole == "aft") ? "gnd" : "fwd";
       prefs.putString("role", podRole);
       Serial.println("[role] set to '" + podRole +
                      "' — reboot to re-advertise as 'ShintaiOS-" + podRole + "'");
@@ -2068,7 +2074,7 @@ void loop() {
     row += ',';  row += (hitokageActive && hitokageDetected ? String(hitokageRangeMm) : String(""));  // Hitokage presence_distance_mm
     row += ',';  row += (hizashiHasData ? String(lightLux, 1) : String(""));   // Hizashi light_lux
     row += ',';  row += (hizashiHasData ? String(lightIr)     : String(""));   // Hizashi light_ir
-    row += ',';  row += podRole;   // Bunshin: which pod (fwd/aft) produced this row — stays terminal
+    row += ',';  row += podRole;   // Bunshin: which producer (fwd/aft/gnd) — stays terminal
 
     // Persist to onboard flash only while untethered (no USB host). close() on a
     // row cadence (and on host-connect, below) commits the directory entry so a

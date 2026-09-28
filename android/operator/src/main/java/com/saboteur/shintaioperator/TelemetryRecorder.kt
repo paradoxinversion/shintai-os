@@ -2,6 +2,7 @@ package com.saboteur.shintaioperator
 
 import android.util.Log
 import com.saboteur.shintai.core.Role
+import com.saboteur.shintai.core.token
 import com.saboteur.shintai.core.ShintaiReadings
 import java.io.BufferedWriter
 import java.io.File
@@ -74,7 +75,10 @@ class TelemetryRecorder(private val dir: File) {
             // reading, not an absence, and the firmware CSV blanks an absent sensor too.
             if (r.hizashi.known) r.hizashi.lux.toString() else "",
             if (r.hizashi.known) r.hizashi.ir.toString() else "",
-            role?.name?.lowercase().orEmpty(),   // board: fwd / aft — stays terminal
+            // board: the wire TOKEN (fwd / aft / gnd), not the enum name — Ground's token is
+            // "gnd", so name.lowercase() would have written "ground" and broken every
+            // consumer keying on the CSV's three-letter roles.
+            role?.token.orEmpty(),
         )
         try {
             w.write(cells.joinToString(",") { quote(it) })

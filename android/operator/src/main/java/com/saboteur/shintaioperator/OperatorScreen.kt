@@ -119,6 +119,7 @@ fun OperatorScreen(vm: OperatorViewModel, onRequestPermissions: () -> Unit) {
     val distHist by vm.distanceHistory.collectAsState()
     val co2Hist by vm.co2History.collectAsState()
     val pairingOpen by vm.pairingOpen.collectAsState()
+    val ground by vm.ground.collectAsState()
     val units = vm.units
 
     Column(
@@ -139,7 +140,7 @@ fun OperatorScreen(vm: OperatorViewModel, onRequestPermissions: () -> Unit) {
                 PairPanel(scanning, devices, vm, r.perBoard.keys, onBack = null)
             pairingOpen ->
                 PairPanel(scanning, devices, vm, r.perBoard.keys, onBack = vm::closePairing)
-            else -> Console(r, units, distHist, co2Hist, rec.active, vm)
+            else -> Console(r, ground, units, distHist, co2Hist, rec.active, vm)
         }
 
         Spacer(Modifier.height(2.dp))
@@ -403,9 +404,41 @@ private fun TelemetryPanel(r: ShintaiReadings, units: Units) {
     }
 }
 
+/**
+ * GROUND STATION — a desk pod's own readings, kept deliberately OUT of the merged body
+ * readout above. Ground runs the identical firmware and fills the same channels, but it
+ * senses the room rather than the wearer: folding its CO₂ or lux into the console's Air
+ * panel would assert the desk's environment as the body's. So it gets its own box, its
+ * own label, and no precedence controls (mergeReadings ignores it by design).
+ *
+ * Only the ambient channels a fixed station can meaningfully report are shown — there is
+ * no proximity, heading or step count worth reading off a stationary desk.
+ */
+@Composable
+private fun GroundPanel(g: ShintaiReadings?, units: Units) {
+    if (g == null) return
+    val air = AirReadout.resolve(g.climate, g.environment)
+    Panel("Ground Station", ledColor = T.Amber) {
+        Text(
+            "Desk pod — the room, not the wearer. Not merged.",
+            color = T.BoneDim, fontFamily = T.Mono, fontSize = 10.sp,
+        )
+        Spacer(Modifier.height(6.dp))
+        OptionalRow("CO₂", air.co2Ppm?.toString(), "ppm")
+        val (tVal, tUnit) = air.tempParts(units)
+        OptionalRow("Temperature", tVal.takeIf { air.tempC != null }, tUnit)
+        OptionalRow("Humidity", air.humidityPct?.let { "%.0f".format(it) }, "%RH")
+        OptionalRow("Pressure", air.pressureHpa?.let { "%.1f".format(it) }, "hPa")
+        OptionalRow("Particulate", g.particulate)
+        OptionalRow("Ambient Light", g.hizashi.detail)
+        OptionalRow("Thermal", formatThermal(g.thermal, units).takeIf { g.thermal.reported() })
+    }
+}
+
 @Composable
 private fun Console(
     r: ShintaiReadings,
+    ground: ShintaiReadings?,
     units: Units,
     distHist: List<Float>,
     co2Hist: List<Float>,
@@ -413,6 +446,7 @@ private fun Console(
     vm: OperatorViewModel,
 ) {
     NoChannelsNotice(r)
+    GroundPanel(ground, units)
     ProximityPanel(r, units)
     TelemetryPanel(r, units)
 
