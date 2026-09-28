@@ -30,7 +30,7 @@ def c(rgb, s):
 # Addresses mirror the firmware scanI2C() list + CONTRACT/REGISTRY.
 ROSTER = [
     ("REAR", "VL53L5CX FIELD", (0x70, 0x29)),   # Zanshin: behind the mux, or direct
-    ("IMU ", "LSM6DSOX",       (0x6a,)),
+    ("IMU ", "LSM6DSOX",       (0x6a, 0x6b)),   # strap-selectable, like the mag below
     ("MAG ", "LIS3MDL",        (0x1c, 0x1e)),
     ("GPS ", "PA1010D",        (0x10,)),
     ("THRM", "MLX90640",       (0x33,)),

@@ -115,6 +115,10 @@ static inline int16_t nearerMm(int16_t a, int16_t b) {
 }
 Adafruit_LSM6DSOX imu;
 Adafruit_LIS3MDL  mag;
+// Strap-jumper alternates to the library defaults (LSM6DS 0x6a / LIS3MDL 0x1c);
+// setup() falls back to these so a differently-strapped breakout still enumerates.
+#define LSM6DS_ALT_ADDR  0x6B
+#define LIS3MDL_ALT_ADDR 0x1E
 #define GPS_ADDR 0x10
 Adafruit_GPS GPS(&Wire);
 Adafruit_MLX90640 mlx;
@@ -583,7 +587,7 @@ void scanI2C() {
     Wire.beginTransmission(a);
     if (Wire.endTransmission() == 0) { Serial.printf("  0x%02X\n", a); n++; }
   }
-  Serial.printf("  %d device(s) (expect ToF mux=0x70 [gates 0x29 field], IMU=0x6a, mag=0x1c/0x1e, GPS=0x10, thermal=0x33, SCD=0x62, BME=0x77, APDS=0x39, Andon matrix=0x3f, lightning=0x03, radar=0x52)\n", n);
+  Serial.printf("  %d device(s) (expect ToF mux=0x70 [gates 0x29 field], IMU=0x6a/0x6b, mag=0x1c/0x1e, GPS=0x10, thermal=0x33, SCD=0x62, BME=0x77, APDS=0x39, Andon matrix=0x3f, lightning=0x03, radar=0x52)\n", n);
 }
 
 // Report which units actually INITIALIZED ('U') — the authoritative presence answer.
@@ -800,15 +804,25 @@ void setup() {
     zanshinDirect = hasZanshin;
   }
 
-  // IMU — non-fatal: warn and continue if absent
+  // IMU + Magnetometer — non-fatal: warn and continue if absent. Both chips are
+  // strap-selectable between TWO addresses (Adafruit's breakouts jumper LSM6DSOX
+  // 0x6a->0x6b and LIS3MDL 0x1c->0x1e), but begin_I2C() only knocks at the library
+  // default. A board strapped the other way then ACKs on the 'I' scan while its CSV
+  // column stays blank — which reads as a dead sensor and isn't one. Try the default
+  // first, then the alternate, and say which one answered so the log is unambiguous.
   imuPresent = imu.begin_I2C();
-  Serial.println(imuPresent ? "[OK] LSM6DSOX IMU"
-                            : "[WARN] LSM6DSOX not found — accel disabled");
+  bool imuAlt = false;
+  if (!imuPresent) { imuPresent = imu.begin_I2C(LSM6DS_ALT_ADDR); imuAlt = imuPresent; }
+  Serial.println(!imuPresent ? "[WARN] LSM6DSOX not found — accel disabled"
+                 : imuAlt    ? "[OK] LSM6DSOX IMU @ 0x6b (alternate strap)"
+                             : "[OK] LSM6DSOX IMU");
 
-  // Magnetometer — non-fatal: warn and continue if absent
   magPresent = mag.begin_I2C();
-  Serial.println(magPresent ? "[OK] LIS3MDL Magnetometer"
-                            : "[WARN] LIS3MDL not found — heading disabled");
+  bool magAlt = false;
+  if (!magPresent) { magPresent = mag.begin_I2C(LIS3MDL_ALT_ADDR); magAlt = magPresent; }
+  Serial.println(!magPresent ? "[WARN] LIS3MDL not found — heading disabled"
+                 : magAlt    ? "[OK] LIS3MDL Magnetometer @ 0x1e (alternate strap)"
+                             : "[OK] LIS3MDL Magnetometer");
 
   // Thermal — non-fatal: warn and continue if absent
   thermalPresent = mlx.begin(MLX90640_I2CADDR_DEFAULT, &Wire);
