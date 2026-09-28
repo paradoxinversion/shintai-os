@@ -219,6 +219,8 @@ def _centered(colored, width, visible_len):
 
 if __name__ == "__main__":
     # Standalone demo: a representative roster (NOSE offline) so the visuals are visible
-    # without a board. In the logger, states come from a live probe_addresses() scan.
-    demo = [(t, n, "OFFLINE" if t == "NOSE" else "OK") for t, n, _ in ROSTER]
+    # without a board. Keyed on UNIT_ROSTER, not the address ROSTER, so the demo shows the
+    # same module list a live board does — the logger's real path is probe_units() ('U'),
+    # and ROSTER is only the fallback for firmware predating that command.
+    demo = [(t, n, "OFFLINE" if t == "NOSE" else "OK") for t, n, _ in UNIT_ROSTER]
     play(demo)
