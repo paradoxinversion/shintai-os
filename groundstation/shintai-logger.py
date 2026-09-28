@@ -145,13 +145,26 @@ def dashboard(vals, samples, csv_name):
     return out
 
 
-def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status):
+# Which CSV headers have already gone down the pipe. Two pods emit the SAME header, and
+# a consumer wants the schema once, not once per pod (nor again each time a board is
+# asked to re-print it mid-capture). Guarded by the same lock as the stdout writes.
+_header_piped: dict[str, bool] = {}
+
+
+def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status, emit_data=False):
     """Capture one serial stream to its own CSV until [stop_event] is set.
 
     Each written row gets a trailing `host_ts` column — the host wall-clock at receipt,
     in epoch milliseconds. The two pods share no clock (`timestamp_ms` is each board's
     own millis() since ITS boot), so `host_ts` is the common timeline analyze.py aligns
     on. The board's own `board` column (fwd/aft) tags each row with its producing pod.
+
+    STREAM SPLIT (so `shintai | …` composes). Everything a human reads — the boot
+    roll-call, the live panel, per-port progress, the board's own human lines, errors —
+    goes to **stderr**. **stdout** carries only the board's CSV verbatim (header + rows,
+    no host_ts, no label prefix), and only when [emit_data] is set. That keeps the panel
+    on the terminal while the data goes down the pipe. Rows stay self-identifying
+    across pods via the contract's own `board` column, so no prefix is needed.
     """
     label = port_label(port)
     csv_name = os.path.basename(csv_path)
@@ -161,7 +174,7 @@ def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status):
         ser = serial.Serial(port, baud, timeout=2)
     except serial.SerialException as e:
         with lock:
-            print(f"[{label}] cannot open {port}: {e}")
+            print(f"[{label}] cannot open {port}: {e}", file=sys.stderr)
         return
 
     with ser, open(csv_path, "w", newline="") as f:
@@ -172,7 +185,8 @@ def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status):
         # skips the ritual (the two-pod path stays a plain log).
         if live_panel:
             try:
-                bootroll.play(bootroll.states_from_addresses(bootroll.probe_addresses(ser)))
+                bootroll.play(bootroll.states_from_addresses(bootroll.probe_addresses(ser)),
+                              out=sys.stderr)
             except Exception:  # noqa: BLE001 — never block capture on the flourish
                 pass
         # Ask the sketch for both human + CSV output and a fresh CSV header, so we
@@ -185,11 +199,19 @@ def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status):
                 if not line:
                     continue
 
-                if line.startswith("timestamp_ms"):          # CSV header → file only
+                if line.startswith("timestamp_ms"):          # CSV header → file (+ pipe)
                     header = line.split(",") + ["host_ts"]
                     writer.writerow(header)
                     f.flush()
                     header_written = True
+                    # A pipe consumer needs the schema before the rows, and needs it
+                    # only once even with two pods sending their own identical header.
+                    if emit_data:
+                        with lock:
+                            if not _header_piped.get(line):
+                                _header_piped[line] = True
+                                sys.stdout.write(line + "\n")
+                                sys.stdout.flush()
                     continue
 
                 if header_written and line[0].isdigit():      # CSV data row
@@ -198,34 +220,38 @@ def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status):
                     f.flush()
                     samples += 1
                     status[label] = samples
+                    if emit_data:                              # the composable stream
+                        with lock:
+                            sys.stdout.write(line + "\n")
+                            sys.stdout.flush()
                     if live_panel:
                         if not dash_on:
-                            sys.stdout.write("\x1b[2J")        # clear once on first frame
+                            sys.stderr.write("\x1b[2J")        # clear once on first frame
                             dash_on = True
                         frame = dashboard(dict(zip(header, row)), samples, csv_name)
-                        sys.stdout.write("\x1b[H" + "\n".join(l + "\x1b[K" for l in frame) + "\x1b[J")
-                        sys.stdout.flush()
-                    else:
+                        sys.stderr.write("\x1b[H" + "\n".join(l + "\x1b[K" for l in frame) + "\x1b[J")
+                        sys.stderr.flush()
+                    elif not emit_data:
                         with lock:
-                            print(f"  [{label} #{samples} logged]")
+                            print(f"  [{label} #{samples} logged]", file=sys.stderr)
                     continue
 
                 if live_panel and not dash_on:     # human/boot lines (single-port panel)
-                    print(line)
+                    print(line, file=sys.stderr)
                 elif not live_panel:
                     with lock:
-                        print(f"  [{label}] {line}")
+                        print(f"  [{label}] {line}", file=sys.stderr)
 
             except KeyboardInterrupt:
                 stop_event.set()
                 break
             except Exception as e:                 # noqa: BLE001 — keep the capture alive
                 with lock:
-                    print(f"[{label}] error: {e}")
+                    print(f"[{label}] error: {e}", file=sys.stderr)
                 continue
 
     if live_panel and dash_on:
-        sys.stdout.write("\x1b[J")
+        sys.stderr.write("\x1b[J")
 
 
 def main():
@@ -233,13 +259,22 @@ def main():
     ap.add_argument("--port", action="append", default=[],
                     help="serial port to capture; repeatable. Omit to auto-detect all matching devices.")
     ap.add_argument("--baud", type=int, default=BAUD, help=f"baud rate (default {BAUD})")
+    ap.add_argument("--no-panel", action="store_true",
+                    help="suppress the live ANSI panel; stream the board's CSV to stdout instead")
     args = ap.parse_args()
+
+    # Stream split (see capture_port): the panel is a STDERR surface, so stdout is free
+    # to be a pipe. Panel when stderr is a terminal and it wasn't waived; data on stdout
+    # whenever stdout is redirected, or whenever there's no panel — so silencing one
+    # channel never leaves both silent.
+    panel = sys.stderr.isatty() and not args.no_panel
+    emit_data = (not sys.stdout.isatty()) or not panel
 
     os.makedirs(LOG_DIR, exist_ok=True)
 
     ports = find_ports(args.port)
     if not ports:
-        print("No serial ports found.")
+        print("No serial ports found.", file=sys.stderr)
         sys.exit(1)
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -249,10 +284,10 @@ def main():
         csv_path = os.path.join(LOG_DIR, f"shintai_log_{timestamp}{suffix}.csv")
         jobs.append((port, csv_path))
 
-    print(f"Capturing {len(ports)} port(s) at {args.baud} baud:")
+    print(f"Capturing {len(ports)} port(s) at {args.baud} baud:", file=sys.stderr)
     for port, csv_path in jobs:
-        print(f"  {port} → {os.path.basename(csv_path)}")
-    print()
+        print(f"  {port} → {os.path.basename(csv_path)}", file=sys.stderr)
+    print(file=sys.stderr)
 
     stop_event = threading.Event()
     lock = threading.Lock()
@@ -262,7 +297,7 @@ def main():
         # Single pod: keep the rich in-place ANSI status panel, in the main thread.
         port, csv_path = jobs[0]
         try:
-            capture_port(port, csv_path, args.baud, sys.stdout.isatty(), stop_event, lock, status)
+            capture_port(port, csv_path, args.baud, panel, stop_event, lock, status, emit_data)
         except KeyboardInterrupt:
             stop_event.set()
     else:
@@ -271,7 +306,8 @@ def main():
         # racing. Ctrl+C on the main thread signals every reader to stop.
         threads = [
             threading.Thread(target=capture_port,
-                             args=(port, csv_path, args.baud, False, stop_event, lock, status),
+                             args=(port, csv_path, args.baud, False, stop_event, lock,
+                                   status, emit_data),
                              daemon=True)
             for port, csv_path in jobs
         ]
@@ -287,7 +323,8 @@ def main():
                 t.join(timeout=2)
 
     total = sum(status.values())
-    print(f"\nLogging stopped. {total} samples across {len(jobs)} port(s) → {LOG_DIR}")
+    print(f"\nLogging stopped. {total} samples across {len(jobs)} port(s) → {LOG_DIR}",
+          file=sys.stderr)
     sys.exit(0)
 
 
