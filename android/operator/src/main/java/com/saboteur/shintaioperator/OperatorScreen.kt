@@ -196,6 +196,10 @@ private fun AirPanel(r: ShintaiReadings, units: Units) {
         // Hitokage: radar presence/range, rendered raw — no derived/lean split, both apps
         // show the same payload (there's no PM2.5-style "one number that matters" here).
         ReadoutRow("Presence", r.presence)
+        // Hizashi: the console gets illuminance AND the raw IR channel — the visible/IR
+        // ratio is what separates daylight from incandescent from LED, and that comparison
+        // is console work. The HUD takes the lux alone.
+        ReadoutRow("Ambient Light", r.hizashi.detail)
         ReadoutRow(
             "Nose", r.kyukaku.smell.label.uppercase(), "r ${"%.2f".format(r.kyukaku.ratio)}",
             valueColor = when (r.kyukaku.smell) {
@@ -424,6 +428,7 @@ private fun channelLabel(ch: Channel): String = when (ch) {
     Channel.Fuda -> "NFC Tag"
     Channel.Presence -> "Presence"
     Channel.RadarPeaks -> "Radar Peaks"
+    Channel.Hizashi -> "Ambient Light"
 }
 
 /** The board's OLED pane — the console twin of the on-body APDS swipe, over the writable

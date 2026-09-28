@@ -385,12 +385,14 @@ Added by **Hizashi (日差し)** — the TSL2591 ambient-light channel, the BLE-
 like Fuda and Lightning — ambient light is a continuous scalar. It notifies only while the
 TSL2591 is present.
 
-**Neither Android app subscribes to this channel yet.** The characteristic is board-side in this
-pass: the UUID is mirrored in `:core`'s `ShintaiGatt` (the one Kotlin mirror of this table) but is
-deliberately **kept out of `ShintaiGatt.ALL`**, so no app takes it and no renderer has to exist
-yet — the same treatment `THERMAL_GRID` gets for a different reason. Wiring it into `:glass` and
-`:operator` is a follow-up, and the subscription counts in *Consumer coverage* below are unchanged
-by it.
+**Both apps consume it**, and they split it the way the lean-surface rule dictates: Operator shows
+the illuminance **and** the raw IR channel (the visible/IR ratio is the daylight-vs-incandescent-vs-LED
+comparison, which is console work), while Glass shows the **lux alone** — the same treatment PM2.5 and
+the bare tag UID get. Unlike Particulate and Presence the payload is **parsed** in `:core`
+(`HizashiState`) rather than held raw, because both apps want the lux as a number.
+
+Operator also records `light_lux` / `light_ir` to its own capture CSV, blank when the sensor is
+unknown — a recorded `0` lux would be a reading, not an absence.
 
 A characteristic only notifies when its sensor is present and has data (e.g. Climate
 warms up ~5 s and updates every ~5 s; Thermal needs the MLX90640 attached; Hokan needs the IMU;
@@ -402,10 +404,10 @@ the presence-mode fallback).
 differently by design (see `android/`):
 
 - **Operator** (`com.saboteur.shintaioperator`, the phone field console) subscribes to
-  the **fifteen string** characteristics, Environment, Hokan, Lightning, Particulate, Fuda,
-  Presence, Radar Peaks, and Pane Control included — the complete readout —
-  **plus Thermal Grid and Rear Depth Grid** (the Metsuke heat panel + the Zanshin rear depth panel).
-  Seventeen channels: the full-fidelity console. It renders the full Enrai readout (distance · energy ·
+  **every one of the seventeen string** characteristics — the whole of `ShintaiGatt.ALL`, Environment,
+  Hokan, Lightning, Particulate, Fuda, Presence, Radar Peaks, Hizashi and Pane Control included — the
+  complete readout — **plus Thermal Grid and Rear Depth Grid** (the Metsuke heat panel + the Zanshin
+  rear depth panel). **Nineteen channels**: the full-fidelity console. It renders the full Enrai readout (distance · energy ·
   count) and flashes on each new strike, the full Enmu triad (PM1.0 · PM2.5 · PM10), Fuda's
   `UID + type` in a dedicated **Identity** panel — its own category, being the first channel that
   reports *who/what* rather than a physical scalar — and Hitokage's detected/nearest-range summary
@@ -413,10 +415,12 @@ differently by design (see `android/`):
   has none).
 - **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **fourteen string
   channels plus Thermal Grid and Rear Depth Grid** (sixteen). This is the first place the two apps'
-  *subscription* sets genuinely differ rather than just their rendering: Glass omits **Pane Control**
-  (`abcd1306`), because paging the board's OLED is a console action and the HUD has no panel to
-  drive, and **Radar Peaks** (`abcdd1a6`) — a peak list has no HUD-appropriate rendering, unlike
-  Thermal Grid/Rear Depth Grid's visual panels, so Glass keeps the lean `Presence` summary alone.
+  *subscription* sets genuinely differ rather than just their rendering. Glass omits three of
+  `ShintaiGatt.ALL`: **Pane Control** (`abcd1306`), because paging the board's OLED is a console
+  action and the HUD has no panel to drive; **Radar Peaks** (`abcdd1a6`) — a peak list has no
+  HUD-appropriate rendering, unlike Thermal Grid/Rear Depth Grid's visual panels, so Glass keeps the
+  lean `Presence` summary alone; and **Lightning Control** (`abcda53c`), the AS3935 tuning channel,
+  which is an app→board control surface and belongs on the console with the other knobs.
   It also treats **Environment** (`abcdc0de`,
   BME688 pressure + gas) specially: it takes the channel **only to derive Kyūkaku's smell SPIKE
   badge** from `gas_ohms` (`:core` `Kyukaku.kt`), and does **not** render the raw pressure/VOC
@@ -425,7 +429,9 @@ differently by design (see `android/`):
   **Lightning** it surfaces lean too: the nearest-strike distance with a flash on the edge — a
   storm overhead is worth the waveguide. **Particulate** gets the same treatment: the HUD shows
   **PM2.5 alone** — the health-relevant fraction — while the full PM1.0/2.5/10 triad stays on
-  the phone. **Fuda** likewise: the tag **UID alone**, without the RF family. **Presence**
+  the phone. **Fuda** likewise: the tag **UID alone**, without the RF family. **Hizashi** the same way — the
+  **lux alone**, since the raw IR channel is only meaningful as a comparison against the visible one,
+  and that is console work. **Presence**
   (Hitokage) it renders too — a single-line detected/range readout, the same payload as the
   console since there's no raw-vs-derived split to lean out of.
 
@@ -474,6 +480,7 @@ precedence order**. This table is the **default**, shared by every consumer (the
 | `nfc_uid` / `nfc_type` + Fuda | **fwd** → aft | You scan the tag you're facing — head-side |
 | `presence_detected` / `presence_distance_mm` + Presence + Radar Peaks (Hitokage) | **fwd** → aft | Forward presence rides the head — you face what you're scanning for |
 | `gps_fix` / `lat` / `lon` / `alt_m` / `speed_kmh` / `sats` | **fwd** → aft (fix-gated) | A pod with no fix supplies nothing — but it still *notifies* `no fix sats=N`, so consumers must gate on the payload, not on silence |
+| `light_lux` / `light_ir` + Hizashi | **fwd** → aft | Light is *not* direction-agnostic the way air chem is: a pack sensor reads the wearer's own shadow, the head reads the light actually being looked at |
 | `steps` (Hokan) | **aft** → fwd | Torso pedometer beats head-bob |
 
 **Merge rule (one sentence):** for each channel, filter to the pods currently supplying a

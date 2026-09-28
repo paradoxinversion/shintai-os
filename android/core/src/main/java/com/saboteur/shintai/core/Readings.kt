@@ -27,6 +27,7 @@ data class ShintaiReadings(
     val particulate: String = "—",     // e.g. "PM1.0:12 PM2.5:34 PM10:56 ug/m3" (Enmu, PMSA003I)
     val fuda: String = "—",            // e.g. "UID:04A1B2C3 ISO14443A" (Fuda, PN532) — event-driven
     val presence: String = "—",        // e.g. "present=1 dist=260mm" (Hitokage, XM125 radar)
+    val hizashi: HizashiState = HizashiState(),  // Hizashi's ambient light (TSL2591), parsed
     val radarPeaks: String = "—",      // e.g. "n=2 0:2230/-2774 1:4809/-3865" (Hitokage, distance mode only)
     val pane: PaneState = PaneState(),  // the board's OLED pane (Pane Control char) — per-pod, not merged
     val kyukaku: KyukakuState = KyukakuState(),  // Kyūkaku's smell state, derived from environment's gas_ohms
@@ -308,6 +309,40 @@ data class LightningState(
 }
 
 /**
+ * Hizashi (日差し) — the TSL2591's ambient light, folded from the "lux=412.5 ir=57"
+ * characteristic. Parsed rather than held raw (unlike Particulate/Presence) because both
+ * apps want the lux NUMBER: Glass shows it alone, and the visible/IR split only means
+ * something as two values you can compare.
+ *
+ * [known] is false until the first notify — which also covers the no-sensor case, since a
+ * board with no TSL2591 never notifies this channel at all.
+ */
+data class HizashiState(
+    val lux: Float = 0f,
+    val ir: Int = 0,
+    val known: Boolean = false,
+) {
+    /** Lean readout for the HUD: "412 lx", or "—" before the first reading. Whole lux —
+     *  a tenth of a lux is noise at every level a wearer can perceive. */
+    val label: String get() = if (!known) "—" else "${lux.toInt()} lx"
+
+    /** Console readout: illuminance plus the raw IR channel it was derived from. */
+    val detail: String get() = if (!known) "—" else "${lux.toInt()} lx   IR $ir"
+
+    companion object {
+        /** Fold a "lux=412.5 ir=57" payload; a malformed field keeps the previous value. */
+        fun fold(prev: HizashiState?, value: String): HizashiState {
+            val p = prev ?: HizashiState()
+            val lx = Regex("""lux=(-?[\d.]+)""").find(value)?.groupValues?.get(1)?.toFloatOrNull()
+            val irv = Regex("""ir=(\d+)""").find(value)?.groupValues?.get(1)?.toIntOrNull()
+            // A payload that parsed neither field is not evidence of a sensor.
+            if (lx == null && irv == null) return p
+            return HizashiState(lux = lx ?: p.lux, ir = irv ?: p.ir, known = true)
+        }
+    }
+}
+
+/**
  * The board's OLED pane state, from the writable Pane Control characteristic
  * (`pane=2/5 NAV`). The console drives its paging UI from this and writes tokens back.
  *
@@ -429,6 +464,8 @@ fun ShintaiReadings.fold(uuid: UUID, value: String): ShintaiReadings {
         // Hitokage: periodic radar readout, stored raw for display like Particulate.
         ShintaiGatt.PRESENCE -> base.copy(presence = value)
         ShintaiGatt.RADAR_PEAKS -> base.copy(radarPeaks = value)
+        // Hizashi: ambient light, parsed so both apps can use the lux number directly.
+        ShintaiGatt.HIZASHI -> base.copy(hizashi = HizashiState.fold(base.hizashi, value))
         ShintaiGatt.LIGHTNING_CTRL -> base.copy(lightningConfig = LightningConfig.parse(value))
         // Pane Control notifies on a console write AND on an on-body swipe, so this is the
         // board telling us what it's showing — never an echo of what we asked for.

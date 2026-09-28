@@ -450,6 +450,10 @@ private fun SupportingReadouts(r: ShintaiReadings, units: Units) {
     // Hitokage: the same raw readout as the console — no raw-vs-derived split to lean
     // out of (unlike PM2.5/UID, there's no "one number that matters" subset here).
     ReadoutRow("RADAR", r.presence)
+    // Hizashi: the lux alone. The raw IR channel is a comparison you make on the
+    // console, not a number worth the waveguide — the lean-surface rule, same as
+    // PM2.5 and the bare tag UID above.
+    ReadoutRow("LIGHT", r.hizashi.label)
     // Hokan: cumulative steps + cadence (the pedometer readout). Always shown so the
     // row layout is stable; the PDR mini-map below appears only once there's a walked path.
     ReadoutRow("STEPS", r.hokan?.let { "${it.steps}  ${it.cadence}/min" } ?: "—")

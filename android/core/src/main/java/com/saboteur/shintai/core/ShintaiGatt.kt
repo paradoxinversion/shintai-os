@@ -72,10 +72,8 @@ object ShintaiGatt {
 
     /** Hizashi's ambient-light readout: "lux=412.5 ir=57" (string) — the BLE-live twin of the
      *  light_lux / light_ir CSV columns. PERIODIC, like [PARTICULATE] and [PRESENCE].
-     *
-     *  Deliberately NOT in [ALL]: neither app consumes it yet, so nothing subscribes and no
-     *  renderer has to exist. This entry is the contract mirror only — wiring it into `:glass`
-     *  and `:operator` is a follow-up. See CONTRACT.md "Hizashi". */
+     *  Both apps subscribe; Glass shows the lux alone, Operator lux + the raw IR channel.
+     *  See CONTRACT.md "Hizashi". */
     val HIZASHI: UUID = UUID.fromString("abcd2591-ab12-ab12-ab12-abcdef123456")
 
     /** Metsuke's binary heat grid (packed bytes, not a string). See [BINARY]. */
@@ -100,5 +98,6 @@ object ShintaiGatt {
      *  nothing forces an app to take them all (the Glass HUD skips [ENVIRONMENT]). */
     val ALL: List<UUID> =
         listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT, HOKAN,
-            LIGHTNING, LIGHTNING_CTRL, PARTICULATE, FUDA, PRESENCE, RADAR_PEAKS, PANE_CTRL)
+            LIGHTNING, LIGHTNING_CTRL, PARTICULATE, FUDA, PRESENCE, RADAR_PEAKS, PANE_CTRL,
+            HIZASHI)
 }

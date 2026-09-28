@@ -23,7 +23,7 @@ enum class Role { Fwd, Aft }
  */
 enum class Channel {
     Distance, Heading, Accel, Thermal, Climate, Environment, Gps, Hokan, Lightning, Particulate,
-    Fuda, Presence, RadarPeaks,
+    Fuda, Presence, RadarPeaks, Hizashi,
 }
 
 /** Per-channel precedence order, highest-priority pod first. */
@@ -48,6 +48,10 @@ val DEFAULT_PRECEDENCE: Precedence = mapOf(
     Channel.Fuda to listOf(Role.Fwd, Role.Aft),          // Fuda: you scan the tag you're facing — head-side
     Channel.Presence to listOf(Role.Fwd, Role.Aft),      // Hitokage: forward presence rides the head
     Channel.RadarPeaks to listOf(Role.Fwd, Role.Aft),    // Hitokage: same pod as Presence — same sensor
+    // Hizashi: head-side. Unlike the air channels, light is not direction-agnostic —
+    // a pack sensor reads the wearer's own shadow, while the head sees the light being
+    // looked at, which is the one a HUD would ever react to.
+    Channel.Hizashi to listOf(Role.Fwd, Role.Aft),
 )
 
 /** The blank sentinel a string channel carries until its sensor supplies a value. */
@@ -77,6 +81,7 @@ private fun ShintaiReadings.supplies(ch: Channel): Boolean = when (ch) {
     Channel.Fuda -> fuda != BLANK
     Channel.Presence -> presence != BLANK
     Channel.RadarPeaks -> radarPeaks != BLANK
+    Channel.Hizashi -> hizashi.known
 }
 
 /** The channels this pod currently supplies a valid value for. The Operator uses this
@@ -128,6 +133,14 @@ private fun pickGps(perPod: Map<Role, ShintaiReadings>, winner: ShintaiReadings?
         ?: perPod.values.map { it.gps }.firstOrNull { it != BLANK }
         ?: BLANK
 
+/**
+ * Hizashi: the winning pod's parsed light, or an unknown state when no pod supplies one.
+ * Split out for the same complexity-ceiling reason as [pickPane] and [pickGps] — every
+ * `?:` in [mergeReadings]'s constructor call costs against detekt's limit, and adding this
+ * channel inline pushed it over.
+ */
+private fun pickHizashi(winner: ShintaiReadings?): HizashiState = winner?.hizashi ?: HizashiState()
+
 fun mergeReadings(
     perPod: Map<Role, ShintaiReadings>,
     precedence: Precedence = DEFAULT_PRECEDENCE,
@@ -158,6 +171,7 @@ fun mergeReadings(
         fuda = winner(Channel.Fuda)?.fuda ?: BLANK,
         presence = winner(Channel.Presence)?.presence ?: BLANK,
         radarPeaks = winner(Channel.RadarPeaks)?.radarPeaks ?: BLANK,
+        hizashi = pickHizashi(winner(Channel.Hizashi)),
         pane = pickPane(perPod),
         thermal = thermal?.thermal ?: BLANK,
         environment = environment?.environment ?: BLANK,

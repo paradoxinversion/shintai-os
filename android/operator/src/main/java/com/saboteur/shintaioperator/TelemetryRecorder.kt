@@ -70,6 +70,10 @@ class TelemetryRecorder(private val dir: File) {
             r.particulate,                       // Enmu: the raw "PM1.0:.. PM2.5:.. PM10:.." triad
             r.fuda,                              // Fuda: the raw "UID:<hex> <type>" tag readout
             r.presence,                          // Hitokage: the raw "present=.. dist=.." readout
+            // Hizashi: numeric, and blank when unknown — a recorded 0 lux would be a
+            // reading, not an absence, and the firmware CSV blanks an absent sensor too.
+            if (r.hizashi.known) r.hizashi.lux.toString() else "",
+            if (r.hizashi.known) r.hizashi.ir.toString() else "",
             role?.name?.lowercase().orEmpty(),   // board: fwd / aft — stays terminal
         )
         try {
@@ -101,6 +105,7 @@ class TelemetryRecorder(private val dir: File) {
         private const val TAG = "ShintaiRec"
         const val HEADER =
             "wall_ms,distance_l,distance_r,alert,heading,accel,gps,climate,thermal,environment," +
-                "lightning_km,lightning_energy,lightning_strikes,particulate,fuda,presence,board"
+                "lightning_km,lightning_energy,lightning_strikes,particulate,fuda,presence," +
+                "light_lux,light_ir,board"
     }
 }
