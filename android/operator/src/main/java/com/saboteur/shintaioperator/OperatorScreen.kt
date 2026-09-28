@@ -53,6 +53,7 @@ import com.saboteur.shintai.core.formatGps
 import com.saboteur.shintai.core.formatTemp
 import com.saboteur.shintai.core.formatThermal
 import com.saboteur.shintai.core.parseRadarPeaks
+import com.saboteur.shintai.core.suppliedChannels
 import com.saboteur.shintaioperator.ui.AScope
 import com.saboteur.shintaioperator.ui.AlertBanner
 import com.saboteur.shintaioperator.ui.ConsoleButton
@@ -68,6 +69,43 @@ import com.saboteur.shintaioperator.ui.Sparkline
 import com.saboteur.shintaioperator.ui.StatusLed
 import com.saboteur.shintaioperator.ui.TrackerGauge
 import kotlin.math.roundToInt
+
+
+/**
+ * The sentinel a string channel carries until its characteristic has notified. Mirrors
+ * `Merge.kt`'s private BLANK — a channel still showing this has never reported, which on
+ * this contract means its sensor is absent (a characteristic only notifies when its sensor
+ * is present and has data).
+ */
+private const val BLANK = "—"
+
+private fun String.reported(): Boolean = this != BLANK
+
+/**
+ * A [ReadoutRow] that renders NOTHING when its channel has never reported. On a partial
+ * rig most of the console was dashes — rows for hardware that isn't fitted. Kept as a
+ * helper rather than an `if` at each call site so the panel bodies stay flat and don't
+ * each cost a branch against detekt's complexity ceiling.
+ *
+ * Note what this deliberately does NOT hide: a channel that has reported but currently has
+ * no value. A GPS with no lock still notifies ("no fix sats=N"), so its row stays and reads
+ * "searching" — absent hardware and unlocked hardware are different claims.
+ */
+@Composable
+private fun OptionalRow(
+    label: String,
+    value: String,
+    unit: String = "",
+    valueColor: Color = T.Phosphor,
+) {
+    if (value.reported()) ReadoutRow(label, value, unit, valueColor)
+}
+
+/** The nullable-field twin of [OptionalRow] — skips the row when the value is absent. */
+@Composable
+private fun OptionalRow(label: String, value: String?, unit: String = "") {
+    if (value != null) ReadoutRow(label, value, unit)
+}
 
 /** The Operator's pocket mission-control surface. VOID ground, chamfered panels,
  *  the motion tracker as the hero, and the full sensor cluster the glasses skip. */
@@ -161,6 +199,61 @@ private fun RadarPeaksPanel(radarPeaks: String, units: Units) {
     }
 }
 
+/**
+ * Presence predicates for the gated panels. Deliberately expression bodies rather than
+ * inline `if` conditions: detekt caps both a function's cyclomatic complexity and the
+ * operand count of a single condition, and the panels these feed were already at the
+ * ceiling. Naming them also states the rule once instead of at each call site.
+ */
+private fun ShintaiReadings.hasProximity(): Boolean =
+    distanceText.reported() || rearDepthGrid != null
+
+private fun ShintaiReadings.hasTelemetry(): Boolean =
+    heading.reported() || accel.reported() || gps.reported() || thermal.reported()
+
+/** Any of the five quantities AirReadout resolves from the Climate/Environment pair. */
+private fun AirReadout.hasAny(): Boolean =
+    co2Ppm != null || tempC != null || humidityPct != null ||
+        pressureHpa != null || gasKohm != null
+
+/** Air is fed by five sensors independently (SCD-40, BME688, Enmu, Hitokage, Hizashi);
+ *  any one of them earns the panel. */
+private fun ShintaiReadings.hasAirChannel(air: AirReadout): Boolean =
+    air.hasAny() || particulate.reported() || presence.reported() || hizashi.known
+
+/** CO₂ value + its segment bar — absent entirely without an SCD-40. */
+@Composable
+private fun AirCo2(ppm: Int?) {
+    if (ppm == null) return
+    ReadoutRow("CO₂", "$ppm", "ppm", valueColor = co2Color(ppm))
+    Spacer(Modifier.height(6.dp))
+    SegmentBar(
+        value = ppm.toFloat(),
+        fullScale = Bands.CO2_FULLSCALE_PPM.toFloat(),
+        warn = Bands.CO2_WARN_PPM.toFloat(),
+        alarm = Bands.CO2_ALARM_PPM.toFloat(),
+    )
+    Spacer(Modifier.height(8.dp))
+}
+
+/**
+ * Kyūkaku's derived smell. It has NO BLE channel of its own — it is folded from
+ * Environment's gas_ohms — so it lives or dies with that channel rather than with a
+ * value of its own. Violet is its identity, distinct from the CO₂ green→red ramp.
+ */
+@Composable
+private fun NoseRow(r: ShintaiReadings) {
+    if (!r.environment.reported()) return
+    ReadoutRow(
+        "Nose", r.kyukaku.smell.label.uppercase(), "r ${"%.2f".format(r.kyukaku.ratio)}",
+        valueColor = when (r.kyukaku.smell) {
+            Smell.Settling -> T.BoneDim
+            Smell.Clean -> T.Phosphor
+            else -> T.Violet
+        },
+    )
+}
+
 /** AIR — the climate + environment cluster plus Kyūkaku's derived smell. ENVIRONMENT
  *  is the channel the glasses take only for the smell spike; the Operator shows it in
  *  full. Kyūkaku (no BLE channel of its own — see :core Kyukaku.kt) is folded from the
@@ -169,16 +262,10 @@ private fun RadarPeaksPanel(radarPeaks: String, units: Units) {
 private fun AirPanel(r: ShintaiReadings, units: Units) {
     val air = AirReadout.resolve(r.climate, r.environment)
     val ppm = air.co2Ppm
+    // Nothing in this panel has reported -> no panel at all, rather than a box of dashes.
+    if (!r.hasAirChannel(air)) return
     Panel("Air") {
-        ReadoutRow("CO₂", ppm?.let { "$it" } ?: "—", "ppm", valueColor = co2Color(ppm))
-        Spacer(Modifier.height(6.dp))
-        SegmentBar(
-            value = (ppm ?: 0).toFloat(),
-            fullScale = Bands.CO2_FULLSCALE_PPM.toFloat(),
-            warn = Bands.CO2_WARN_PPM.toFloat(),
-            alarm = Bands.CO2_ALARM_PPM.toFloat(),
-        )
-        Spacer(Modifier.height(8.dp))
+        AirCo2(ppm)
         // Quantity-first, not source-first. CONTRACT.md makes air temp / humidity SHARED
         // slots (BME688 → SCD-40), which the CSV honours; rendering the raw Climate and
         // Environment payloads instead showed an empty Climate row on a BME-only board
@@ -186,28 +273,21 @@ private fun AirPanel(r: ShintaiReadings, units: Units) {
         // rows mirror the CSV columns, so what the console shows and what gets logged
         // finally agree. AirReadout owns the precedence rule for both apps.
         val (tVal, tUnit) = air.tempParts(units)
-        ReadoutRow("Temperature", tVal, tUnit)
-        ReadoutRow("Humidity", air.humidityPct?.let { "%.0f".format(it) } ?: "—", "%RH")
-        ReadoutRow("Pressure", air.pressureHpa?.let { "%.1f".format(it) } ?: "—", "hPa")
-        ReadoutRow("Gas", air.gasKohm?.let { "%.1f".format(it) } ?: "—", "kΩ")
+        OptionalRow("Temperature", tVal.takeIf { air.tempC != null }, tUnit)
+        OptionalRow("Humidity", air.humidityPct?.let { "%.0f".format(it) }, "%RH")
+        OptionalRow("Pressure", air.pressureHpa?.let { "%.1f".format(it) }, "hPa")
+        OptionalRow("Gas", air.gasKohm?.let { "%.1f".format(it) }, "kΩ")
         // Enmu: particulate (µg/m³ — unit-agnostic, rendered raw). The full PM1.0/2.5/10
         // triad on the console; the glasses show only the health-relevant PM2.5.
-        ReadoutRow("Particulate", r.particulate)
+        OptionalRow("Particulate", r.particulate)
         // Hitokage: radar presence/range, rendered raw — no derived/lean split, both apps
         // show the same payload (there's no PM2.5-style "one number that matters" here).
-        ReadoutRow("Presence", r.presence)
+        OptionalRow("Presence", r.presence)
         // Hizashi: the console gets illuminance AND the raw IR channel — the visible/IR
         // ratio is what separates daylight from incandescent from LED, and that comparison
         // is console work. The HUD takes the lux alone.
-        ReadoutRow("Ambient Light", r.hizashi.detail)
-        ReadoutRow(
-            "Nose", r.kyukaku.smell.label.uppercase(), "r ${"%.2f".format(r.kyukaku.ratio)}",
-            valueColor = when (r.kyukaku.smell) {
-                Smell.Settling -> T.BoneDim
-                Smell.Clean -> T.Phosphor
-                else -> T.Violet
-            },
-        )
+        OptionalRow("Ambient Light", r.hizashi.detail)
+        NoseRow(r)
     }
     if (ppm != null && ppm >= Bands.CO2_ALARM_PPM) {
         AlertBanner("CO₂ $ppm ppm — ventilate", alarm = true)
@@ -221,6 +301,108 @@ private fun AirPanel(r: ShintaiReadings, units: Units) {
     }
 }
 
+/**
+ * Rolling range / CO₂ history. Each sparkline appears only once its channel has produced
+ * samples, and the panel is skipped entirely when neither has — an empty sparkline draws a
+ * flat grey line that reads as data rather than as absence. Extracted from [Console] to
+ * keep that function inside detekt's method-length budget.
+ */
+@Composable
+private fun TrendPanel(distHist: List<Float>, co2Hist: List<Float>) {
+    if (distHist.isEmpty() && co2Hist.isEmpty()) return
+    Panel("Trend") {
+        if (distHist.isNotEmpty()) {
+            Text("RANGE", color = T.Bone, fontFamily = T.Mono, fontSize = 11.sp, letterSpacing = 2.sp)
+            Sparkline(distHist, T.Phosphor)
+        }
+        if (distHist.isNotEmpty() && co2Hist.isNotEmpty()) Spacer(Modifier.height(8.dp))
+        if (co2Hist.isNotEmpty()) {
+            Text("CO₂", color = T.Bone, fontFamily = T.Mono, fontSize = 11.sp, letterSpacing = 2.sp)
+            Sparkline(co2Hist, T.Amber)
+        }
+    }
+}
+
+/**
+ * Connected, but not one sensor channel has reported. With every panel gated on presence
+ * the honest render of a bare board is an empty scroll, which reads as a broken app —
+ * so say it plainly instead. Keyed on :core's suppliedChannels(), the same presence test
+ * the Bunshin merge uses, so the console and the merge agree on what "reporting" means.
+ */
+@Composable
+private fun NoChannelsNotice(r: ShintaiReadings) {
+    if (r.suppliedChannels().isNotEmpty()) return
+    Panel("Status") {
+        Text("No sensor channels reporting.", color = T.Bone, fontFamily = T.Mono, fontSize = 13.sp)
+        Text(
+            "A channel appears when its sensor notifies.",
+            color = T.BoneDim, fontFamily = T.Mono, fontSize = 11.sp,
+        )
+    }
+}
+
+/**
+ * PROXIMITY — the hero: motion tracker + the one big glanceable value. Present only once
+ * the rear field has reported; [ShintaiReadings.hasProximity] is the same test Merge.kt's
+ * supplies(Distance) uses, so the console and the merge agree. A rig with no ToF used to
+ * show a full-height empty tracker gauge reading "—".
+ */
+@Composable
+private fun ProximityPanel(r: ShintaiReadings, units: Units) {
+    if (!r.hasProximity()) return
+Panel("Proximity", ledColor = distColor(r.distanceMm)) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TrackerGauge(
+            leftMm = r.distanceLMm,
+            rightMm = r.distanceRMm,
+            alert = r.alertActive,
+            modifier = Modifier.weight(1f).height(190.dp),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(120.dp)) {
+            val (v, u) = distanceParts(r.distanceMm, r.distanceText, units)
+            val numeric = r.distanceMm != null
+            // Hero = the NEARER arc (closest threat); the per-arc L/R breakdown sits
+            // below it, each line coloured by its own proximity band.
+            Text("NEAREST", color = T.Bone, fontFamily = T.Mono, fontSize = 11.sp, letterSpacing = 2.sp)
+            Text(
+                v, color = distColor(r.distanceMm),
+                // The ONE glanceable value in 7-segment DSEG; the "—" placeholder
+                // falls back to Plex (DSEG has no em dash).
+                fontFamily = if (numeric) T.Numeral else T.Mono,
+                fontWeight = if (numeric) FontWeight.Normal else FontWeight.Bold,
+                fontSize = if (numeric) 56.sp else 44.sp,
+            )
+            Text(u.uppercase(), color = T.BoneDim, fontFamily = T.Mono, fontSize = 14.sp)
+            Spacer(Modifier.height(8.dp))
+            ArcReadout("L", r.distanceLMm, units)
+            ArcReadout("R", r.distanceRMm, units)
+        }
+    }
+    if (r.alertActive) {
+        Spacer(Modifier.height(10.dp))
+        AlertBanner("Object inside 0.2 m — hold", alarm = true)
+    }
+}
+}
+
+/**
+ * TELEMETRY — motion & position, each row gated on its own channel and the panel dropped
+ * when none of the four has reported. GPS is the subtle one: the firmware notifies
+ * whenever the RECEIVER is present, fix or not, so a searching receiver keeps its row and
+ * reads "no fix" — only a pod with no GPS hardware at all loses it.
+ */
+@Composable
+private fun TelemetryPanel(r: ShintaiReadings, units: Units) {
+    if (!r.hasTelemetry()) return
+    Panel("Telemetry") {
+        OptionalRow("Heading", r.heading)
+        OptionalRow("Accel", r.accel)
+        OptionalRow("GPS", formatGps(r.gps, units).takeIf { r.gps.reported() })
+        OptionalRow("Thermal", formatThermal(r.thermal, units).takeIf { r.thermal.reported() })
+    }
+}
+
 @Composable
 private fun Console(
     r: ShintaiReadings,
@@ -230,49 +412,9 @@ private fun Console(
     recording: Boolean,
     vm: OperatorViewModel,
 ) {
-    // PROXIMITY — the hero: motion tracker + the one big glanceable value.
-    Panel("Proximity", ledColor = distColor(r.distanceMm)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TrackerGauge(
-                leftMm = r.distanceLMm,
-                rightMm = r.distanceRMm,
-                alert = r.alertActive,
-                modifier = Modifier.weight(1f).height(190.dp),
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(120.dp)) {
-                val (v, u) = distanceParts(r.distanceMm, r.distanceText, units)
-                val numeric = r.distanceMm != null
-                // Hero = the NEARER arc (closest threat); the per-arc L/R breakdown sits
-                // below it, each line coloured by its own proximity band.
-                Text("NEAREST", color = T.Bone, fontFamily = T.Mono, fontSize = 11.sp, letterSpacing = 2.sp)
-                Text(
-                    v, color = distColor(r.distanceMm),
-                    // The ONE glanceable value in 7-segment DSEG; the "—" placeholder
-                    // falls back to Plex (DSEG has no em dash).
-                    fontFamily = if (numeric) T.Numeral else T.Mono,
-                    fontWeight = if (numeric) FontWeight.Normal else FontWeight.Bold,
-                    fontSize = if (numeric) 56.sp else 44.sp,
-                )
-                Text(u.uppercase(), color = T.BoneDim, fontFamily = T.Mono, fontSize = 14.sp)
-                Spacer(Modifier.height(8.dp))
-                ArcReadout("L", r.distanceLMm, units)
-                ArcReadout("R", r.distanceRMm, units)
-            }
-        }
-        if (r.alertActive) {
-            Spacer(Modifier.height(10.dp))
-            AlertBanner("Object inside 0.2 m — hold", alarm = true)
-        }
-    }
-
-    // TELEMETRY — motion & position.
-    Panel("Telemetry") {
-        ReadoutRow("Heading", r.heading)
-        ReadoutRow("Accel", r.accel)
-        ReadoutRow("GPS", formatGps(r.gps, units))
-        ReadoutRow("Thermal", formatThermal(r.thermal, units))
-    }
+    NoChannelsNotice(r)
+    ProximityPanel(r, units)
+    TelemetryPanel(r, units)
 
     // NAVIGATION — Hokan's pedometer + dead-reckoned path. Its own composable so
     // Console stays within the method-length budget; present only while the IMU
@@ -309,20 +451,21 @@ private fun Console(
     AirPanel(r, units)
 
     // LIGHTNING — Enrai's AS3935 last-strike readout; the LED flashes on each new strike.
-    LightningPanel(r.lightning)
+    // Gated on the CONFIG channel, not on strikes: Lightning notifies event-driven (only
+    // when lightning actually strikes), so a present-but-quiet AS3935 would vanish on a
+    // clear day. Lightning Control rides every telemetry cycle and reports "enrai=none"
+    // when the sensor is absent, so it is the honest present/absent signal — and it keeps
+    // "sensor fitted, no strikes yet" visibly different from "no sensor".
+    if (r.lightningConfig.known) LightningPanel(r.lightning)
 
     // IDENTITY — Fuda's NFC tag. Its own category (not air); event-driven, so present
     // only once a tag has been read (then it persists the last one).
     if (r.fuda != "—") IdentityPanel(r)
 
-    // TREND — rolling history the glasses don't keep.
-    Panel("Trend") {
-        Text("RANGE", color = T.Bone, fontFamily = T.Mono, fontSize = 11.sp, letterSpacing = 2.sp)
-        Sparkline(distHist, T.Phosphor)
-        Spacer(Modifier.height(8.dp))
-        Text("CO₂", color = T.Bone, fontFamily = T.Mono, fontSize = 11.sp, letterSpacing = 2.sp)
-        Sparkline(co2Hist, T.Amber)
-    }
+    // TREND — rolling history the glasses don't keep. Gated on the histories themselves
+    // rather than on the channels: a sparkline needs samples, and an empty one is a flat
+    // grey line that says nothing.
+    TrendPanel(distHist, co2Hist)
 
     // Bunshin: per-channel source precedence — appears only when two pods are linked.
     MultiPodSources(vm)
