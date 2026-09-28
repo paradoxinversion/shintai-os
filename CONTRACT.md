@@ -159,10 +159,19 @@ bus scan: a part behind the PCA9546 is invisible to a scan (only the mux answers
 parts can share one address, and an address that ACKs may still fail `begin()` — a `0x77`
 that ACKs while every register reads `0x00` is an address **collision**, not a working
 BME688. Keys (`mux`, `rear`, `imu`, `mag`, `gps`, `thermal`, `air`, `nose`, `particulate`,
-`nfc`, `radar`, `light`, `lightning`, `gesture`, `pane`, `andon`) are **append-only and never
+`nfc`, `radar`, `light`, `lightning`, `gesture`, `pane`, `andon`, plus the strap companions
+`imu_alt` / `mag_alt`) are **append-only and never
 renamed**, and a consumer must **ignore keys it does not know** so an older ground-station
 still parses a newer board. A board that does not answer the framing at all is older
 firmware without the command; `groundstation/bootroll.py` falls back to the `I` scan.
+
+**Strap companions.** `imu_alt` and `mag_alt` are not units — they annotate `imu` and
+`mag`, reporting `1` when that part answered on its **alternate** strap address (LSM6DSOX
+`0x6b` rather than `0x6a`; LIS3MDL `0x1e` rather than `0x1c`). They carry the same
+`key=0|1` shape as every other line so the framing stays one form. They are meaningless
+when the part is absent. This is the only place the strap is observable: the `setup()`
+`[OK]` banner also says it, but that line cannot be read on this board (native-USB
+re-enumeration outlasts the serial wait).
 
 ## BLE GATT
 

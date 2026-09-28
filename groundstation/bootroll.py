@@ -65,6 +65,15 @@ UNIT_ROSTER = [
     ("LANT", "ANDON MATRIX",   "andon"),
 ]
 
+# Companion flags from the 'U' report: unit key -> (alt flag key, the address it means).
+# These are NOT roster rows — they annotate an existing one. A part that came up on its
+# alternate strap is easy to mistake for a different part later, so the roll-call names
+# the address rather than just saying OK.
+ALT_STRAPS = {
+    "imu": ("imu_alt", "0x6B"),
+    "mag": ("mag_alt", "0x1E"),
+}
+
 WIDTH = 52
 
 
@@ -117,9 +126,19 @@ def states_from_units(units):
     A key the board didn't report is a sense this firmware doesn't have, so the row is
     omitted entirely rather than shown OFFLINE — absent from the build and absent from
     the rig are different claims.
+
+    A part that answered on its alternate strap gets the address appended to its name
+    ([ALT_STRAPS]) — the firmware knows which one replied, and that used to be said only
+    in the boot banner, which is unreadable on this board.
     """
-    return [(tag, name, "OK" if units[key] else "OFFLINE")
-            for tag, name, key in UNIT_ROSTER if key in units]
+    out = []
+    for tag, name, key in UNIT_ROSTER:
+        if key not in units:
+            continue
+        alt = ALT_STRAPS.get(key)
+        label = f"{name} @{alt[1]}" if alt and units.get(alt[0]) else name
+        out.append((tag, label, "OK" if units[key] else "OFFLINE"))
+    return out
 
 
 def present_tags_from_units(units):

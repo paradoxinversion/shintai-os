@@ -265,6 +265,10 @@ unsigned long lastUpdate = 0;
 bool hasZanshin     = false;   // VL53L5CX rear depth field inited (mux ch0)
 bool imuPresent     = false;
 bool magPresent     = false;
+// Which strap answered. The [OK] banner says so too, but that line is unreadable on this
+// board (native-USB re-enumeration outlasts the serial wait), so 'U' carries it instead.
+bool imuAltStrap    = false;   // IMU answered on 0x6b, not the 0x6a default
+bool magAltStrap    = false;   // mag answered on 0x1e, not the 0x1c default
 bool thermalPresent = false;
 bool gpsPresent     = false;   // PA1010D acked at 0x10 (absent != "searching" — see the GPS notify)
 
@@ -610,6 +614,11 @@ void reportUnits() {
   u("rear",     hasZanshin);          // VL53L5CX field inited (not merely 0x29 acking)
   u("imu",      imuPresent);
   u("mag",      magPresent);
+  // Companion flags, not separate units: "this part answered on its ALTERNATE strap".
+  // Kept as key=0|1 like every other line so the framing stays one shape and an older
+  // consumer simply skips a key it doesn't know. Meaningless when the part is absent.
+  u("imu_alt",  imuAltStrap);
+  u("mag_alt",  magAltStrap);
   u("gps",      gpsPresent);
   u("thermal",  thermalPresent);
   u("air",      scdPresent);          // SCD-40
@@ -811,18 +820,16 @@ void setup() {
   // column stays blank — which reads as a dead sensor and isn't one. Try the default
   // first, then the alternate, and say which one answered so the log is unambiguous.
   imuPresent = imu.begin_I2C();
-  bool imuAlt = false;
-  if (!imuPresent) { imuPresent = imu.begin_I2C(LSM6DS_ALT_ADDR); imuAlt = imuPresent; }
-  Serial.println(!imuPresent ? "[WARN] LSM6DSOX not found — accel disabled"
-                 : imuAlt    ? "[OK] LSM6DSOX IMU @ 0x6b (alternate strap)"
-                             : "[OK] LSM6DSOX IMU");
+  if (!imuPresent) { imuPresent = imu.begin_I2C(LSM6DS_ALT_ADDR); imuAltStrap = imuPresent; }
+  Serial.println(!imuPresent  ? "[WARN] LSM6DSOX not found — accel disabled"
+                 : imuAltStrap ? "[OK] LSM6DSOX IMU @ 0x6b (alternate strap)"
+                               : "[OK] LSM6DSOX IMU");
 
   magPresent = mag.begin_I2C();
-  bool magAlt = false;
-  if (!magPresent) { magPresent = mag.begin_I2C(LIS3MDL_ALT_ADDR); magAlt = magPresent; }
-  Serial.println(!magPresent ? "[WARN] LIS3MDL not found — heading disabled"
-                 : magAlt    ? "[OK] LIS3MDL Magnetometer @ 0x1e (alternate strap)"
-                             : "[OK] LIS3MDL Magnetometer");
+  if (!magPresent) { magPresent = mag.begin_I2C(LIS3MDL_ALT_ADDR); magAltStrap = magPresent; }
+  Serial.println(!magPresent  ? "[WARN] LIS3MDL not found — heading disabled"
+                 : magAltStrap ? "[OK] LIS3MDL Magnetometer @ 0x1e (alternate strap)"
+                               : "[OK] LIS3MDL Magnetometer");
 
   // Thermal — non-fatal: warn and continue if absent
   thermalPresent = mlx.begin(MLX90640_I2CADDR_DEFAULT, &Wire);
