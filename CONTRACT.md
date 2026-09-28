@@ -44,6 +44,8 @@ Consumers key off `line.startswith("timestamp_ms")` (header) and `line[0].isdigi
 | `nfc_type` | string (blank = no tag) | **Fuda** — RF family of that tag (`ISO14443A`); blank alongside `nfc_uid` when no tag |
 | `presence_detected` | 0 / 1 (blank = sensor absent) | **Hitokage** — 1 when the XM125 radar currently detects something in range, else 0 |
 | `presence_distance_mm` | mm (blank = not detected / absent) | **Hitokage** — the NEAREST detected range (500–5000 mm in distance mode, 200–2000 mm in presence-mode fallback); blank when `presence_detected` is 0 |
+| `light_lux` | lux (blank = none) | **Hizashi** — ambient illuminance computed by the TSL2591 from its visible + IR channels |
+| `light_ir` | raw counts (blank = none) | **Hizashi** — the TSL2591's raw **infrared** channel; paired with `light_lux` it separates daylight from artificial light |
 | `board` | `fwd` / `aft` | **Bunshin** — which pod (role) produced this row; the terminal role discriminator for two-host federation. Absent in pre-Bunshin logs |
 
 `thermal_*` are *surface* temps (the IR camera); `air_temp_c`/`humidity_pct`/`co2_ppm`
@@ -130,6 +132,23 @@ multiple *people* — a peak is a reflector, not an identity (see
 before `board`**, so pre-Hitokage logs still parse and name-keyed consumers are unaffected. Blank
 when the XM125 is absent.
 
+`light_lux` / `light_ir` are added by **Hizashi (日差し)** — the **ambient-light sense** over a
+**TSL2591** high-dynamic-range light sensor. Unlike every other sensor in this contract the
+TSL2591's I²C address `0x29` is **fixed and unstrappable**, and it is the *same* address as the
+VL53L5CX rear field — the collision the PCA9546 mux already exists to resolve. Hizashi therefore
+sits **behind the mux on ch1** (Zanshin holds ch0), and the firmware selects its channel before
+every access, exactly as the rear field does. On a bench rig with no mux the firmware falls back
+to the plain bus (`hizashiDirect`), which is safe only because the ToF is then necessarily absent.
+
+`light_lux` is the sensor's **computed illuminance** from the visible and IR channels;
+`light_ir` is the **raw IR channel** alongside it, because the visible/IR ratio — not the lux
+figure — is what separates daylight from incandescent from LED. Like the `lightning_*`, `pm*`,
+`nfc_*` and `presence_*` columns they are **appended before `board`** (which stays the terminal
+Bunshin discriminator), so pre-Hizashi logs still parse and name-keyed consumers are unaffected.
+Both are blank when the TSL2591 is absent. The TSL2591 saturates in direct sun at the default
+gain/integration; a saturated reading is reported as-is rather than clamped or blanked, since a
+blank already means "no sensor".
+
 Serial output modes (toggle live by sending a byte): `h` human · `c` CSV · `b` both
 (default; the logger requests `b`). Onboard-flash control bytes: `L` list · `P` dump · `E` erase.
 
@@ -157,6 +176,7 @@ and **Rear Depth Grid**, which carry packed **binary** payloads (see
 | Fuda | `abcdfada-ab12-ab12-ab12-abcdef123456` | `UID:04A1B2C3 ISO14443A` (**Fuda** — the NFC tag last read; **event-driven**, notifies only on a read) |
 | Presence | `abcd0125-ab12-ab12-ab12-abcdef123456` | `present=1 dist=260mm` / `present=0 dist=--` (**Hitokage** — the XM125's detected/not-detected flag + nearest range; `0125` = XM125) |
 | Radar Peaks | `abcdd1a6-ab12-ab12-ab12-abcdef123456` | `n=2 0:2894/-7029 1:4809/-3865` (**Hitokage** — the full multi-peak list, distance mode only; see below) |
+| Hizashi | `abcd2591-ab12-ab12-ab12-abcdef123456` | `lux=412.5 ir=57` (**Hizashi** — ambient illuminance + raw IR; `2591` = TSL2591) |
 | Pane Control | `abcd1306-ab12-ab12-ab12-abcdef123456` | **WRITE** a token → pages the OLED pane; notifies `pane=2/5 NAV` (see below; `1306` = SSD1306) |
 | Lightning | `abcda535-ab12-ab12-ab12-abcdef123456` | `km=1 e=227467 n=8` (last strike distance km · raw energy · cumulative count) |
 | Lightning Control | `abcda53c-ab12-ab12-ab12-abcdef123456` | **WRITE** a token → applies AS3935 tuning; notifies `gain=out spike=2 wdog=1 tune=0` (see below) |
@@ -343,6 +363,22 @@ there and the next read would return the token instead of the pane.
 
 Note this channel is **per-pod**, not merged like a sensor: each pod drives its own panel, and a
 central writing it addresses every pod it is connected to.
+
+### Hizashi (string)
+
+Added by **Hizashi (日差し)** — the TSL2591 ambient-light channel, the BLE-live twin of the
+`light_lux` / `light_ir` CSV columns. Payload is the UTF-8 string **`lux=<illuminance> ir=<raw>`**
+(e.g. `lux=412.5 ir=57`): the computed illuminance and the raw infrared count. It notifies
+**periodically**, every telemetry cycle, like Particulate and Presence rather than event-driven
+like Fuda and Lightning — ambient light is a continuous scalar. It notifies only while the
+TSL2591 is present.
+
+**Neither Android app subscribes to this channel yet.** The characteristic is board-side in this
+pass: the UUID is mirrored in `:core`'s `ShintaiGatt` (the one Kotlin mirror of this table) but is
+deliberately **kept out of `ShintaiGatt.ALL`**, so no app takes it and no renderer has to exist
+yet — the same treatment `THERMAL_GRID` gets for a different reason. Wiring it into `:glass` and
+`:operator` is a follow-up, and the subscription counts in *Consumer coverage* below are unchanged
+by it.
 
 A characteristic only notifies when its sensor is present and has data (e.g. Climate
 warms up ~5 s and updates every ~5 s; Thermal needs the MLX90640 attached; Hokan needs the IMU;

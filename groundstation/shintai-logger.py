@@ -106,6 +106,12 @@ def dashboard(vals, samples, csv_name):
     out.append("")
 
     # ── dotted-leader readout rows (§5.3) ──
+    pres = g("presence_detected")    # Hitokage forward radar — blank when the XM125 is absent
+    if pres not in (None, ""):       # (a peak is a reflector, not a person — never "N people")
+        pdist = _num(g("presence_distance_mm"), 0)
+        out.append(b._row("PRESENCE",
+                          f"{pdist} mm" if pres == "1" and pdist else "clear",
+                          b.PHOSPHOR if pres == "1" else b.PHOSPHOR_DIM))
     hd = _num(g("heading_deg"), 0)
     out.append(b._row("HEADING", f"{hd}° {g('cardinal')}" if hd else "—", b.PHOSPHOR))
     ax = _num(g("accel_x"), 2)
@@ -121,6 +127,9 @@ def dashboard(vals, samples, csv_name):
     if pm25:
         out.append(b._row("AQI", f"PM2.5 {pm25}  PM10 {_num(g('pm10_ugm3'), 0)}  "
                                  f"PM1.0 {_num(g('pm1_0_ugm3'), 0)} µg/m³", b.PHOSPHOR))
+    lux = _num(g("light_lux"))       # Hizashi — illuminance the headline, raw IR alongside it
+    if lux is not None:              # (the visible/IR ratio is what tells daylight from LED)
+        out.append(b._row("LIGHT", f"{lux} lux  IR {g('light_ir') or '—'}", b.PHOSPHOR))
     uid = g("nfc_uid")               # Fuda — the held tag (blank once the ~5 s hold lapses)
     if uid:
         out.append(b._row("NFC", f"{uid}  {g('nfc_type')}", b.PHOSPHOR))

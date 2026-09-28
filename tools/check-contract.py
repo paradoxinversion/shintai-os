@@ -49,6 +49,7 @@ CHAR_TO_KOTLIN = {
     "Radar Peaks": "RADAR_PEAKS",
     "Pane Control": "PANE_CTRL",
     "Thermal Grid": "THERMAL_GRID",
+    "Hizashi": "HIZASHI",
 }
 # Characteristics the Android app is documented NOT to expose (CONTRACT.md "Consumer
 # coverage"). Absent from Kotlin => acknowledged gap, not an error.

@@ -70,6 +70,14 @@ object ShintaiGatt {
      *  swipe too, not just on a write. `:glass` does NOT subscribe — see CONTRACT.md. */
     val PANE_CTRL: UUID = UUID.fromString("abcd1306-ab12-ab12-ab12-abcdef123456")
 
+    /** Hizashi's ambient-light readout: "lux=412.5 ir=57" (string) — the BLE-live twin of the
+     *  light_lux / light_ir CSV columns. PERIODIC, like [PARTICULATE] and [PRESENCE].
+     *
+     *  Deliberately NOT in [ALL]: neither app consumes it yet, so nothing subscribes and no
+     *  renderer has to exist. This entry is the contract mirror only — wiring it into `:glass`
+     *  and `:operator` is a follow-up. See CONTRACT.md "Hizashi". */
+    val HIZASHI: UUID = UUID.fromString("abcd2591-ab12-ab12-ab12-abcdef123456")
+
     /** Metsuke's binary heat grid (packed bytes, not a string). See [BINARY]. */
     val THERMAL_GRID: UUID = UUID.fromString("abcd7890-ab12-ab12-ab12-abcdef123456")
 

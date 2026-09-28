@@ -12,6 +12,7 @@
 #include <Adafruit_PM25AQI.h>  // Enmu particulate sense (specs/zokyo/enmu.md): PMSA003I PM1.0/2.5/10 over I2C 0x12
 #include <Adafruit_PN532.h>    // Fuda identity sense (specs/zokyo/fuda.md): PN532 ISO14443A tag UID over I2C 0x24
 #include <SparkFun_Qwiic_XM125_Arduino_Library.h>  // Hitokage presence sense (specs/zokyo/hitokage.md): XM125 radar over I2C 0x52
+#include <Adafruit_TSL2591.h>                      // Hizashi ambient-light sense: TSL2591 at a FIXED 0x29 — behind the mux (ch1)
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -50,6 +51,7 @@
 #define PRESENCE_UUID       "abcd0125-ab12-ab12-ab12-abcdef123456"  // Hitokage: "present=.. dist=.." string ("0125" = XM125)
 #define RADAR_PEAKS_UUID    "abcdd1a6-ab12-ab12-ab12-abcdef123456"  // Hitokage: "n=.. i:mm/strength .." multi-peak string, distance mode only
 #define PANE_CTRL_UUID      "abcd1306-ab12-ab12-ab12-abcdef123456"  // OLED pane: WRITABLE paging control ("1306" = SSD1306)
+#define HIZASHI_UUID        "abcd2591-ab12-ab12-ab12-abcdef123456"  // Hizashi: "lux=.. ir=.." ambient light ("2591" = TSL2591)
 
 const int NEAR_MM  = 200;
 const int FAR_MM   = 2000;   // Kehai-Hikari Approach/Clear boundary (was reserved)
@@ -79,12 +81,22 @@ bool                 zanshinFresh = false;    // a new field frame was read this
 // AND every read; the wrong channel = wrong sensor or errors).
 const uint8_t TOF_MUX_ADDR = 0x70;
 const uint8_t ZANSHIN_CH   = 0;   // the VL53L5CX rear field's mux channel
+const uint8_t HIZASHI_CH   = 1;   // the TSL2591's DOCUMENTED mux channel — 0x29 again, so it CANNOT share ch0
+const uint8_t MUX_CHANNELS = 4;   // PCA9546A: ch0..ch3
 bool tofMuxPresent = false;       // PCA9546 acked at boot
 bool zanshinDirect = false;       // field wired straight on the main bus (no mux) — bench fallback
 
 void muxSelect(uint8_t ch) {
   Wire.beginTransmission(TOF_MUX_ADDR);
   Wire.write((uint8_t)(1 << ch));   // one-hot: 0x01 = ch0, 0x02 = ch1
+  Wire.endTransmission();
+}
+
+// Isolate every channel (write 0) — no downstream device is on the bus afterwards.
+// Used to prove a part answers on the PLAIN bus rather than through a stale selection.
+void muxIsolate() {
+  Wire.beginTransmission(TOF_MUX_ADDR);
+  Wire.write((uint8_t)0x00);
   Wire.endTransmission();
 }
 
@@ -233,6 +245,7 @@ BLECharacteristic *fudaChar;          // Fuda: "UID:<hex> <type>" NFC tag string
 BLECharacteristic *presenceChar;      // Hitokage: "present=.. dist=.." radar string
 BLECharacteristic *radarPeaksChar;    // Hitokage: multi-peak string, distance mode only
 BLECharacteristic *paneCtrlChar;      // OLED pane: WRITABLE paging control (app→board) + state notify
+BLECharacteristic *hizashiChar;       // Hizashi: "lux=.. ir=.." ambient light string
 BLE2902           *thermalGridCccd = nullptr;   // its CCCD — emit only while subscribed
 BLECharacteristic *zanshinGridChar;             // Zanshin: binary 8x8 rear depth grid
 BLE2902           *zanshinGridCccd = nullptr;   // its CCCD — emit only while subscribed
@@ -378,6 +391,27 @@ uint16_t pm1_0 = 0;   // PM1.0 µg/m³ (PMSA003I pm10_env)
 uint16_t pm2_5 = 0;   // PM2.5 µg/m³ (PMSA003I pm25_env)
 uint16_t pm10  = 0;   // PM10  µg/m³ (PMSA003I pm100_env)
 
+// Hizashi (日差し) — ambient-light sense. The TSL2591 reports a visible+IR pair the
+// library folds into a computed lux, plus the raw IR channel (the visible/IR RATIO,
+// not the lux figure, is what tells daylight from incandescent from LED).
+//
+// Its I2C address 0x29 is FIXED and unstrappable — and it is the VL53L5CX rear
+// field's address too, the exact collision the PCA9546 already exists to resolve. So
+// Hizashi lives BEHIND THE MUX on ch1 (Zanshin holds ch0) and every access selects
+// its channel first, same discipline as the rear field. hizashiDirect is the bench
+// fallback for a rig with no mux, which is only safe because the ToF is then absent.
+Adafruit_TSL2591 tsl = Adafruit_TSL2591(2591);
+bool     hizashiPresent = false;
+bool     hizashiDirect  = false;   // TSL2591 on the plain bus (no mux) — bench fallback
+bool     hizashiHasData = false;
+uint8_t  hizashiCh      = HIZASHI_CH;   // channel it was actually FOUND on (see the setup sweep)
+float    lightLux = 0;             // computed illuminance (lux); may saturate in direct sun
+uint16_t lightIr  = 0;             // raw infrared channel count
+
+// Select Hizashi's mux channel before touching the TSL2591 — a no-op on a direct rig.
+// Uses the channel the boot sweep actually found it on, not the documented default.
+static inline void hizashiSelect() { if (!hizashiDirect) muxSelect(hizashiCh); }
+
 // Fuda (札) — NFC / RFID identity sense. The PN532 reads the UID of an ISO14443A tag
 // held in its RF field. Unlike the free-running sensors, a read is a discrete EVENT, so
 // we latch the last UID+type and HOLD them (nfcHoldUntil) ~5 s — long enough that a
@@ -430,12 +464,14 @@ const char* CSV_HEADER =
   "hotspot_delta,co2_ppm,air_temp_c,humidity_pct,pressure_hpa,gas_ohms,"
   "steps,lightning_km,lightning_energy,lightning_strikes,"
   "pm1_0_ugm3,pm2_5_ugm3,pm10_ugm3,"
-  "nfc_uid,nfc_type,presence_detected,presence_distance_mm,board";
+  "nfc_uid,nfc_type,presence_detected,presence_distance_mm,"
+  "light_lux,light_ir,board";
   // steps: Hokan pedometer · lightning_*: Enrai AS3935 last-strike snapshot + count ·
   // pm*_ugm3: Enmu PMSA003I particulate · nfc_*: Fuda PN532 tag identity (STRING columns,
   // like cardinal/board) · presence_*: Hitokage XM125 radar detected/range ·
+  // light_*: Hizashi TSL2591 ambient illuminance + raw IR ·
   // board: Bunshin pod role (fwd/aft) — board stays terminal; every later column
-  // (lightning, then particulate, then nfc, then presence) is inserted before it
+  // (lightning, then particulate, then nfc, then presence, then light) is inserted before it
 
 // Onboard flash logging (FFat) — autonomous field capture, pulled over USB.
 // Each power-up writes a new sequential file (/shtNNNN.csv). Rows are logged
@@ -763,7 +799,11 @@ void setup() {
   }
 
   // BME688 (env: gas + pressure, and the authoritative air temp/RH) — non-fatal.
-  // SparkFun SEN-19096 answers at 0x77 (the Adafruit_BME680 default is 0x76).
+  // This Adafruit breakout answers at 0x77 (the Adafruit_BME680 default is 0x76).
+  // 0x77 is ALSO the DPS310's default — the two collide on the plain bus. A
+  // collision presents as ACK + every register reading 0x00 (factory calib
+  // included), i.e. begin() fails and it looks like an absent or dead part.
+  // Confirmed on hardware 2026-09-28; keep only one of the pair on 0x77.
   bmePresent = bme.begin(0x77);
   if (bmePresent) {
     bme.setTemperatureOversampling(BME680_OS_8X);
@@ -781,6 +821,51 @@ void setup() {
   pmsaPresent = pmsa.begin_I2C();
   Serial.println(pmsaPresent ? "[OK] PMSA003I Particulate (Enmu — PM1.0/2.5/10)"
                              : "[WARN] PMSA003I not found @ 0x12 — particulate disabled");
+
+  // Hizashi (日差し) — TSL2591 ambient light at a FIXED 0x29 — non-fatal. That address is
+  // the VL53L5CX's too, so the part lives behind the mux on ch1 and is probed there FIRST;
+  // only if the mux is absent do we fall back to the plain bus. tsl.begin() reads the
+  // device-ID register (expects 0x50), so it will NOT false-positive on a ToF answering
+  // the same address — which is what makes the plain-bus fallback safe to attempt at all.
+  // Probe the documented channel first, then SWEEP the rest. A part on the wrong channel
+  // is otherwise indistinguishable from an absent one — a silent [WARN] and blank columns
+  // — which is exactly the mystery that cost a bench session once already. The sweep is
+  // safe: tsl.begin() checks the device-ID register (expects 0x50), so it cannot
+  // false-positive on a VL53L5CX answering the same 0x29 on another channel.
+  if (tofMuxPresent) {
+    const uint8_t order[MUX_CHANNELS] = { HIZASHI_CH, 0, 2, 3 };
+    for (uint8_t i = 0; i < MUX_CHANNELS && !hizashiPresent; i++) {
+      if (i > 0 && order[i] == HIZASHI_CH) continue;   // already tried as the first probe
+      muxSelect(order[i]);
+      if (tsl.begin()) { hizashiPresent = true; hizashiCh = order[i]; }
+    }
+  }
+  if (!hizashiPresent) {
+    if (tofMuxPresent) muxIsolate();    // prove the next probe is the PLAIN bus, not a stale channel
+    hizashiPresent = tsl.begin();
+    hizashiDirect  = hizashiPresent;    // answered with no channel selected => wired direct
+  }
+  if (hizashiPresent) {
+    // Defaults chosen for indoor-to-overcast range. Direct sun saturates these; the
+    // contract reports a saturated reading as-is (blank already means "no sensor").
+    tsl.setGain(TSL2591_GAIN_MED);                  // 25x
+    tsl.setTiming(TSL2591_INTEGRATIONTIME_300MS);
+    if (hizashiDirect) {
+      Serial.println("[OK] TSL2591 Light (Hizashi — PLAIN BUS; collides with a ToF if one is fitted)");
+    } else if (hizashiCh == HIZASHI_CH) {
+      Serial.printf("[OK] TSL2591 Light (Hizashi — mux ch%u)\n", hizashiCh);
+    } else {
+      // Found, but not where the contract says it lives. Say so loudly: it works now,
+      // and it will break the moment ch0's rear field (or whatever owns that channel)
+      // is plugged back in alongside it.
+      Serial.printf("[WARN] TSL2591 found on mux ch%u, NOT the documented ch%u — "
+                    "works for now, but move it: ch0 is Zanshin's and 0x29 collides\n",
+                    hizashiCh, HIZASHI_CH);
+    }
+  } else {
+    Serial.println("[WARN] TSL2591 not found @ 0x29 (mux ch1 or plain bus) — ambient light disabled");
+  }
+  if (tofMuxPresent) muxSelect(ZANSHIN_CH);   // leave the mux where the rear field expects it
 
   // Fuda (札) — PN532 NFC/RFID reader at 0x24 (7-bit; = 0x48/0x49 in 8-bit; NOT 0x12 —
   // that's a double-shift artifact, and 0x12 is Enmu's address besides) — non-fatal.
@@ -866,6 +951,7 @@ void setup() {
   fudaChar        = makeChar(FUDA_UUID,        "Fuda (NFC tag)");        // Fuda
   presenceChar    = makeChar(PRESENCE_UUID,    "Presence (radar)");      // Hitokage
   radarPeaksChar = makeChar(RADAR_PEAKS_UUID, "Radar Peaks (multi-peak)");  // Hitokage
+  hizashiChar    = makeChar(HIZASHI_UUID,     "Hizashi (lux/IR)");          // Hizashi
   // Enrai control — the one WRITABLE characteristic (READ|WRITE|NOTIFY). A central writes a
   // tuning token; onWrite applies it and notifies the config back. Built directly (not via
   // makeChar) for the WRITE property + the write callback.
@@ -1624,6 +1710,23 @@ void loop() {
     bmeHasData  = true;
   }
 
+  // ── Hizashi (日差し): TSL2591 ambient light. Runs in the 1.5 s telemetry block, never
+  // the fast reflex loop — getFullLuminosity() blocks for the integration time (300 ms),
+  // which would stall Kehai. Select ch1 first and hand the mux back to the rear field
+  // after, so Zanshin's next read isn't looking at a light sensor.
+  if (hizashiPresent) {
+    hizashiSelect();
+    uint32_t lum = tsl.getFullLuminosity();
+    uint16_t ir  = lum >> 16;          // IR channel (upper word)
+    uint16_t full = lum & 0xFFFF;      // visible + IR (lower word)
+    lightIr  = ir;
+    lightLux = tsl.calculateLux(full, ir);
+    // calculateLux returns a negative sentinel when the ADCs are saturated; keep the
+    // last good value rather than logging a negative lux, which no consumer expects.
+    hizashiHasData = (lightLux >= 0);
+    if (!hizashiDirect) muxSelect(ZANSHIN_CH);
+  }
+
   // ── Enmu (煙霧): PMSA003I particulate. read() is non-blocking — it returns false
   // when no complete frame has arrived yet (the sensor free-runs ~1 Hz, slower than
   // our loop), so we keep the last good frame rather than blanking between frames.
@@ -1852,6 +1955,16 @@ void loop() {
     } else if (pmsaPresent) {
       Serial.println("AQI      : waiting for first frame");
     }
+    // Hizashi (日差し): illuminance + the raw IR channel. A saturated reading holds the
+    // last good lux (calculateLux returns negative when the ADCs clip), so say so rather
+    // than printing a stale number as if it were fresh.
+    if (hizashiHasData) {
+      Serial.println("LIGHT    : " + String(lightLux, 1) + " lux (IR " + String(lightIr) + ")"
+                   + (hizashiDirect ? String("  [plain bus]")
+                                    : String("  [mux ch") + hizashiCh + "]"));
+    } else if (hizashiPresent) {
+      Serial.println("LIGHT    : saturated or no reading yet");
+    }
     // Fuda: the held tag, or an explicit "no tag" so a present-but-idle reader is
     // distinguishable from an absent one (the same three-state rule GPS follows).
     if (nfcUid.length() > 0) {
@@ -1914,6 +2027,8 @@ void loop() {
     bool hitokageActive = hitokageDistancePresent || hitokagePresencePresent;
     row += ',';  row += (hitokageActive ? String(hitokageDetected ? 1 : 0) : String(""));  // Hitokage presence_detected
     row += ',';  row += (hitokageActive && hitokageDetected ? String(hitokageRangeMm) : String(""));  // Hitokage presence_distance_mm
+    row += ',';  row += (hizashiHasData ? String(lightLux, 1) : String(""));   // Hizashi light_lux
+    row += ',';  row += (hizashiHasData ? String(lightIr)     : String(""));   // Hizashi light_ir
     row += ',';  row += podRole;   // Bunshin: which pod (fwd/aft) produced this row — stays terminal
 
     // Persist to onboard flash only while untethered (no USB host). close() on a
@@ -2049,6 +2164,14 @@ void loop() {
     if (hitokageDistancePresent) {
       radarPeaksChar->setValue(hitokagePeaksStr.c_str());
       radarPeaksChar->notify();
+    }
+    // Hizashi (日差し): periodic, like Particulate and Presence — ambient light is a
+    // continuous scalar, not an event. No app subscribes yet (the UUID is mirrored in
+    // :core but kept out of ShintaiGatt.ALL), so this is board-side only for now.
+    if (hizashiHasData) {
+      String lightStr = "lux=" + String(lightLux, 1) + " ir=" + String(lightIr);
+      hizashiChar->setValue(lightStr.c_str());
+      hizashiChar->notify();
     }
     // Pane state rides the telemetry cycle like every other channel. It would otherwise
     // only ever notify on a CHANGE, and a central has no way to learn the initial state:
