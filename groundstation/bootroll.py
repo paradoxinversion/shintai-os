@@ -62,6 +62,7 @@ UNIT_ROSTER = [
     ("LGT ", "AS3935 ENRAI",   "lightning"),
     ("EYE ", "APDS9960",       "gesture"),
     ("PANE", "SSD1306 OLED",   "pane"),
+    ("LANT", "ANDON MATRIX",   "andon"),
 ]
 
 WIDTH = 52

@@ -615,6 +615,10 @@ void reportUnits() {
   u("lightning", hasEnrai);           // Enrai
   u("gesture",  apdsPresent);
   u("pane",     oledPresent);
+  // Andon is an OUTPUT surface, not a sense, but it belongs here for the same reason as
+  // the pane: the roll-call's job is "what is on this rig", and a 0x3F that merely ACKs
+  // does not prove the panel took its init. andonProbe() ran at boot; report that.
+  u("andon",    andonPresent);
   Serial.println("<<<END UNITS>>>");
 }
 

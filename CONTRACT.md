@@ -159,7 +159,7 @@ bus scan: a part behind the PCA9546 is invisible to a scan (only the mux answers
 parts can share one address, and an address that ACKs may still fail `begin()` — a `0x77`
 that ACKs while every register reads `0x00` is an address **collision**, not a working
 BME688. Keys (`mux`, `rear`, `imu`, `mag`, `gps`, `thermal`, `air`, `nose`, `particulate`,
-`nfc`, `radar`, `light`, `lightning`, `gesture`, `pane`) are **append-only and never
+`nfc`, `radar`, `light`, `lightning`, `gesture`, `pane`, `andon`) are **append-only and never
 renamed**, and a consumer must **ignore keys it does not know** so an older ground-station
 still parses a newer board. A board that does not answer the framing at all is older
 firmware without the command; `groundstation/bootroll.py` falls back to the `I` scan.
