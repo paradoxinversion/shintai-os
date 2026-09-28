@@ -199,9 +199,18 @@ def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status, emi
         present = None        # None = roll-call unavailable; the panel then renders every row
         if live_panel:
             try:
-                found = bootroll.probe_addresses(ser)
-                bootroll.play(bootroll.states_from_addresses(found), out=sys.stderr)
-                present = bootroll.present_tags(found)
+                # Ask the board what actually INITIALIZED ('U') before falling back to
+                # what merely ACKs an address ('I'). The scan can't see behind the mux and
+                # can't tell a working part from an address collision; the board can. The
+                # fallback is not hypothetical — a pod on older firmware has no 'U'.
+                units = bootroll.probe_units(ser)
+                if units:
+                    bootroll.play(bootroll.states_from_units(units), out=sys.stderr)
+                    present = bootroll.present_tags_from_units(units)
+                else:
+                    found = bootroll.probe_addresses(ser)
+                    bootroll.play(bootroll.states_from_addresses(found), out=sys.stderr)
+                    present = bootroll.present_tags(found)
             except Exception:  # noqa: BLE001 — never block capture on the flourish
                 pass
         # Ask the sketch for both human + CSV output and a fresh CSV header, so we

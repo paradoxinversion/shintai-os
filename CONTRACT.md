@@ -152,6 +152,18 @@ blank already means "no sensor".
 Serial output modes (toggle live by sending a byte): `h` human · `c` CSV · `b` both
 (default; the logger requests `b`). Onboard-flash control bytes: `L` list · `P` dump · `E` erase.
 
+**Unit report (`U`) — which sensors actually initialized.** The board answers with
+`<<<UNITS>>>`, one `key=0|1` line per unit, then `<<<END UNITS>>>`. This is the
+*authoritative* presence answer and is deliberately **not** the same question as the `I`
+bus scan: a part behind the PCA9546 is invisible to a scan (only the mux answers), two
+parts can share one address, and an address that ACKs may still fail `begin()` — a `0x77`
+that ACKs while every register reads `0x00` is an address **collision**, not a working
+BME688. Keys (`mux`, `rear`, `imu`, `mag`, `gps`, `thermal`, `air`, `nose`, `particulate`,
+`nfc`, `radar`, `light`, `lightning`, `gesture`, `pane`) are **append-only and never
+renamed**, and a consumer must **ignore keys it does not know** so an older ground-station
+still parses a newer board. A board that does not answer the framing at all is older
+firmware without the command; `groundstation/bootroll.py` falls back to the `I` scan.
+
 ## BLE GATT
 
 Device name `ShintaiOS`. Service `12345678-1234-1234-1234-123456789abc`. Every

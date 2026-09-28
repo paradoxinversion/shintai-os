@@ -41,6 +41,29 @@ ROSTER = [
     ("LGT ", "AS3935 ENRAI",   (0x03,)),
 ]
 
+# --- unit roster: (tag, name, the firmware's 'U' key) -----------------------
+# The AUTHORITATIVE roster. Unlike ROSTER above this is keyed on what the board says
+# actually initialized, not on what ACKs an address — so it sees parts behind the mux,
+# and it does not credit a part whose address ACKs but whose begin() failed. Keys must
+# match reportUnits() in the sketch; unknown keys are ignored so an older groundstation
+# still parses a newer board.
+UNIT_ROSTER = [
+    ("REAR", "VL53L5CX FIELD", "rear"),
+    ("IMU ", "LSM6DSOX",       "imu"),
+    ("MAG ", "LIS3MDL",        "mag"),
+    ("GPS ", "PA1010D",        "gps"),
+    ("THRM", "MLX90640",       "thermal"),
+    ("AIR ", "SCD-40",         "air"),
+    ("NOSE", "BME688",         "nose"),
+    ("DUST", "PMSA003I",       "particulate"),
+    ("TAG ", "PN532 NFC",      "nfc"),
+    ("RDR ", "XM125 RADAR",    "radar"),
+    ("LUX ", "TSL2591",        "light"),
+    ("LGT ", "AS3935 ENRAI",   "lightning"),
+    ("EYE ", "APDS9960",       "gesture"),
+    ("PANE", "SSD1306 OLED",   "pane"),
+]
+
 WIDTH = 52
 
 
@@ -62,6 +85,45 @@ def states_from_addresses(found):
     """Roster → [(tag, name, status)] with status OK / OFFLINE from a live scan."""
     return [(tag, name, "OK" if any(a in found for a in addrs) else "OFFLINE")
             for tag, name, addrs in ROSTER]
+
+
+def probe_units(ser, timeout=3.0):
+    """Send `'U'` and collect the board's own init flags → {key: bool}, or None.
+
+    None means the board never answered the framing — an older firmware without the
+    command — and the caller should fall back to [probe_addresses]. The board is
+    streaming telemetry while we wait, so non-matching lines are simply skipped.
+    """
+    ser.write(b"U\n")
+    units, started, end = {}, False, time.time() + timeout
+    while time.time() < end:
+        ln = ser.readline().decode("utf-8", "replace").strip()
+        if ln.startswith("<<<UNITS>>>"):
+            started = True
+            continue
+        if ln.startswith("<<<END UNITS>>>"):
+            return units if started else None
+        if started:
+            m = re.match(r"([a-z_]+)=([01])$", ln)
+            if m:
+                units[m.group(1)] = m.group(2) == "1"
+    return None
+
+
+def states_from_units(units):
+    """Unit roster → [(tag, name, status)] from the board's own init flags.
+
+    A key the board didn't report is a sense this firmware doesn't have, so the row is
+    omitted entirely rather than shown OFFLINE — absent from the build and absent from
+    the rig are different claims.
+    """
+    return [(tag, name, "OK" if units[key] else "OFFLINE")
+            for tag, name, key in UNIT_ROSTER if key in units]
+
+
+def present_tags_from_units(units):
+    """The tags the board reports as initialized — e.g. {"REAR", "AIR", "LUX"}."""
+    return {tag.strip() for tag, _name, key in UNIT_ROSTER if units.get(key)}
 
 
 def present_tags(found):

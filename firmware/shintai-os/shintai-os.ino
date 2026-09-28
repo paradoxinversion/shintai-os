@@ -584,6 +584,40 @@ void scanI2C() {
   Serial.printf("  %d device(s) (expect ToF mux=0x70 [gates 0x29 field], IMU=0x6a, mag=0x1c/0x1e, GPS=0x10, thermal=0x33, SCD=0x62, BME=0x77, APDS=0x39, Andon matrix=0x3f, lightning=0x03, radar=0x52)\n", n);
 }
 
+// Report which units actually INITIALIZED ('U') — the authoritative presence answer.
+//
+// This exists because the 'I' scan can only say what ACKs on the main bus, which is a
+// different question and sometimes the wrong one: a part behind the PCA9546 is invisible
+// (only the mux answers), two parts can share an address, and an address that ACKs may
+// still fail begin() — a 0x77 that ACKs while every register reads 0x00 is an address
+// COLLISION, not a working BME688. Here the board reports the boot flags themselves, so
+// a consumer never has to infer presence from an address.
+//
+// Framing is a contract with groundstation/bootroll.py: `<<<UNITS>>>`, one `key=0|1` per
+// line, then `<<<END UNITS>>>`. Keys are stable; ADD to the end, never rename, and a
+// consumer must ignore keys it doesn't know so an older groundstation still parses a
+// newer board.
+void reportUnits() {
+  Serial.println("<<<UNITS>>>");
+  auto u = [](const char* key, bool ok) { Serial.printf("  %s=%d\n", key, ok ? 1 : 0); };
+  u("mux",      tofMuxPresent);
+  u("rear",     hasZanshin);          // VL53L5CX field inited (not merely 0x29 acking)
+  u("imu",      imuPresent);
+  u("mag",      magPresent);
+  u("gps",      gpsPresent);
+  u("thermal",  thermalPresent);
+  u("air",      scdPresent);          // SCD-40
+  u("nose",     bmePresent);          // BME688 — begin() succeeded, so not a 0x77 collision
+  u("particulate", pmsaPresent);      // Enmu
+  u("nfc",      pn532Present);        // Fuda
+  u("radar",    hitokageDistancePresent || hitokagePresencePresent);   // Hitokage, either mode
+  u("light",    hizashiPresent);      // Hizashi — behind the mux, so 'I' can never see it
+  u("lightning", hasEnrai);           // Enrai
+  u("gesture",  apdsPresent);
+  u("pane",     oledPresent);
+  Serial.println("<<<END UNITS>>>");
+}
+
 // Probe the VL53L5CX rear field ('T'): report the boot presence flag, then poll for a
 // fresh frame and print the nearest zone per half (the L/R the reflex derives).
 // Distinguishes not-present (init failed) from not-ranging (data never ready).
@@ -1519,6 +1553,7 @@ void loop() {
     else if (cmd == 'P' || cmd == 'p') { dumpAllLogs(); lastUpdate = millis(); }
     else if (cmd == 'E' || cmd == 'e') { eraseLogs();   lastUpdate = millis(); }
     else if (cmd == 'I' || cmd == 'i') { scanI2C();   lastUpdate = millis(); }
+    else if (cmd == 'U' || cmd == 'u') { reportUnits(); lastUpdate = millis(); }
     else if (cmd == 'T' || cmd == 't') { probeTof();  lastUpdate = millis(); }
     else if (cmd == 'G' || cmd == 'g') { probeGrid(); lastUpdate = millis(); }
     else if (cmd == 'R' || cmd == 'r') {   // Bunshin: cycle this pod's role fwd<->aft
