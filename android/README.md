@@ -32,14 +32,18 @@ glance while the phone is the control-and-record surface; run only the phone and
 it stands alone. The phone was originally a debugging surface for the glasses —
 this split makes it a first-class app.
 
-### Glass — set the MAC (required)
+### Glass — set the MACs (required)
 
-The glasses never scan, so set `DEVICE_ADDRESS` in
+The glasses never scan, so set `FWD_ADDRESS` and `AFT_ADDRESS` in
 [`ShintaiViewModel.kt`](glass/src/main/java/com/saboteur/shintaiglass/ShintaiViewModel.kt)
-to your board's MAC. Find the address by looking for the device advertising as
-**`ShintaiOS`** (nRF Connect on a phone, or `bluetoothctl` → `scan on`). ESP32 BLE
-MACs are static, so you set this once. (The Operator app scans instead, so it needs
-no hardcoded MAC — but it remembers the last board for a one-tap reconnect.)
+to your two body pods' MACs — the pods advertising as **`ShintaiOS-fwd`** and
+**`ShintaiOS-aft`**. The reliable way to read one is the board's own `'M'` serial
+command; nRF Connect or `bluetoothctl` → `scan on` also work. ESP32 BLE MACs are
+static, so you set this once — but read it off the board rather than copying it from
+a note: a stale constant here is a silent never-connects, since there is no scan to
+fall back on. The desk station (`ShintaiOS-gnd`) does **not** go here; it sits outside
+the body merge by contract. (The Operator app scans instead, so it needs no hardcoded
+MAC — but it remembers the last board for a one-tap reconnect.)
 
 ### Operator — recordings
 
@@ -107,9 +111,10 @@ run configuration, and Run.
   brand fonts + licenses (`res/font/`, `assets/licenses/`).
 - **`:glass`** — `MainActivity.kt` (aspect-ratio stereo/mono split, volume-key IPD,
   the waveguide HUD), `GlassTheme.kt` (pure-black phosphor tokens + fonts),
-  `ShintaiViewModel.kt` (**edit the MAC here**; subscribes to seven channels).
+  `ShintaiViewModel.kt` (**edit the two pod MACs here**; subscribes to fourteen
+  string channels + two binary grids).
 - **`:operator`** — `MainActivity.kt` (scan+connect permissions),
-  `OperatorViewModel.kt` (scan, all-eight subscribe, recording, history),
+  `OperatorViewModel.kt` (scan, all-channel subscribe, recording, history),
   `ShintaiScanner.kt`, `TelemetryRecorder.kt`, `OperatorScreen.kt` +
   `ui/` (the phosphor instrument components + motion-tracker gauge),
   `OperatorTheme.kt` (style.md tokens).

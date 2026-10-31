@@ -70,7 +70,7 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
      *  BOTH pods; a MAC that isn't present just fails gracefully to Disconnected. */
     fun connect() {
         if (clients.isNotEmpty()) return
-        // The HUD renders eight string channels plus Metsuke's binary thermal grid.
+        // The HUD renders fourteen string channels plus two binary grids.
         // It subscribes to ENVIRONMENT only to derive Kyūkaku's smell SPIKE badge —
         // it does not render the raw pressure/gas readout (that stays on the Operator).
         // See CONTRACT.md "Consumer coverage".
@@ -126,9 +126,21 @@ class ShintaiViewModel(app: Application) : AndroidViewModel(app) {
          * serial or a scanner app: the forward pod advertises as "ShintaiOS-fwd", the
          * aft pod as "ShintaiOS-aft" (the Operator app scans instead). A MAC that isn't
          * present just fails gracefully to Disconnected, so a single-pod rig works too.
+         *
+         * A MAC here is a claim about hardware, so read it off the board rather than
+         * copying it from a note: these two were wrong for a month because the fwd
+         * constant held an address no board in the fleet answers to.
+         *
+         * Only the two BODY pods belong here. The desk station advertises as
+         * "ShintaiOS-gnd" and sits outside the body merge by contract (CONTRACT.md
+         * BU-6), so the HUD must never dial it — its readings are the room's, not
+         * the wearer's.
          */
-        const val FWD_ADDRESS = "68:EE:8F:6E:77:BD"
-        const val AFT_ADDRESS = "10:20:BA:0C:D3:51"   // read from the aft board via the 'M' serial command
+        /** Read off the forward pod with the `'M'` serial command on 2026-09-28. */
+        const val FWD_ADDRESS = "10:20:BA:0D:7C:05"
+
+        /** From the project notes, NOT re-measured — read `'M'` off the pack pod to confirm. */
+        const val AFT_ADDRESS = "10:20:BA:0C:D3:51"
 
         /** Bunshin: the two pods the HUD federates, by role. */
         private val POD_ADDRESSES = mapOf(Role.Fwd to FWD_ADDRESS, Role.Aft to AFT_ADDRESS)
