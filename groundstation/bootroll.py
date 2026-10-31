@@ -30,7 +30,7 @@ def c(rgb, s):
 # Addresses mirror the firmware scanI2C() list + CONTRACT/REGISTRY.
 ROSTER = [
     ("REAR", "VL53L5CX FIELD", (0x70, 0x29)),   # Zanshin: behind the mux, or direct
-    ("IMU ", "LSM6DSOX",       (0x6a,)),
+    ("IMU ", "LSM6DSOX",       (0x6a, 0x6b)),   # strap-selectable, like the mag below
     ("MAG ", "LIS3MDL",        (0x1c, 0x1e)),
     ("GPS ", "PA1010D",        (0x10,)),
     ("THRM", "MLX90640",       (0x33,)),
@@ -40,6 +40,39 @@ ROSTER = [
     ("LANT", "ANDON MATRIX",   (0x3f,)),
     ("LGT ", "AS3935 ENRAI",   (0x03,)),
 ]
+
+# --- unit roster: (tag, name, the firmware's 'U' key) -----------------------
+# The AUTHORITATIVE roster. Unlike ROSTER above this is keyed on what the board says
+# actually initialized, not on what ACKs an address — so it sees parts behind the mux,
+# and it does not credit a part whose address ACKs but whose begin() failed. Keys must
+# match reportUnits() in the sketch; unknown keys are ignored so an older groundstation
+# still parses a newer board.
+UNIT_ROSTER = [
+    ("REAR", "VL53L5CX FIELD", "rear"),
+    ("IMU ", "LSM6DSOX",       "imu"),
+    ("MAG ", "LIS3MDL",        "mag"),
+    ("GPS ", "PA1010D",        "gps"),
+    ("THRM", "MLX90640",       "thermal"),
+    ("AIR ", "SCD-40",         "air"),
+    ("NOSE", "BME688",         "nose"),
+    ("DUST", "PMSA003I",       "particulate"),
+    ("TAG ", "PN532 NFC",      "nfc"),
+    ("RDR ", "XM125 RADAR",    "radar"),
+    ("LUX ", "TSL2591",        "light"),
+    ("LGT ", "AS3935 ENRAI",   "lightning"),
+    ("EYE ", "APDS9960",       "gesture"),
+    ("PANE", "SSD1306 OLED",   "pane"),
+    ("LANT", "ANDON MATRIX",   "andon"),
+]
+
+# Companion flags from the 'U' report: unit key -> (alt flag key, the address it means).
+# These are NOT roster rows — they annotate an existing one. A part that came up on its
+# alternate strap is easy to mistake for a different part later, so the roll-call names
+# the address rather than just saying OK.
+ALT_STRAPS = {
+    "imu": ("imu_alt", "0x6B"),
+    "mag": ("mag_alt", "0x1E"),
+}
 
 WIDTH = 52
 
@@ -62,6 +95,67 @@ def states_from_addresses(found):
     """Roster → [(tag, name, status)] with status OK / OFFLINE from a live scan."""
     return [(tag, name, "OK" if any(a in found for a in addrs) else "OFFLINE")
             for tag, name, addrs in ROSTER]
+
+
+def probe_units(ser, timeout=3.0):
+    """Send `'U'` and collect the board's own init flags → {key: bool}, or None.
+
+    None means the board never answered the framing — an older firmware without the
+    command — and the caller should fall back to [probe_addresses]. The board is
+    streaming telemetry while we wait, so non-matching lines are simply skipped.
+    """
+    ser.write(b"U\n")
+    units, started, end = {}, False, time.time() + timeout
+    while time.time() < end:
+        ln = ser.readline().decode("utf-8", "replace").strip()
+        if ln.startswith("<<<UNITS>>>"):
+            started = True
+            continue
+        if ln.startswith("<<<END UNITS>>>"):
+            return units if started else None
+        if started:
+            m = re.match(r"([a-z_]+)=([01])$", ln)
+            if m:
+                units[m.group(1)] = m.group(2) == "1"
+    return None
+
+
+def states_from_units(units):
+    """Unit roster → [(tag, name, status)] from the board's own init flags.
+
+    A key the board didn't report is a sense this firmware doesn't have, so the row is
+    omitted entirely rather than shown OFFLINE — absent from the build and absent from
+    the rig are different claims.
+
+    A part that answered on its alternate strap gets the address appended to its name
+    ([ALT_STRAPS]) — the firmware knows which one replied, and that used to be said only
+    in the boot banner, which is unreadable on this board.
+    """
+    out = []
+    for tag, name, key in UNIT_ROSTER:
+        if key not in units:
+            continue
+        alt = ALT_STRAPS.get(key)
+        label = f"{name} @{alt[1]}" if alt and units.get(alt[0]) else name
+        out.append((tag, label, "OK" if units[key] else "OFFLINE"))
+    return out
+
+
+def present_tags_from_units(units):
+    """The tags the board reports as initialized — e.g. {"REAR", "AIR", "LUX"}."""
+    return {tag.strip() for tag, _name, key in UNIT_ROSTER if units.get(key)}
+
+
+def present_tags(found):
+    """The roster tags that answered the scan, stripped — e.g. {"REAR", "AIR", "GPS"}.
+
+    The live panel gates rows on this so an absent module renders NOTHING rather than a
+    placeholder. Note what this can and cannot see: the scan walks the MAIN bus, so a
+    part behind the PCA9546 is invisible and only the mux itself (0x70) answers — which
+    is why REAR maps both 0x70 and 0x29. Channels whose part may sit behind the mux
+    should gate on their own DATA, not on this.
+    """
+    return {tag.strip() for tag, _name, addrs in ROSTER if any(a in found for a in addrs)}
 
 
 def _row(left, right, right_rgb):
@@ -144,6 +238,8 @@ def _centered(colored, width, visible_len):
 
 if __name__ == "__main__":
     # Standalone demo: a representative roster (NOSE offline) so the visuals are visible
-    # without a board. In the logger, states come from a live probe_addresses() scan.
-    demo = [(t, n, "OFFLINE" if t == "NOSE" else "OK") for t, n, _ in ROSTER]
+    # without a board. Keyed on UNIT_ROSTER, not the address ROSTER, so the demo shows the
+    # same module list a live board does — the logger's real path is probe_units() ('U'),
+    # and ROSTER is only the fallback for firmware predating that command.
+    demo = [(t, n, "OFFLINE" if t == "NOSE" else "OK") for t, n, _ in UNIT_ROSTER]
     play(demo)

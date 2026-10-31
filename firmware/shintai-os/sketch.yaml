@@ -32,6 +32,7 @@ profiles:
       - Adafruit PM25 AQI Sensor (1.1.0)    # Enmu particulate sense (specs/zokyo/enmu.md); PMSA003I @ 0x12, plain bus
       - Adafruit PN532 (1.3.4)              # Fuda identity sense (specs/zokyo/fuda.md); PN532 @ 0x24 7-bit, plain bus
       - SparkFun XM125 Arduino Library (2.0.0)   # Hitokage presence sense (specs/zokyo/hitokage.md); XM125 @ 0x52, plain bus
+      - Adafruit TSL2591 Library (1.4.5)         # Hizashi ambient-light sense; TSL2591 @ a FIXED 0x29 — behind the PCA9546 on ch1 (0x29 is the ToF's address too)
       # transitive deps (profiles use an isolated lib set — must be explicit)
       - Sensirion Core (0.7.3)
       - Adafruit BusIO (1.17.4)

@@ -44,7 +44,9 @@ Consumers key off `line.startswith("timestamp_ms")` (header) and `line[0].isdigi
 | `nfc_type` | string (blank = no tag) | **Fuda** — RF family of that tag (`ISO14443A`); blank alongside `nfc_uid` when no tag |
 | `presence_detected` | 0 / 1 (blank = sensor absent) | **Hitokage** — 1 when the XM125 radar currently detects something in range, else 0 |
 | `presence_distance_mm` | mm (blank = not detected / absent) | **Hitokage** — the NEAREST detected range (500–5000 mm in distance mode, 200–2000 mm in presence-mode fallback); blank when `presence_detected` is 0 |
-| `board` | `fwd` / `aft` | **Bunshin** — which pod (role) produced this row; the terminal role discriminator for two-host federation. Absent in pre-Bunshin logs |
+| `light_lux` | lux (blank = none) | **Hizashi** — ambient illuminance computed by the TSL2591 from its visible + IR channels |
+| `light_ir` | raw counts (blank = none) | **Hizashi** — the TSL2591's raw **infrared** channel; paired with `light_lux` it separates daylight from artificial light |
+| `board` | `fwd` / `aft` / `gnd` | **Bunshin** — which producer (role) emitted this row; the terminal role discriminator. `fwd`/`aft` are the two **body** pods; `gnd` is a stationary **desk station** that is deliberately NOT merged with them (see below). Absent in pre-Bunshin logs |
 
 `thermal_*` are *surface* temps (the IR camera); `air_temp_c`/`humidity_pct`/`co2_ppm`
 are *air*. `air_temp_c` and `humidity_pct` are **shared semantic slots**: whichever
@@ -130,8 +132,46 @@ multiple *people* — a peak is a reflector, not an identity (see
 before `board`**, so pre-Hitokage logs still parse and name-keyed consumers are unaffected. Blank
 when the XM125 is absent.
 
+`light_lux` / `light_ir` are added by **Hizashi (日差し)** — the **ambient-light sense** over a
+**TSL2591** high-dynamic-range light sensor. Unlike every other sensor in this contract the
+TSL2591's I²C address `0x29` is **fixed and unstrappable**, and it is the *same* address as the
+VL53L5CX rear field — the collision the PCA9546 mux already exists to resolve. Hizashi therefore
+sits **behind the mux on ch1** (Zanshin holds ch0), and the firmware selects its channel before
+every access, exactly as the rear field does. On a bench rig with no mux the firmware falls back
+to the plain bus (`hizashiDirect`), which is safe only because the ToF is then necessarily absent.
+
+`light_lux` is the sensor's **computed illuminance** from the visible and IR channels;
+`light_ir` is the **raw IR channel** alongside it, because the visible/IR ratio — not the lux
+figure — is what separates daylight from incandescent from LED. Like the `lightning_*`, `pm*`,
+`nfc_*` and `presence_*` columns they are **appended before `board`** (which stays the terminal
+Bunshin discriminator), so pre-Hizashi logs still parse and name-keyed consumers are unaffected.
+Both are blank when the TSL2591 is absent. The TSL2591 saturates in direct sun at the default
+gain/integration; a saturated reading is reported as-is rather than clamped or blanked, since a
+blank already means "no sensor".
+
 Serial output modes (toggle live by sending a byte): `h` human · `c` CSV · `b` both
 (default; the logger requests `b`). Onboard-flash control bytes: `L` list · `P` dump · `E` erase.
+
+**Unit report (`U`) — which sensors actually initialized.** The board answers with
+`<<<UNITS>>>`, one `key=0|1` line per unit, then `<<<END UNITS>>>`. This is the
+*authoritative* presence answer and is deliberately **not** the same question as the `I`
+bus scan: a part behind the PCA9546 is invisible to a scan (only the mux answers), two
+parts can share one address, and an address that ACKs may still fail `begin()` — a `0x77`
+that ACKs while every register reads `0x00` is an address **collision**, not a working
+BME688. Keys (`mux`, `rear`, `imu`, `mag`, `gps`, `thermal`, `air`, `nose`, `particulate`,
+`nfc`, `radar`, `light`, `lightning`, `gesture`, `pane`, `andon`, plus the strap companions
+`imu_alt` / `mag_alt`) are **append-only and never
+renamed**, and a consumer must **ignore keys it does not know** so an older ground-station
+still parses a newer board. A board that does not answer the framing at all is older
+firmware without the command; `groundstation/bootroll.py` falls back to the `I` scan.
+
+**Strap companions.** `imu_alt` and `mag_alt` are not units — they annotate `imu` and
+`mag`, reporting `1` when that part answered on its **alternate** strap address (LSM6DSOX
+`0x6b` rather than `0x6a`; LIS3MDL `0x1e` rather than `0x1c`). They carry the same
+`key=0|1` shape as every other line so the framing stays one form. They are meaningless
+when the part is absent. This is the only place the strap is observable: the `setup()`
+`[OK]` banner also says it, but that line cannot be read on this board (native-USB
+re-enumeration outlasts the serial wait).
 
 ## BLE GATT
 
@@ -157,6 +197,7 @@ and **Rear Depth Grid**, which carry packed **binary** payloads (see
 | Fuda | `abcdfada-ab12-ab12-ab12-abcdef123456` | `UID:04A1B2C3 ISO14443A` (**Fuda** — the NFC tag last read; **event-driven**, notifies only on a read) |
 | Presence | `abcd0125-ab12-ab12-ab12-abcdef123456` | `present=1 dist=260mm` / `present=0 dist=--` (**Hitokage** — the XM125's detected/not-detected flag + nearest range; `0125` = XM125) |
 | Radar Peaks | `abcdd1a6-ab12-ab12-ab12-abcdef123456` | `n=2 0:2894/-7029 1:4809/-3865` (**Hitokage** — the full multi-peak list, distance mode only; see below) |
+| Hizashi | `abcd2591-ab12-ab12-ab12-abcdef123456` | `lux=412.5 ir=57` (**Hizashi** — ambient illuminance + raw IR; `2591` = TSL2591) |
 | Pane Control | `abcd1306-ab12-ab12-ab12-abcdef123456` | **WRITE** a token → pages the OLED pane; notifies `pane=2/5 NAV` (see below; `1306` = SSD1306) |
 | Lightning | `abcda535-ab12-ab12-ab12-abcdef123456` | `km=1 e=227467 n=8` (last strike distance km · raw energy · cumulative count) |
 | Lightning Control | `abcda53c-ab12-ab12-ab12-abcdef123456` | **WRITE** a token → applies AS3935 tuning; notifies `gain=out spike=2 wdog=1 tune=0` (see below) |
@@ -344,6 +385,24 @@ there and the next read would return the token instead of the pane.
 Note this channel is **per-pod**, not merged like a sensor: each pod drives its own panel, and a
 central writing it addresses every pod it is connected to.
 
+### Hizashi (string)
+
+Added by **Hizashi (日差し)** — the TSL2591 ambient-light channel, the BLE-live twin of the
+`light_lux` / `light_ir` CSV columns. Payload is the UTF-8 string **`lux=<illuminance> ir=<raw>`**
+(e.g. `lux=412.5 ir=57`): the computed illuminance and the raw infrared count. It notifies
+**periodically**, every telemetry cycle, like Particulate and Presence rather than event-driven
+like Fuda and Lightning — ambient light is a continuous scalar. It notifies only while the
+TSL2591 is present.
+
+**Both apps consume it**, and they split it the way the lean-surface rule dictates: Operator shows
+the illuminance **and** the raw IR channel (the visible/IR ratio is the daylight-vs-incandescent-vs-LED
+comparison, which is console work), while Glass shows the **lux alone** — the same treatment PM2.5 and
+the bare tag UID get. Unlike Particulate and Presence the payload is **parsed** in `:core`
+(`HizashiState`) rather than held raw, because both apps want the lux as a number.
+
+Operator also records `light_lux` / `light_ir` to its own capture CSV, blank when the sensor is
+unknown — a recorded `0` lux would be a reading, not an absence.
+
 A characteristic only notifies when its sensor is present and has data (e.g. Climate
 warms up ~5 s and updates every ~5 s; Thermal needs the MLX90640 attached; Hokan needs the IMU;
 Particulate needs the PMSA003I; Fuda notifies only when the PN532 reads a tag; Presence needs
@@ -354,10 +413,10 @@ the presence-mode fallback).
 differently by design (see `android/`):
 
 - **Operator** (`com.saboteur.shintaioperator`, the phone field console) subscribes to
-  the **fifteen string** characteristics, Environment, Hokan, Lightning, Particulate, Fuda,
-  Presence, Radar Peaks, and Pane Control included — the complete readout —
-  **plus Thermal Grid and Rear Depth Grid** (the Metsuke heat panel + the Zanshin rear depth panel).
-  Seventeen channels: the full-fidelity console. It renders the full Enrai readout (distance · energy ·
+  **every one of the seventeen string** characteristics — the whole of `ShintaiGatt.ALL`, Environment,
+  Hokan, Lightning, Particulate, Fuda, Presence, Radar Peaks, Hizashi and Pane Control included — the
+  complete readout — **plus Thermal Grid and Rear Depth Grid** (the Metsuke heat panel + the Zanshin
+  rear depth panel). **Nineteen channels**: the full-fidelity console. It renders the full Enrai readout (distance · energy ·
   count) and flashes on each new strike, the full Enmu triad (PM1.0 · PM2.5 · PM10), Fuda's
   `UID + type` in a dedicated **Identity** panel — its own category, being the first channel that
   reports *who/what* rather than a physical scalar — and Hitokage's detected/nearest-range summary
@@ -365,10 +424,12 @@ differently by design (see `android/`):
   has none).
 - **Glass** (`com.saboteur.shintaiglass`, the RayNeo X3 Pro HUD) subscribes to **fourteen string
   channels plus Thermal Grid and Rear Depth Grid** (sixteen). This is the first place the two apps'
-  *subscription* sets genuinely differ rather than just their rendering: Glass omits **Pane Control**
-  (`abcd1306`), because paging the board's OLED is a console action and the HUD has no panel to
-  drive, and **Radar Peaks** (`abcdd1a6`) — a peak list has no HUD-appropriate rendering, unlike
-  Thermal Grid/Rear Depth Grid's visual panels, so Glass keeps the lean `Presence` summary alone.
+  *subscription* sets genuinely differ rather than just their rendering. Glass omits three of
+  `ShintaiGatt.ALL`: **Pane Control** (`abcd1306`), because paging the board's OLED is a console
+  action and the HUD has no panel to drive; **Radar Peaks** (`abcdd1a6`) — a peak list has no
+  HUD-appropriate rendering, unlike Thermal Grid/Rear Depth Grid's visual panels, so Glass keeps the
+  lean `Presence` summary alone; and **Lightning Control** (`abcda53c`), the AS3935 tuning channel,
+  which is an app→board control surface and belongs on the console with the other knobs.
   It also treats **Environment** (`abcdc0de`,
   BME688 pressure + gas) specially: it takes the channel **only to derive Kyūkaku's smell SPIKE
   badge** from `gas_ohms` (`:core` `Kyukaku.kt`), and does **not** render the raw pressure/VOC
@@ -377,7 +438,9 @@ differently by design (see `android/`):
   **Lightning** it surfaces lean too: the nearest-strike distance with a flash on the edge — a
   storm overhead is worth the waveguide. **Particulate** gets the same treatment: the HUD shows
   **PM2.5 alone** — the health-relevant fraction — while the full PM1.0/2.5/10 triad stays on
-  the phone. **Fuda** likewise: the tag **UID alone**, without the RF family. **Presence**
+  the phone. **Fuda** likewise: the tag **UID alone**, without the RF family. **Hizashi** the same way — the
+  **lux alone**, since the raw IR channel is only meaningful as a comparison against the visible one,
+  and that is console work. **Presence**
   (Hitokage) it renders too — a single-line detected/range readout, the same payload as the
   console since there's no raw-vs-derived split to lean out of.
 
@@ -400,12 +463,28 @@ already specified above). The additions are **identity** and a **merge rule**.
 
 ### Pods & identity
 
-Two roles: **`fwd`** (forward / head-side) and **`aft`** (pack-side). Each pod stores its
-role in NVS and advertises as **`ShintaiOS-<role>`** (`ShintaiOS-fwd` / `ShintaiOS-aft`);
-the BLE **service UUID is identical** on both — a central tells the pods apart by the
-**name**, never by service. In the CSV / flash log each row carries its origin in the
-appended **`board`** column. A pod's role is set live over serial (`'R'`) and applied at
-its next boot.
+Three roles: **`fwd`** (forward / head-side), **`aft`** (pack-side), and **`gnd`** (a
+stationary desk station). Each stores its role in NVS and advertises as
+**`ShintaiOS-<role>`** (`ShintaiOS-fwd` / `ShintaiOS-aft` / `ShintaiOS-gnd`); the BLE
+**service UUID is identical** on all — a central tells them apart by the **name**, never
+by service. In the CSV / flash log each row carries its origin in the appended **`board`**
+column. A role is set live over serial (`'R'`, which cycles `fwd → aft → gnd`) and applied
+at the next boot. (`'G'` is *not* the ground command — that byte is the thermal-grid probe.)
+
+**`gnd` is a producer, not a pod.** It runs the identical firmware and fills the same
+channels, but it senses a **different place**: the room, not the wearer. Bunshin's merge
+is only meaningful because `fwd` and `aft` observe the *same* environment from two mount
+points — folding a desk station in would assert the room's CO₂, light or temperature as
+the body's. So **`gnd` is excluded from the authority table and from every merged
+channel**, including the GPS no-fix fallback and the packet heartbeat. It remains visible
+as a connected producer (`perBoard` in the Kotlin merge) so a consumer can render it on
+its own surface, and its rows are logged under `board=gnd` like any other. The Operator
+console shows it in a dedicated **Ground Station** panel with no precedence controls; the
+Glass HUD ignores it entirely.
+
+Consumers must key the role off the three-letter **token** (`fwd`/`aft`/`gnd`), never a
+Kotlin enum name — `Role.Ground.name.lowercase()` is `"ground"`, which is not the wire
+value. `:core` exposes `Role.token` and `roleFromToken()` for exactly this.
 
 ### Authority table (default precedence)
 
@@ -426,9 +505,10 @@ precedence order**. This table is the **default**, shared by every consumer (the
 | `nfc_uid` / `nfc_type` + Fuda | **fwd** → aft | You scan the tag you're facing — head-side |
 | `presence_detected` / `presence_distance_mm` + Presence + Radar Peaks (Hitokage) | **fwd** → aft | Forward presence rides the head — you face what you're scanning for |
 | `gps_fix` / `lat` / `lon` / `alt_m` / `speed_kmh` / `sats` | **fwd** → aft (fix-gated) | A pod with no fix supplies nothing — but it still *notifies* `no fix sats=N`, so consumers must gate on the payload, not on silence |
+| `light_lux` / `light_ir` + Hizashi | **fwd** → aft | Light is *not* direction-agnostic the way air chem is: a pack sensor reads the wearer's own shadow, the head reads the light actually being looked at |
 | `steps` (Hokan) | **aft** → fwd | Torso pedometer beats head-bob |
 
-**Merge rule (one sentence):** for each channel, filter to the pods currently supplying a
+**Merge rule (one sentence):** for each **body** pod (`gnd` is filtered out first), filter to those currently supplying a
 **valid** value (non-blank / GPS fix / non-null), then take the highest in that channel's
 precedence order — so a preferred-but-absent pod never wins over a present one.
 

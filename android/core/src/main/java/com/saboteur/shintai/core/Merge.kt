@@ -12,8 +12,35 @@ package com.saboteur.shintai.core
  * implementation the glasses and the ground-station follow.
  */
 
-/** Which physical pod a reading came from — one of Bunshin's two hosts. */
-enum class Role { Fwd, Aft }
+/**
+ * Which producer a reading came from.
+ *
+ * [Fwd] and [Aft] are the two **body** pods Bunshin federates — they sense the same
+ * environment (the wearer's) from two mount points, which is what makes merging them
+ * meaningful. [Ground] is a **desk station**: same firmware, same contract, but a
+ * different PLACE. Its air, light and thermal are the room's, not the wearer's, so it is
+ * deliberately excluded from the merge ([isBody]) and surfaced on its own instead.
+ */
+enum class Role { Fwd, Aft, Ground }
+
+/** True for the pods that sense the wearer's own environment and so may be merged. */
+val Role.isBody: Boolean get() = this != Role.Ground
+
+/**
+ * The role's **wire token** — the `board` CSV value and the `ShintaiOS-<token>`
+ * advertising suffix. Explicit rather than `name.lowercase()` because Ground's token is
+ * `gnd`, not `ground`: the CSV column has carried three-letter roles since Bunshin, and a
+ * consumer keying on the string would silently stop matching.
+ */
+val Role.token: String get() = when (this) {
+    Role.Fwd -> "fwd"
+    Role.Aft -> "aft"
+    Role.Ground -> "gnd"
+}
+
+/** Parse a `board` value / advertising suffix back to a role; null if unrecognised. */
+fun roleFromToken(token: String?): Role? =
+    Role.values().firstOrNull { it.token.equals(token?.trim(), ignoreCase = true) }
 
 /**
  * The channel groups the authority table arbitrates. Each maps to a set of
@@ -23,7 +50,7 @@ enum class Role { Fwd, Aft }
  */
 enum class Channel {
     Distance, Heading, Accel, Thermal, Climate, Environment, Gps, Hokan, Lightning, Particulate,
-    Fuda, Presence, RadarPeaks,
+    Fuda, Presence, RadarPeaks, Hizashi,
 }
 
 /** Per-channel precedence order, highest-priority pod first. */
@@ -48,6 +75,10 @@ val DEFAULT_PRECEDENCE: Precedence = mapOf(
     Channel.Fuda to listOf(Role.Fwd, Role.Aft),          // Fuda: you scan the tag you're facing — head-side
     Channel.Presence to listOf(Role.Fwd, Role.Aft),      // Hitokage: forward presence rides the head
     Channel.RadarPeaks to listOf(Role.Fwd, Role.Aft),    // Hitokage: same pod as Presence — same sensor
+    // Hizashi: head-side. Unlike the air channels, light is not direction-agnostic —
+    // a pack sensor reads the wearer's own shadow, while the head sees the light being
+    // looked at, which is the one a HUD would ever react to.
+    Channel.Hizashi to listOf(Role.Fwd, Role.Aft),
 )
 
 /** The blank sentinel a string channel carries until its sensor supplies a value. */
@@ -77,6 +108,7 @@ private fun ShintaiReadings.supplies(ch: Channel): Boolean = when (ch) {
     Channel.Fuda -> fuda != BLANK
     Channel.Presence -> presence != BLANK
     Channel.RadarPeaks -> radarPeaks != BLANK
+    Channel.Hizashi -> hizashi.known
 }
 
 /** The channels this pod currently supplies a valid value for. The Operator uses this
@@ -128,10 +160,25 @@ private fun pickGps(perPod: Map<Role, ShintaiReadings>, winner: ShintaiReadings?
         ?: perPod.values.map { it.gps }.firstOrNull { it != BLANK }
         ?: BLANK
 
+/**
+ * Hizashi: the winning pod's parsed light, or an unknown state when no pod supplies one.
+ * Split out for the same complexity-ceiling reason as [pickPane] and [pickGps] — every
+ * `?:` in [mergeReadings]'s constructor call costs against detekt's limit, and adding this
+ * channel inline pushed it over.
+ */
+private fun pickHizashi(winner: ShintaiReadings?): HizashiState = winner?.hizashi ?: HizashiState()
+
 fun mergeReadings(
-    perPod: Map<Role, ShintaiReadings>,
+    allPods: Map<Role, ShintaiReadings>,
     precedence: Precedence = DEFAULT_PRECEDENCE,
 ): ShintaiReadings {
+    // Ground is a desk station, not a body pod: its air, light and thermal belong to the
+    // room, not the wearer. Merging it would assert the room's environment as the
+    // wearer's, so it is filtered out of EVERY channel here — including the GPS fallback
+    // and the packet heartbeat. It survives only in `perBoard`, so a console can still
+    // show that it is connected and render it separately.
+    val perPod = allPods.filterKeys { it.isBody }
+
     fun winner(ch: Channel): ShintaiReadings? =
         (precedence[ch] ?: DEFAULT_PRECEDENCE.getValue(ch))
             .firstOrNull { perPod[it]?.supplies(ch) == true }
@@ -158,6 +205,7 @@ fun mergeReadings(
         fuda = winner(Channel.Fuda)?.fuda ?: BLANK,
         presence = winner(Channel.Presence)?.presence ?: BLANK,
         radarPeaks = winner(Channel.RadarPeaks)?.radarPeaks ?: BLANK,
+        hizashi = pickHizashi(winner(Channel.Hizashi)),
         pane = pickPane(perPod),
         thermal = thermal?.thermal ?: BLANK,
         environment = environment?.environment ?: BLANK,
@@ -167,6 +215,6 @@ fun mergeReadings(
         lightning = winner(Channel.Lightning)?.lightning ?: LightningState(),
         lightningConfig = winner(Channel.Lightning)?.lightningConfig ?: LightningConfig(),
         packets = perPod.values.sumOf { it.packets },
-        perBoard = perPod.mapValues { it.value.connection },
+        perBoard = allPods.mapValues { it.value.connection },
     )
 }

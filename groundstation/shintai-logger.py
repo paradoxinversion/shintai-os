@@ -52,13 +52,23 @@ def _num(v, dec=1):
         return None
 
 
-def dashboard(vals, samples, csv_name):
+def dashboard(vals, samples, csv_name, present=None):
     """Build the live cassette-futurism console (docs/style.md): a header, alert banners on
     breach, pulse-rifle segmented meters for the thresholded channels (range / CO₂ / thermal /
-    lightning), then dotted-leader readout rows — one list of ANSI lines, redrawn in place."""
+    lightning), then dotted-leader readout rows — one list of ANSI lines, redrawn in place.
+
+    [present] is the boot roll-call's set of module tags (bootroll.present_tags). A handful
+    of rows have to distinguish "no hardware" from "hardware present, no value yet" — GPS
+    searching for a fix, the SCD-40 warming up — so they cannot simply gate on a blank
+    column, and historically rendered a placeholder unconditionally. On a partial rig that
+    is most of the panel. With [present] they render only when the part answered the scan;
+    pass None (unknown — probe failed, or the multi-pod path where no roll-call runs) to
+    keep the old always-render behaviour rather than hiding a channel that may be live.
+    """
     b = bootroll
     g = vals.get
     W = b.WIDTH
+    have = lambda tag: present is None or tag in present
 
     pod = g("board")                                   # Bunshin: which pod this stream is
     title = "SHINTAI-OS — LIVE" + (f" [{pod}]" if pod else "")
@@ -80,7 +90,7 @@ def dashboard(vals, samples, csv_name):
         frac = (far - d) / (far - near)                 # closer -> fuller
         band = "near" if d <= near else ("mid" if d <= 1000 else "far")
         out.append(b.meter("RANGE", frac, f"{d/1000:.2f} M", band))
-    else:
+    elif have("REAR"):               # field fitted but seeing nothing — worth a row
         out.append(b.meter("RANGE", 0, "no reading", "far"))
 
     if co2:
@@ -106,14 +116,23 @@ def dashboard(vals, samples, csv_name):
     out.append("")
 
     # ── dotted-leader readout rows (§5.3) ──
+    pres = g("presence_detected")    # Hitokage forward radar — blank when the XM125 is absent
+    if pres not in (None, ""):       # (a peak is a reflector, not a person — never "N people")
+        pdist = _num(g("presence_distance_mm"), 0)
+        out.append(b._row("PRESENCE",
+                          f"{pdist} mm" if pres == "1" and pdist else "clear",
+                          b.PHOSPHOR if pres == "1" else b.PHOSPHOR_DIM))
     hd = _num(g("heading_deg"), 0)
-    out.append(b._row("HEADING", f"{hd}° {g('cardinal')}" if hd else "—", b.PHOSPHOR))
+    if hd or have("MAG"):
+        out.append(b._row("HEADING", f"{hd}° {g('cardinal')}" if hd else "—", b.PHOSPHOR))
     ax = _num(g("accel_x"), 2)
     if ax:
         out.append(b._row("ACCEL", f"X{ax} Y{_num(g('accel_y'), 2)} Z{_num(g('accel_z'), 2)}", b.PHOSPHOR))
     air = _num(g("air_temp_c"))
-    out.append(b._row("CLIMATE", f"{air}°C  {_num(g('humidity_pct'), 0)}%RH" if air else "warming up…",
-                      b.PHOSPHOR if air else b.AMBER))
+    # air_temp_c is a SHARED slot — BME688 first, else SCD-40 — so either part earns the row.
+    if air or have("AIR") or have("NOSE"):
+        out.append(b._row("CLIMATE", f"{air}°C  {_num(g('humidity_pct'), 0)}%RH" if air else "warming up…",
+                          b.PHOSPHOR if air else b.AMBER))
     press, gas = _num(g("pressure_hpa")), _num(g("gas_ohms"), 0)
     if press or gas:
         out.append(b._row("ENV", f"{press or '—'}hPa  {f'{float(gas)/1000:.0f}kΩ' if gas else '—'}", b.PHOSPHOR))
@@ -121,13 +140,16 @@ def dashboard(vals, samples, csv_name):
     if pm25:
         out.append(b._row("AQI", f"PM2.5 {pm25}  PM10 {_num(g('pm10_ugm3'), 0)}  "
                                  f"PM1.0 {_num(g('pm1_0_ugm3'), 0)} µg/m³", b.PHOSPHOR))
+    lux = _num(g("light_lux"))       # Hizashi — illuminance the headline, raw IR alongside it
+    if lux is not None:              # (the visible/IR ratio is what tells daylight from LED)
+        out.append(b._row("LIGHT", f"{lux} lux  IR {g('light_ir') or '—'}", b.PHOSPHOR))
     uid = g("nfc_uid")               # Fuda — the held tag (blank once the ~5 s hold lapses)
     if uid:
         out.append(b._row("NFC", f"{uid}  {g('nfc_type')}", b.PHOSPHOR))
     if g("gps_fix") == "1":
         out.append(b._row("GPS", f"{_num(g('lat'), 4)},{_num(g('lon'), 4)} {_num(g('speed_kmh'))}km/h", b.PHOSPHOR))
-    else:
-        out.append(b._row("GPS", "no fix", b.AMBER))
+    elif have("GPS"):                # receiver fitted but searching — the distinction
+        out.append(b._row("GPS", "no fix", b.AMBER))   # CONTRACT.md calls out explicitly
     steps = g("steps")
     if steps not in (None, ""):
         out.append(b._row("STEPS", steps, b.PHOSPHOR))
@@ -136,13 +158,26 @@ def dashboard(vals, samples, csv_name):
     return out
 
 
-def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status):
+# Which CSV headers have already gone down the pipe. Two pods emit the SAME header, and
+# a consumer wants the schema once, not once per pod (nor again each time a board is
+# asked to re-print it mid-capture). Guarded by the same lock as the stdout writes.
+_header_piped: dict[str, bool] = {}
+
+
+def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status, emit_data=False):
     """Capture one serial stream to its own CSV until [stop_event] is set.
 
     Each written row gets a trailing `host_ts` column — the host wall-clock at receipt,
     in epoch milliseconds. The two pods share no clock (`timestamp_ms` is each board's
     own millis() since ITS boot), so `host_ts` is the common timeline analyze.py aligns
     on. The board's own `board` column (fwd/aft) tags each row with its producing pod.
+
+    STREAM SPLIT (so `shintai | …` composes). Everything a human reads — the boot
+    roll-call, the live panel, per-port progress, the board's own human lines, errors —
+    goes to **stderr**. **stdout** carries only the board's CSV verbatim (header + rows,
+    no host_ts, no label prefix), and only when [emit_data] is set. That keeps the panel
+    on the terminal while the data goes down the pipe. Rows stay self-identifying
+    across pods via the contract's own `board` column, so no prefix is needed.
     """
     label = port_label(port)
     csv_name = os.path.basename(csv_path)
@@ -152,7 +187,7 @@ def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status):
         ser = serial.Serial(port, baud, timeout=2)
     except serial.SerialException as e:
         with lock:
-            print(f"[{label}] cannot open {port}: {e}")
+            print(f"[{label}] cannot open {port}: {e}", file=sys.stderr)
         return
 
     with ser, open(csv_path, "w", newline="") as f:
@@ -161,9 +196,21 @@ def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status):
         # board's live 'I' scan and type out each module's presence before the capture
         # dashboard takes over. Non-fatal: a missing module or an unresponsive scan just
         # skips the ritual (the two-pod path stays a plain log).
+        present = None        # None = roll-call unavailable; the panel then renders every row
         if live_panel:
             try:
-                bootroll.play(bootroll.states_from_addresses(bootroll.probe_addresses(ser)))
+                # Ask the board what actually INITIALIZED ('U') before falling back to
+                # what merely ACKs an address ('I'). The scan can't see behind the mux and
+                # can't tell a working part from an address collision; the board can. The
+                # fallback is not hypothetical — a pod on older firmware has no 'U'.
+                units = bootroll.probe_units(ser)
+                if units:
+                    bootroll.play(bootroll.states_from_units(units), out=sys.stderr)
+                    present = bootroll.present_tags_from_units(units)
+                else:
+                    found = bootroll.probe_addresses(ser)
+                    bootroll.play(bootroll.states_from_addresses(found), out=sys.stderr)
+                    present = bootroll.present_tags(found)
             except Exception:  # noqa: BLE001 — never block capture on the flourish
                 pass
         # Ask the sketch for both human + CSV output and a fresh CSV header, so we
@@ -176,11 +223,19 @@ def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status):
                 if not line:
                     continue
 
-                if line.startswith("timestamp_ms"):          # CSV header → file only
+                if line.startswith("timestamp_ms"):          # CSV header → file (+ pipe)
                     header = line.split(",") + ["host_ts"]
                     writer.writerow(header)
                     f.flush()
                     header_written = True
+                    # A pipe consumer needs the schema before the rows, and needs it
+                    # only once even with two pods sending their own identical header.
+                    if emit_data:
+                        with lock:
+                            if not _header_piped.get(line):
+                                _header_piped[line] = True
+                                sys.stdout.write(line + "\n")
+                                sys.stdout.flush()
                     continue
 
                 if header_written and line[0].isdigit():      # CSV data row
@@ -189,34 +244,38 @@ def capture_port(port, csv_path, baud, live_panel, stop_event, lock, status):
                     f.flush()
                     samples += 1
                     status[label] = samples
+                    if emit_data:                              # the composable stream
+                        with lock:
+                            sys.stdout.write(line + "\n")
+                            sys.stdout.flush()
                     if live_panel:
                         if not dash_on:
-                            sys.stdout.write("\x1b[2J")        # clear once on first frame
+                            sys.stderr.write("\x1b[2J")        # clear once on first frame
                             dash_on = True
-                        frame = dashboard(dict(zip(header, row)), samples, csv_name)
-                        sys.stdout.write("\x1b[H" + "\n".join(l + "\x1b[K" for l in frame) + "\x1b[J")
-                        sys.stdout.flush()
-                    else:
+                        frame = dashboard(dict(zip(header, row)), samples, csv_name, present)
+                        sys.stderr.write("\x1b[H" + "\n".join(l + "\x1b[K" for l in frame) + "\x1b[J")
+                        sys.stderr.flush()
+                    elif not emit_data:
                         with lock:
-                            print(f"  [{label} #{samples} logged]")
+                            print(f"  [{label} #{samples} logged]", file=sys.stderr)
                     continue
 
                 if live_panel and not dash_on:     # human/boot lines (single-port panel)
-                    print(line)
+                    print(line, file=sys.stderr)
                 elif not live_panel:
                     with lock:
-                        print(f"  [{label}] {line}")
+                        print(f"  [{label}] {line}", file=sys.stderr)
 
             except KeyboardInterrupt:
                 stop_event.set()
                 break
             except Exception as e:                 # noqa: BLE001 — keep the capture alive
                 with lock:
-                    print(f"[{label}] error: {e}")
+                    print(f"[{label}] error: {e}", file=sys.stderr)
                 continue
 
     if live_panel and dash_on:
-        sys.stdout.write("\x1b[J")
+        sys.stderr.write("\x1b[J")
 
 
 def main():
@@ -224,13 +283,22 @@ def main():
     ap.add_argument("--port", action="append", default=[],
                     help="serial port to capture; repeatable. Omit to auto-detect all matching devices.")
     ap.add_argument("--baud", type=int, default=BAUD, help=f"baud rate (default {BAUD})")
+    ap.add_argument("--no-panel", action="store_true",
+                    help="suppress the live ANSI panel; stream the board's CSV to stdout instead")
     args = ap.parse_args()
+
+    # Stream split (see capture_port): the panel is a STDERR surface, so stdout is free
+    # to be a pipe. Panel when stderr is a terminal and it wasn't waived; data on stdout
+    # whenever stdout is redirected, or whenever there's no panel — so silencing one
+    # channel never leaves both silent.
+    panel = sys.stderr.isatty() and not args.no_panel
+    emit_data = (not sys.stdout.isatty()) or not panel
 
     os.makedirs(LOG_DIR, exist_ok=True)
 
     ports = find_ports(args.port)
     if not ports:
-        print("No serial ports found.")
+        print("No serial ports found.", file=sys.stderr)
         sys.exit(1)
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -240,10 +308,10 @@ def main():
         csv_path = os.path.join(LOG_DIR, f"shintai_log_{timestamp}{suffix}.csv")
         jobs.append((port, csv_path))
 
-    print(f"Capturing {len(ports)} port(s) at {args.baud} baud:")
+    print(f"Capturing {len(ports)} port(s) at {args.baud} baud:", file=sys.stderr)
     for port, csv_path in jobs:
-        print(f"  {port} → {os.path.basename(csv_path)}")
-    print()
+        print(f"  {port} → {os.path.basename(csv_path)}", file=sys.stderr)
+    print(file=sys.stderr)
 
     stop_event = threading.Event()
     lock = threading.Lock()
@@ -253,7 +321,7 @@ def main():
         # Single pod: keep the rich in-place ANSI status panel, in the main thread.
         port, csv_path = jobs[0]
         try:
-            capture_port(port, csv_path, args.baud, sys.stdout.isatty(), stop_event, lock, status)
+            capture_port(port, csv_path, args.baud, panel, stop_event, lock, status, emit_data)
         except KeyboardInterrupt:
             stop_event.set()
     else:
@@ -262,7 +330,8 @@ def main():
         # racing. Ctrl+C on the main thread signals every reader to stop.
         threads = [
             threading.Thread(target=capture_port,
-                             args=(port, csv_path, args.baud, False, stop_event, lock, status),
+                             args=(port, csv_path, args.baud, False, stop_event, lock,
+                                   status, emit_data),
                              daemon=True)
             for port, csv_path in jobs
         ]
@@ -278,7 +347,8 @@ def main():
                 t.join(timeout=2)
 
     total = sum(status.values())
-    print(f"\nLogging stopped. {total} samples across {len(jobs)} port(s) → {LOG_DIR}")
+    print(f"\nLogging stopped. {total} samples across {len(jobs)} port(s) → {LOG_DIR}",
+          file=sys.stderr)
     sys.exit(0)
 
 

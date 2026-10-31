@@ -64,6 +64,7 @@ import com.saboteur.shintai.core.formatGps
 import com.saboteur.shintai.core.formatFuda
 import com.saboteur.shintai.core.formatPm25
 import com.saboteur.shintai.core.formatThermal
+import com.saboteur.shintai.core.suppliedChannels
 
 /** Width:height above which we treat the surface as a side-by-side stereo display.
  *  X3 Pro = 2.67; Pixel-class phones in landscape ≈ 2.16, portrait < 1. */
@@ -74,6 +75,21 @@ private const val IPD_STEP_DP = 2
 
 /** Larger IPD step for the on-screen +/- buttons (pointer is coarser than keys). */
 private const val IPD_STEP_MENU = 6
+
+/**
+ * The sentinel a string channel carries until its characteristic has notified — the same
+ * BLANK `Merge.kt` keys on in `:core`. A channel still showing it has never reported,
+ * which on this contract means its sensor is absent: a characteristic only notifies when
+ * its sensor is present and has data.
+ */
+private const val BLANK = "\u2014"
+
+private fun String.reported(): Boolean = this != BLANK
+
+/** Is there a rear sensor at all? The same test `Merge.kt`'s supplies(Distance) uses, so
+ *  the HUD and the Bunshin merge agree on what counts as present. */
+private fun ShintaiReadings.hasProximity(): Boolean =
+    distanceText.reported() || rearDepthGrid != null
 
 class MainActivity : ComponentActivity() {
 
@@ -240,33 +256,7 @@ private fun EyePane(
             } else if (r.connection == ConnectionState.PermissionNeeded) {
                 PermissionPrompt(onRequestPermission)
             } else {
-                // The one hero value: distance as big DSEG numerals. Amber/red are
-                // reserved for the real proximity alarm (style.md avoids alarm
-                // fatigue on the waveguide), so the value is phosphor until it fires.
-                val (distVal, distUnit) = distanceParts(r.distanceMm, r.distanceText, units)
-                val numeric = r.distanceMm != null
-                val blink = if (r.alertActive) alertBlink() else 1f
-                val heroColor = if (r.alertActive) G.Alert.copy(alpha = blink) else G.Phosphor
-
-                Text("NEAREST", color = G.Bone, fontFamily = G.Mono, fontSize = 13.sp, letterSpacing = 2.sp)
-                Text(
-                    text = distVal,
-                    color = heroColor,
-                    // DSEG has no em dash, so the "—" no-reading placeholder falls back to Plex.
-                    fontFamily = if (numeric) G.Numeral else G.Mono,
-                    fontWeight = if (numeric) FontWeight.Normal else FontWeight.Bold,
-                    fontSize = if (numeric) 60.sp else 44.sp,
-                )
-                Text(distUnit.uppercase(), color = G.BoneDim, fontFamily = G.Mono, fontSize = 18.sp)
-                if (r.alertActive) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "OBJECT INSIDE 0.2 M — HOLD",
-                        color = G.Alert.copy(alpha = blink),
-                        fontFamily = G.Mono, fontWeight = FontWeight.Bold, fontSize = 20.sp,
-                        letterSpacing = 1.sp,
-                    )
-                }
+                ProximityHero(r, units)
 
                 // Kyūkaku: the HUD shows ONLY the transient smell SPIKE (its own violet
                 // hue, never the proximity red) — a chemical heads-up is what a waveguide
@@ -278,16 +268,20 @@ private fun EyePane(
                 // energy/count readout stays on the phone.
                 LightningBadge(r.lightning)
 
-                Spacer(Modifier.height(16.dp))
                 // Kōei's rear dual-arc — both ToF beams as a glanceable behind-you overlay
                 // under the nearer-arc hero. distanceLMm/distanceRMm are parsed in :core.
-                RearArcPanel(r.distanceLMm, r.distanceRMm, r.alertActive, units)
-
-                Spacer(Modifier.height(22.dp))
-                HairRule()
-                Spacer(Modifier.height(12.dp))
+                // Gated with the hero: a null arc draws no blip, but the rings and frame
+                // still draw, so a rig with no ToF used to show an empty radar.
+                if (r.hasProximity()) {
+                    Spacer(Modifier.height(16.dp))
+                    RearArcPanel(r.distanceLMm, r.distanceRMm, r.alertActive, units)
+                    Spacer(Modifier.height(22.dp))
+                    HairRule()
+                    Spacer(Modifier.height(12.dp))
+                }
 
                 SupportingReadouts(r, units)
+                NoChannelsNotice(r)
 
                 // Metsuke: the live 8×8 heat panel — Shikai's one *image* surface.
                 // Only present once the first grid frame arrives (MLX90640 attached
@@ -314,6 +308,61 @@ private fun EyePane(
             }
         }
     }
+}
+
+/**
+ * The one hero value: nearest distance as big DSEG numerals, plus the proximity alarm
+ * line. Amber/red are reserved for the real alarm (style.md avoids alarm fatigue on the
+ * waveguide), so the value is phosphor until it fires.
+ *
+ * Absent entirely without a rear sensor. The placeholder used to render as a 44sp "—",
+ * which made the largest, brightest thing on a see-through display a statement that
+ * nothing is being measured.
+ */
+@Composable
+private fun ProximityHero(r: ShintaiReadings, units: Units) {
+    if (!r.hasProximity()) return
+    val (distVal, distUnit) = distanceParts(r.distanceMm, r.distanceText, units)
+    val numeric = r.distanceMm != null
+    val blink = if (r.alertActive) alertBlink() else 1f
+    val heroColor = if (r.alertActive) G.Alert.copy(alpha = blink) else G.Phosphor
+
+    Text("NEAREST", color = G.Bone, fontFamily = G.Mono, fontSize = 13.sp, letterSpacing = 2.sp)
+    Text(
+        text = distVal,
+        color = heroColor,
+        // DSEG has no em dash, so the "—" no-reading placeholder falls back to Plex.
+        fontFamily = if (numeric) G.Numeral else G.Mono,
+        fontWeight = if (numeric) FontWeight.Normal else FontWeight.Bold,
+        fontSize = if (numeric) 60.sp else 44.sp,
+    )
+    Text(distUnit.uppercase(), color = G.BoneDim, fontFamily = G.Mono, fontSize = 18.sp)
+    if (r.alertActive) {
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "OBJECT INSIDE 0.2 M — HOLD",
+            color = G.Alert.copy(alpha = blink),
+            fontFamily = G.Mono, fontWeight = FontWeight.Bold, fontSize = 20.sp,
+            letterSpacing = 1.sp,
+        )
+    }
+}
+
+/**
+ * What the HUD says when the link is up but nothing has notified. Gating every row means a
+ * bare board would render an empty pane, which reads as a broken app rather than an empty
+ * rig — so say it plainly instead. Keyed on `:core`'s suppliedChannels(), the same presence
+ * test the Bunshin merge uses, so the HUD and the merge agree on what "reporting" means.
+ */
+@Composable
+private fun NoChannelsNotice(r: ShintaiReadings) {
+    if (r.suppliedChannels().isNotEmpty()) return
+    Text("NO CHANNELS", color = G.Amber, fontFamily = G.Title, fontSize = 16.sp)
+    Spacer(Modifier.height(6.dp))
+    Text(
+        "A readout appears when its sensor notifies.",
+        color = G.BoneDim, fontFamily = G.Mono, fontSize = 12.sp,
+    )
 }
 
 /** Shown when BLUETOOTH_CONNECT was denied: a clear reason (amber = caution) plus
@@ -436,23 +485,48 @@ private fun TapChip(label: String, onClick: () -> Unit) {
  */
 @Composable
 private fun SupportingReadouts(r: ShintaiReadings, units: Units) {
-    ReadoutRow("HEADING", r.heading)
-    ReadoutRow("ACCEL", r.accel)
-    ReadoutRow("GPS", formatGps(r.gps, units))
-    ReadoutRow("CLIMATE", formatClimate(r.climate, units))
-    ReadoutRow("THERMAL", formatThermal(r.thermal, units))
+    OptionalRow("HEADING", r.heading)
+    OptionalRow("ACCEL", r.accel)
+    // GPS keeps its row once the receiver notifies, lock or no lock — a no-fix pod sends
+    // "no fix sats=N", which renders as "searching". Only a missing receiver drops the row.
+    OptionalRow("GPS", formatGps(r.gps, units).takeIf { r.gps.reported() })
+    OptionalRow("CLIMATE", formatClimate(r.climate, units).takeIf { r.climate.reported() })
+    OptionalRow("THERMAL", formatThermal(r.thermal, units).takeIf { r.thermal.reported() })
     // Enmu: the health-relevant PM2.5 fraction only — the lean HUD's air-quality
     // heads-up; the full PM1.0/2.5/10 triad stays on the Operator console.
-    ReadoutRow("AIR PM2.5", formatPm25(r.particulate))
+    OptionalRow("AIR PM2.5", formatPm25(r.particulate).takeIf { r.particulate.reported() })
     // Fuda: the tag UID alone — the identity is the heads-up, the RF family is console
     // detail. Event-driven, so this holds the last scan rather than a live value.
-    ReadoutRow("TAG", formatFuda(r.fuda).first)
+    OptionalRow("TAG", formatFuda(r.fuda).first.takeIf { r.fuda.reported() })
     // Hitokage: the same raw readout as the console — no raw-vs-derived split to lean
     // out of (unlike PM2.5/UID, there's no "one number that matters" subset here).
-    ReadoutRow("RADAR", r.presence)
-    // Hokan: cumulative steps + cadence (the pedometer readout). Always shown so the
-    // row layout is stable; the PDR mini-map below appears only once there's a walked path.
-    ReadoutRow("STEPS", r.hokan?.let { "${it.steps}  ${it.cadence}/min" } ?: "—")
+    OptionalRow("RADAR", r.presence)
+    // Hizashi: the lux alone. The raw IR channel is a comparison you make on the
+    // console, not a number worth the waveguide — the lean-surface rule, same as
+    // PM2.5 and the bare tag UID above.
+    OptionalRow("LIGHT", r.hizashi.label.takeIf { r.hizashi.known })
+    // Hokan: cumulative steps + cadence (the pedometer readout). Dropped without an IMU;
+    // the PDR mini-map below needs a walked path on top of that.
+    OptionalRow("STEPS", r.hokan?.let { "${it.steps}  ${it.cadence}/min" })
+}
+
+/**
+ * A [ReadoutRow] that renders NOTHING when its channel has never reported. A partial rig
+ * used to fill the waveguide with dashes — rows for hardware that isn't fitted, which is
+ * the one thing a see-through display should never spend light on. Kept as a helper rather
+ * than an `if` at each call site so [SupportingReadouts] stays a flat list.
+ *
+ * Takes a nullable so the same helper serves a string channel and a nullable field — the
+ * Operator's two overloads would clash on the JVM here, since the Compose plugin appends
+ * identical Composer parameters to both.
+ *
+ * Note what this deliberately does NOT hide: a channel that has reported but currently has
+ * no value. A GPS with no lock still notifies ("no fix sats=N"), so its row stays and reads
+ * "searching" — absent hardware and unlocked hardware are different claims.
+ */
+@Composable
+private fun OptionalRow(label: String, value: String?) {
+    if (value != null && value.reported()) ReadoutRow(label, value)
 }
 
 /** LABEL · dotted leader · VALUE — the ledger row, strokes only (style.md §5.3). */

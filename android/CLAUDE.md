@@ -35,10 +35,12 @@ android/build.sh detekt lint  # what the pre-commit hook runs when android/ chan
   `00002902-0000-1000-8000-00805f9b34fb` — the `8000` (not `0000`) matters; the typo
   silently kills all notifications.
 - **Which characteristics an app subscribes to is a per-app choice**, not a second
-  source of truth. The sets are no longer identical: `:operator` takes all thirteen
-  string channels, `:glass` takes twelve — it omits **Pane Control** (`abcd1306`),
-  since paging the board's OLED is a console action and the HUD has no panel to
-  drive. Beyond that the difference is what each *renders* — `:glass` subscribes to
+  source of truth. The sets are no longer identical: `:operator` takes all seventeen
+  string channels, `:glass` takes fourteen — it omits **Pane Control** (`abcd1306`),
+  since paging the board's OLED is a console action and the HUD has no panel to drive,
+  plus **Radar Peaks** and **Lightning Control** (console detail; counts recomputed from
+  `ShintaiGatt.ALL` and `GLASS_SUBSCRIPTIONS`, not incremented). Beyond that the
+  difference is what each *renders* — `:glass` subscribes to
   Environment only to derive Kyūkaku's smell **spike** badge, not to show the raw
   pressure/gas readout (that's `:operator`'s). Don't "fix" per-app subset
   differences by editing `:core`.

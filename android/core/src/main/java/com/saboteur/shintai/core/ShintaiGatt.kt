@@ -70,6 +70,12 @@ object ShintaiGatt {
      *  swipe too, not just on a write. `:glass` does NOT subscribe — see CONTRACT.md. */
     val PANE_CTRL: UUID = UUID.fromString("abcd1306-ab12-ab12-ab12-abcdef123456")
 
+    /** Hizashi's ambient-light readout: "lux=412.5 ir=57" (string) — the BLE-live twin of the
+     *  light_lux / light_ir CSV columns. PERIODIC, like [PARTICULATE] and [PRESENCE].
+     *  Both apps subscribe; Glass shows the lux alone, Operator lux + the raw IR channel.
+     *  See CONTRACT.md "Hizashi". */
+    val HIZASHI: UUID = UUID.fromString("abcd2591-ab12-ab12-ab12-abcdef123456")
+
     /** Metsuke's binary heat grid (packed bytes, not a string). See [BINARY]. */
     val THERMAL_GRID: UUID = UUID.fromString("abcd7890-ab12-ab12-ab12-abcdef123456")
 
@@ -92,5 +98,6 @@ object ShintaiGatt {
      *  nothing forces an app to take them all (the Glass HUD skips [ENVIRONMENT]). */
     val ALL: List<UUID> =
         listOf(DISTANCE, ALERT, HEADING, ACCEL, GPS, CLIMATE, THERMAL, ENVIRONMENT, HOKAN,
-            LIGHTNING, LIGHTNING_CTRL, PARTICULATE, FUDA, PRESENCE, RADAR_PEAKS, PANE_CTRL)
+            LIGHTNING, LIGHTNING_CTRL, PARTICULATE, FUDA, PRESENCE, RADAR_PEAKS, PANE_CTRL,
+            HIZASHI)
 }

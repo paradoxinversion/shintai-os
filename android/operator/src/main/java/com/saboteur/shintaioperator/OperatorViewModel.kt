@@ -13,6 +13,8 @@ import com.saboteur.shintai.core.ConnectionState
 import com.saboteur.shintai.core.DEFAULT_PRECEDENCE
 import com.saboteur.shintai.core.Precedence
 import com.saboteur.shintai.core.Role
+import com.saboteur.shintai.core.isBody
+import com.saboteur.shintai.core.token
 import com.saboteur.shintai.core.ShintaiBleClient
 import com.saboteur.shintai.core.ShintaiGatt
 import com.saboteur.shintai.core.ShintaiReadings
@@ -72,6 +74,12 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _podSupply = MutableStateFlow<Map<Role, Set<Channel>>>(emptyMap())
     val podSupply: StateFlow<Map<Role, Set<Channel>>> = _podSupply.asStateFlow()
+
+    // The desk station's OWN snapshot, deliberately outside [readings]. Ground senses the
+    // room rather than the wearer, so mergeReadings excludes it; the console renders it in
+    // its own panel instead of pretending it is body telemetry. Null until one connects.
+    private val _ground = MutableStateFlow<ShintaiReadings?>(null)
+    val ground: StateFlow<ShintaiReadings?> = _ground.asStateFlow()
 
     // Bunshin: the pair screen is normally shown only while Idle, but with one pod
     // already linked the user needs to return to it to link the SECOND. This re-opens
@@ -273,8 +281,11 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
     /** Recompute the public merged snapshot + per-pod supply from the per-pod snapshots. */
     private fun remerge() {
         val pods = podReadings.toMap()
+        // mergeReadings filters Ground out itself; surface it separately so the console can
+        // show the desk station without it contaminating the wearer's readout.
         _readings.value = mergeReadings(pods, _precedence.value)
-        _podSupply.value = pods.mapValues { it.value.suppliedChannels() }
+        _podSupply.value = pods.filterKeys { it.isBody }.mapValues { it.value.suppliedChannels() }
+        _ground.value = pods[Role.Ground]
     }
 
     // --- Bunshin precedence (Sources screen) ------------------------------
@@ -300,9 +311,10 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
             ?: DEFAULT_PRECEDENCE.getValue(ch)
     }
 
-    /** Ordered pod list with [role] first, the rest in enum order (forward-compatible for >2 pods). */
+    /** Ordered BODY-pod list with [role] first. Ground is excluded: it is not in the merge,
+     *  so offering it as a precedence winner would promise something mergeReadings ignores. */
     private fun orderPreferring(role: Role): List<Role> =
-        listOf(role) + Role.values().filter { it != role }
+        listOf(role).filter { it.isBody } + Role.values().filter { it != role && it.isBody }
 
     private fun precKey(channel: Channel): String = "prec_${channel.name}"
 
@@ -326,9 +338,18 @@ class OperatorViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- Bunshin pod helpers ----------------------------------------------
 
-    /** Derive a pod's role from its advertised name (`ShintaiOS-aft` → Aft, else Fwd). */
+    /**
+     * Derive a producer's role from its advertised name (`ShintaiOS-<token>`).
+     *
+     * Matched against the role tokens rather than a hardcoded "-aft" test: that test filed
+     * EVERY non-aft name as Fwd, so a desk station advertising `ShintaiOS-gnd` was silently
+     * treated as the head pod and its room readings merged in as the wearer's. An
+     * unrecognised suffix still falls back to Fwd — the pre-Bunshin firmware advertised a
+     * bare `ShintaiOS`, and that is a body pod.
+     */
     fun roleOf(name: String?): Role =
-        if (name?.endsWith("-aft", ignoreCase = true) == true) Role.Aft else Role.Fwd
+        Role.values().firstOrNull { name?.endsWith("-${it.token}", ignoreCase = true) == true }
+            ?: Role.Fwd
 
     private fun roleAddrKey(role: Role): String = "last_addr_${role.name.lowercase()}"
 
