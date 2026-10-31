@@ -25,6 +25,11 @@ python groundstation/console.py            # live web "Sulaco" console: tail new
 python groundstation/storm_radar.py [--serve]   # Enrai stormscope → analysis/storm.html (--serve = live, :8137)
 python groundstation/analyze.py            # stitch ALL sessions → combined.csv + pngs + route_map.html
 python groundstation/enrai_calib.py        # Enrai tuning sweep against a LIVE storm (needs the board on USB)
+python groundstation/hitokage_calib.py probe            # Hitokage: live radar+heading readout (scene setup)
+python groundstation/hitokage_calib.py arc --target-mm 2000   # effective detection arc (needs the board + a lone reflector)
+python groundstation/hitokage_calib.py tilt             # heading error vs. tilt
+python groundstation/hitokage_calib.py spin --direction cw    # heading linearity + closure (run cw AND ccw)
+python groundstation/hitokage_calib.py --compare A.csv B.csv  # the cw/ccw direction-flip test
 ```
 
 ## Layout
@@ -60,6 +65,24 @@ python groundstation/enrai_calib.py        # Enrai tuning sweep against a LIVE s
 - `analyze.py` — stitches *all* sessions into one absolute timeline
   (`file_start + timestamp_ms`), reports gaps + headline stats, writes `combined.csv`,
   `timeseries.png`, `route.png`, `route_map.html`.
+- `hitokage_calib.py` — **Hitokage bench measurements**, the prerequisite for fusing the
+  radar with `heading_deg` into a 2D map. The XM125 has no azimuth, so a fused map must
+  paint each return as an **arc**, and two numbers decide how wide and how misplaced that
+  arc is allowed to be: the **effective detection arc** (`arc`) and the **heading error**
+  (`tilt`, `spin`). Runs off the serial CSV only — `heading_deg`, `presence_distance_mm`,
+  `accel_*` are all in the contract already. Writes `logs/hitokage-calib-<mode>-<time>.csv`
+  (deliberately outside the `shintai_log_*` glob) with a `# mode=…` meta line, so
+  `--analyze` re-scores a capture with no board attached.
+  - Every angular figure is quantized by the firmware's **1.5 s** `UPDATE_MS` cycle, so
+    `arc` reports a **bracket** `[inner, outer]` spanning that gap rather than one
+    confident number, and warns when the sweep outran the cycle.
+  - `tilt` carries its own **validity check** — a level dwell before and after; if heading
+    doesn't return, the operator yawed and the run is contaminated, not damning.
+  - `spin`'s within-run "residual repeats by sector" test does **not** on its own
+    distinguish hard/soft iron from operator wobble (a wobble whose period divides the
+    turn scores identically — verified against synthetics). The discriminator is the
+    **direction flip**: capture `--direction cw` and `--direction ccw`, then `--compare`.
+    Iron survives the flip; turn-coupled wobble reverses.
 - `analysis/tour/` is a scratch pile of one-off exploration scripts — not the pipeline.
 
 ## Invariants (easy to break)
